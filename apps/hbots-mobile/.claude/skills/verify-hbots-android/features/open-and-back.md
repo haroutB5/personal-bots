@@ -4,9 +4,9 @@ Opening a chat from the Chats list and from a Work card, then pressing the syste
 
 ## Sub-features
 
-- `open-chats` Chats list to `Researcher` and back.
-- `open-work` Work card `Open chat` to `Planner` and back.
-- `tabs` Computer and Files open and close.
+- `open-chats` Chats list to `Researcher` and back. The chat shows its question `Ready to ship the release?`.
+- `open-work` Work card `Open chat` to `Planner` and back. The chat shows its question `Which build should go out tonight?`.
+- `tabs` Computer (`THIS LAPTOP`) and Files (`No files yet` or a file name) open and close.
 - `logcat-clean` no `FATAL EXCEPTION`, no JavaScript error, app pid alive.
 
 ## How to get to it (user POV)
@@ -15,10 +15,11 @@ Opening a chat from the Chats list and from a Work card, then pressing the syste
 
 ## Driving it with adb and uiautomator
 
-Preconditions: flow 4 left one Work card.
+Preconditions: the seed left one Work card and the `Researcher` question (flow 8 needs the seed, like flow 4).
 
-- **Back.** Press `KEYCODE_BACK` twice if a keyboard is open (the first closes it). The Chats and Tasks tab nodes are visible again.
-- **Tabs.** Tap Computer, screenshot, Files, screenshot, Chats.
+- **Open.** The composer `Message <bot>…` and the status text `Idle · …` show, and the bot's own question shows as visible text, so a wrong chat fails.
+- **Back.** Press `KEYCODE_BACK` twice if a keyboard is open (the first closes it). The tab texts `Chats`, `Tasks`, `Computer`, `Files` show again, with the `Search bots and chats` field on Chats and `Running now` on Tasks.
+- **Tabs.** Tap Computer (text `THIS LAPTOP` shows), Files (text `No files yet` or a file name shows), Chats.
 - **Proof.** `adb logcat -d` for the whole run has 0 `FATAL EXCEPTION` and 0 `JavascriptException` or `ReactNativeJS` errors. Saved as `logcat.txt`.
 
 ## Gotchas

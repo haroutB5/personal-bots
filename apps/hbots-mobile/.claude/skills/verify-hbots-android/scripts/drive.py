@@ -17,8 +17,11 @@ PKG = "com.haroutb5.hbots"
 LONG_PARAGRAPH = "The quarterly report shows revenue grew in every region, with the strongest gains in the north where the new warehouse opened in March. "
 LONG_REPLY = " ".join(("Summary line for the long report.\n\n" + LONG_PARAGRAPH * 4 + "\n\n" + LONG_PARAGRAPH * 3 + "\n\nEnd of the long report.").split())
 SLOW_SECONDS = 6
+SLOW_BACKGROUND_SECONDS = 7
 LATEQ_SECONDS = 4
 CHAT_TABS = ("Chats", "Tasks", "Computer", "Files")
+PAIR_ATTEMPTS = 3
+PAIR_WAIT = 40
 
 
 class Run:
@@ -73,6 +76,21 @@ class Run:
 
     def tabs_visible(self, s):
         return bool(s.first(desc="Chats") and s.first(desc="Tasks"))
+
+    def tabs_text_visible(self, s):
+        return bool(s.first(text="Chats") and s.first(text="Tasks") and s.first(text="Computer") and s.first(text="Files"))
+
+    def long_press(self, node, ms=900):
+        x, y = node.center
+        self.d.swipe(x, y, x, y, ms)
+
+    def reply_bar(self, s):
+        """The composer's reply bar as the user reads it: (Cancel reply button, [visible texts inside the bar's rows])."""
+        bar = next((x for x in s.find(desc="Cancel reply") if x.clickable), None)
+        if not bar:
+            return None, []
+        top, bottom = bar.box[1] - 40, bar.box[3] + 40
+        return bar, [n.text for n in s.nodes if n.text and s.drawn(n) and n.box[1] >= top and n.box[3] <= bottom and n.box[2] <= bar.box[0] + 10]
 
     def learn(self, s):
         for name in CHAT_TABS:
@@ -182,40 +200,86 @@ class Run:
         self.version = next((t for t in s.texts() if re.fullmatch(r"v1\.\d+\.\d+.*", t)), "version not shown")
         self.note(f"paired, app shows {self.version}, setup {time.time() - self.t0:.0f} s")
 
-    def pair(self):
+    def redact(self, text, link=""):
+        if link:
+            text = text.replace(link, "<link>")
+        text = re.sub(r"https?://[^\s\"'<>]+/pair[^\s\"'<>]*", "<link>", text)
+        return re.sub(r"(token=)[A-Za-z0-9_\-]+", r"\1<token>", text)
+
+    def save_diag(self, tag, link=""):
+        """A screen dump and the logcat, with the pairing link and token blanked, so a setup failure can be diagnosed afterwards."""
+        try:
+            raw = self.d.run("exec-out", "uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; cat /sdcard/ui.xml")
+            with open(f"{self.ev}/{tag}-dump.xml", "w") as f:
+                f.write(self.redact(raw, link))
+        except Exception as e:
+            self.note(f"{tag}: dump failed: {type(e).__name__}")
+        try:
+            with open(f"{self.ev}/{tag}-logcat.txt", "w") as f:
+                f.write(self.redact(self.d.run("logcat", "-d", timeout=60), link))
+        except Exception as e:
+            self.note(f"{tag}: logcat failed: {type(e).__name__}")
+        try:
+            self.shot(tag)
+        except Exception:
+            pass
+
+    def pair_once(self, link):
         d = self.d
-        link = self.srv("pair", self.a.srv)
-        link = re.sub(r"^http://127\.0\.0\.1:\d+", self.a.link_host, link)
         s, n = d.wait(lambda s: s.first(text="Paste a link instead"), 40)
         if not n:
-            raise RuntimeError("no pairing screen")
+            return "no pairing screen"
         d.tap(n)
         s, field = d.wait(lambda s: next((x for x in s.nodes if x.cls.endswith("EditText")), None), 10)
         if not field:
-            raise RuntimeError("no link field")
+            return "no link field"
         d.tap(field)
         time.sleep(0.4)
         d.type(link)
         s = d.dump()
         got = next((x.text for x in s.nodes if x.cls.endswith("EditText")), "")
         if got != link:
-            raise RuntimeError(f"link field mismatch len={len(got)} want={len(link)}")
+            return f"link field mismatch len={len(got)} want={len(link)}"
         d.key(111)
         time.sleep(0.4)
         s, cont = d.wait(lambda s: next((x for x in s.find(desc="Continue") if x.clickable), None), 5)
+        if not cont:
+            return "no Continue button"
         d.tap(cont)
-        end = time.time() + 90
+        end = time.time() + PAIR_WAIT
         while time.time() < end:
             s = d.dump()
             if self.tabs_visible(s):
-                return
+                return None
+            if s.first(text=r"Can.t reach your laptop"):
+                return "the app shows \"Can't reach your laptop\""
             for label in ("Allow", "It matches", "Pair", "Not now", "Skip"):
                 n = s.first(text=label)
                 if n:
                     d.tap(n)
                     time.sleep(0.8)
                     break
-        raise RuntimeError("not paired in 90 s")
+        return f"not paired in {PAIR_WAIT} s"
+
+    def pair(self):
+        """Up to PAIR_ATTEMPTS tries, each with a fresh pairing link and a freshly started app. A failed try saves a dump and logcat."""
+        why = "no attempt"
+        for attempt in range(1, PAIR_ATTEMPTS + 1):
+            link = self.srv("pair", self.a.srv)
+            link = re.sub(r"^http://127\.0\.0\.1:\d+", self.a.link_host, link)
+            why = self.pair_once(link)
+            if why is None:
+                if attempt > 1:
+                    self.note(f"paired on attempt {attempt}")
+                return
+            self.note(f"pairing attempt {attempt} of {PAIR_ATTEMPTS} failed: {why}")
+            self.save_diag(f"pair-fail-{attempt}", link)
+            if attempt < PAIR_ATTEMPTS:
+                self.d.sh(f"am force-stop {PKG}")
+                time.sleep(1.0)
+                self.d.sh(f"monkey -p {PKG} -c android.intent.category.LAUNCHER 1")
+                time.sleep(2.0)
+        raise RuntimeError(f"not paired after {PAIR_ATTEMPTS} attempts, last: {why}")
 
     def f1(self):
         self.open_bot("Developer")
@@ -257,6 +321,56 @@ class Run:
         if not ok:
             return "FAIL", f"reply bar quote is {len(q)} chars, prefix_match={LONG_REPLY.startswith(body)}: {q[:50]!r}"
         return "PASS", f"reply bar quotes the reply excerpt ({len(q)} chars, a prefix of the full {len(LONG_REPLY)})"
+
+    def long_press_reply(self, s, target, who, excerpt_ok, what):
+        """Long press `target`, expect the message menu, tap Reply, expect the reply bar to quote it. Returns (None, texts) or (reason, texts)."""
+        self.long_press(target)
+        s, menu = self.d.wait(lambda s: s.first(text="Copy text") and next((x for x in s.find(desc="Reply") if x.clickable), None), 5)
+        self.shot(f"f9-menu-{what}")
+        if not menu:
+            return f"long press on {what} opened no message menu (no Reply and Copy text)", []
+        self.d.tap(menu)
+        time.sleep(0.8)
+        s, bar = self.d.wait(lambda s: next((x for x in s.find(desc="Cancel reply") if x.clickable), None), 4)
+        self.shot(f"f9-reply-{what}")
+        if s.first(text="Copy text"):
+            return f"the message menu stayed open after Reply on {what}", []
+        if not bar:
+            return f"Reply in the long-press menu on {what} opened no reply bar", []
+        bar, texts = self.reply_bar(s)
+        if who not in texts:
+            return f"reply bar on {what} does not name {who!r} (shows {texts})", texts
+        if not any(excerpt_ok(t) for t in texts):
+            return f"reply bar on {what} does not quote the message (shows {texts})", texts
+        return None, texts
+
+    def f9(self):
+        self.say("Developer", "LPRESS", expect="LPRESS")
+        s, ok = self.d.wait(lambda s: s.first(text=r"Idle .*") and next((x for x in s.find(desc="LPRESS") if x.clickable), None), 15)
+        bubble = next((x for x in s.find(desc="LPRESS") if x.clickable), None)
+        if not bubble or not s.first(text="LPRESS"):
+            return "FAIL", "the sent message 'LPRESS' is not visible as a bubble"
+        why, _ = self.long_press_reply(s, bubble, "You", lambda t: t == "LPRESS", "the sent message")
+        if why:
+            return "FAIL", why
+        before = len(self.fake_lines())
+        self.say("Developer", "LPQ", expect="LPQ")
+        line = next(l for l in self.fake_lines()[before:] if "LPQ" in l)
+        if "Replying to my earlier message" not in line or "LPRESS" not in line:
+            return "FAIL", f"the bot received the reply without the quote of 'LPRESS': {line[-90:]!r}"
+        s, echo = self.d.wait(lambda s: next((n for n in s.nodes if n.text.startswith("Got it.\nI received this quote with your message") and s.drawn(n)), None), 15)
+        if not echo:
+            return "FAIL", "the bot's answer that echoes the quote never appeared as visible text"
+        why, _ = self.long_press_reply(s, echo, "Developer", lambda t: t.startswith("Got it.") and "I received this quote" in t, "the bot reply")
+        if why:
+            return "FAIL", why
+        s = self.d.dump()
+        bar = next((x for x in s.find(desc="Cancel reply") if x.clickable), None)
+        self.d.tap(bar)
+        time.sleep(0.5)
+        if next((x for x in self.d.dump().find(desc="Cancel reply") if x.clickable), None):
+            return "FAIL", "Cancel reply did not close the reply bar"
+        return "PASS", "long press on the sent 'LPRESS' and on the bot reply opened the menu, Reply showed the right name and text in the composer, the bot received the quote"
 
     def f3(self):
         s = self.d.dump()
@@ -337,8 +451,8 @@ class Run:
         self.d.wait(lambda s: s.first(text=r".*Ready to ship the release\?.*"), 15)
         self.leave_chat()
 
-    def wait_paths(self, mark):
-        end = time.time() + SLOW_SECONDS + 25
+    def wait_paths(self, mark, job_seconds):
+        end = time.time() + job_seconds + 25
         while time.time() < end:
             if self.paths_since(mark):
                 time.sleep(2.0)
@@ -352,11 +466,18 @@ class Run:
         self.say("Developer", f"SLOW{SLOW_SECONDS}", expect="SLOW")
         self.leave_chat()
         self.tab("Tasks")
-        paths = self.wait_paths(m)
-        self.shot("f5-tasks-at-reply")
+        s, running = self.d.wait(lambda s: s.first(text=r"Working · .*"), 5)
+        self.shot("f5-tasks-working")
+        paths = self.wait_paths(m, SLOW_SECONDS)
         open(f"{self.ev}/f5-paths.txt", "w").write("\n".join(paths))
+        s, idle = self.d.wait(lambda s: s.first(text="No bot is working right now."), 10)
+        self.shot("f5-tasks-at-reply")
+        if not running:
+            return "FAIL", "the Tasks tab showed no 'Working · …' card while Developer ran SLOW6"
+        if not idle:
+            return "FAIL", "after the reply the Tasks tab never showed 'No bot is working right now.'"
         if paths and set(paths) == {"in-app"}:
-            return "PASS", "server logged path in-app and nothing else while the Tasks tab was open"
+            return "PASS", "Tasks tab showed Developer 'Working · …', then 'No bot is working right now.'; server logged path in-app and nothing else"
         return "FAIL", f"server paths on the Tasks tab: {','.join(paths) or 'none'} (want in-app only)"
 
     def f4(self):
@@ -389,18 +510,27 @@ class Run:
         return "PASS", "1 card with Planner's unread question, none for the read Researcher question, none for Developer reports"
 
     def f6(self):
-        self.open_bot("Developer")
+        self.open_bot("Researcher")
         m = self.mark()
-        self.say("Developer", f"SLOW{SLOW_SECONDS}", expect="SLOW")
+        self.say("Researcher", f"SLOW{SLOW_BACKGROUND_SECONDS}", expect="SLOW")
         self.leave_chat()
         self.d.key(3)
-        paths = self.wait_paths(m)
+        paths = self.wait_paths(m, SLOW_BACKGROUND_SECONDS)
         open(f"{self.ev}/f6-paths.txt", "w").write("\n".join(paths))
         self.d.sh(f"monkey -p {PKG} -c android.intent.category.LAUNCHER 1")
         time.sleep(1.5)
-        if paths and set(paths) == {"push"}:
-            return "PASS", "server logged path push only with the app in the background"
-        return "FAIL", f"server paths in the background: {','.join(paths) or 'none'} (want push only)"
+        self.to_chats()
+        s, row = self.d.wait(lambda s: self.bot_row(s, "Researcher"), 8)
+        preview = None
+        if row:
+            l, t, r, b = row.box
+            preview = next((n for n in s.nodes if n.text == "Slow job finished." and s.drawn(n) and l <= n.center[0] <= r and t <= n.center[1] <= b), None)
+        self.shot("f6-back-in-app")
+        if not (paths and set(paths) == {"push"}):
+            return "FAIL", f"server paths in the background: {','.join(paths) or 'none'} (want push only)"
+        if not preview:
+            return "FAIL", "back in the app the Researcher row does not show the reply 'Slow job finished.' as its preview"
+        return "PASS", "server logged path push only with the app in the background; back in the app the Researcher row shows 'Slow job finished.'"
 
     def f8(self):
         bad = []
@@ -409,12 +539,15 @@ class Run:
         if row:
             self.d.tap(row)
             time.sleep(1.0)
-            s, c = self.d.wait(lambda s: s.first(desc=r"Message Researcher…"), 8)
+            s, c = self.d.wait(lambda s: s.first(desc=r"Message Researcher…") and s.first(text=r"Idle .*"), 8)
             if not c:
                 bad.append("chats-open")
+            elif not s.first(text=r".*Ready to ship the release\?.*"):
+                bad.append("chats-open-wrong-chat")
             self.d.key(4)
             time.sleep(1.0)
-            if not self.tabs_visible(self.d.dump()):
+            s = self.d.dump()
+            if not (self.tabs_visible(s) and self.tabs_text_visible(s) and s.first(text="Search bots and chats")):
                 bad.append("chats-back")
         else:
             bad.append("chats-no-row")
@@ -423,19 +556,28 @@ class Run:
         if card:
             self.d.tap(card)
             time.sleep(1.0)
-            s, c = self.d.wait(lambda s: s.first(desc=r"Message Planner…"), 8)
+            s, c = self.d.wait(lambda s: s.first(desc=r"Message Planner…") and s.first(text=r"Idle .*"), 8)
             if not c:
                 bad.append("tasks-open")
+            elif not s.first(text=r".*Which build should go out tonight\?.*"):
+                bad.append("tasks-open-wrong-chat")
             self.d.key(4)
             time.sleep(1.0)
-            if not self.tabs_visible(self.d.dump()):
+            s = self.d.dump()
+            if not (self.tabs_visible(s) and self.tabs_text_visible(s) and s.first(text="Running now")):
                 bad.append("tasks-back")
         else:
             bad.append("tasks-no-card")
         self.tab("Computer")
+        s, c = self.d.wait(lambda s: s.first(text="THIS LAPTOP"), 6)
         self.shot("f8-computer")
+        if not c or not s.first(text="Computer"):
+            bad.append("computer-tab")
         self.tab("Files")
+        s, f = self.d.wait(lambda s: s.first(text="Files") and (s.first(text="No files yet") or s.first(text=r".*\.png")), 6)
         self.shot("f8-files")
+        if not f:
+            bad.append("files-tab")
         self.tab("Chats")
         pid = self.d.sh(f"pidof {PKG}").strip()
         log = self.d.run("logcat", "-d", timeout=60)
@@ -445,10 +587,10 @@ class Run:
         self.shot("f8-end")
         if bad or not pid or fatal or js:
             return "FAIL", f"steps failed: {','.join(bad) or 'none'}; pid={pid or 'none'} FATAL={fatal} JS-errors={js}"
-        return "PASS", f"chat opened and closed from Chats and from a Work card with the system Back key, Computer and Files visited, app pid {pid} alive, FATAL 0, JS errors 0"
+        return "PASS", f"Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid {pid} alive, FATAL 0, JS errors 0"
 
     def flows(self):
-        order = [(1, "chat-send-reply", self.f1), (7, "swipe-quote", self.f7), (3, "camera-entry-once", self.f3), (2, "pick-three-photos", self.f2),
+        order = [(1, "chat-send-reply", self.f1), (7, "swipe-quote", self.f7), (9, "long-press-reply", self.f9), (3, "camera-entry-once", self.f3), (2, "pick-three-photos", self.f2),
                  ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8)]
         only = set(self.a.only.split(",")) if self.a.only else None
         seed_secs = 0
@@ -490,10 +632,7 @@ def main():
         r.setup()
     except Exception as e:
         r.note(f"SETUP FAILED: {type(e).__name__}: {e}")
-        try:
-            r.shot("setup-fail")
-        except Exception:
-            pass
+        r.save_diag("setup-fail")
         return 2
     t = time.time()
     r.flows()
