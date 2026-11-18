@@ -103,7 +103,7 @@ import { chatMenuRows } from "../sheets/chatMenuRows";
 import { ContextUsedSheet } from "../sheets/ContextUsedSheet";
 import { RoutinesSheet } from "../sheets/RoutinesSheet";
 import { FilePreviewSheet } from "../sheets/FilePreviewSheet";
-import { MessageMenuSheet, type MessageMenuTarget } from "../sheets/MessageMenuSheet";
+import { MessageMenuSheet, type MessageSheetRequest } from "../sheets/MessageMenuSheet";
 import { NewChatSheet } from "../sheets/NewChatSheet";
 import { RenameChatSheet } from "../sheets/RenameChatSheet";
 import { SnoozeSheet } from "../sheets/SnoozeSheet";
@@ -167,7 +167,7 @@ export function ChatScreen({
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [renameThreadId, setRenameThreadId] = useState<string | null>(null);
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
-  const [messageMenu, setMessageMenu] = useState<MessageMenuTarget | null>(null);
+  const [messageSheet, setMessageSheet] = useState<MessageSheetRequest | null>(null);
   const [fileRequest, setFileRequest] = useState<FileOpenRequest | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -984,7 +984,7 @@ export function ChatScreen({
                 busy={running || archived}
                 latestMessageStatus={latestMessageStatus}
                 onReply={(quote) => setReplyTo(quote)}
-                onMessageMenu={setMessageMenu}
+                onMessageMenu={(message) => setMessageSheet({ kind: "menu", message })}
                 onOpenFile={(request) => setFileRequest(request)}
                 onOpenLink={(url) => {
                   void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
@@ -1177,15 +1177,16 @@ export function ChatScreen({
         onError={setActionError}
       />
       <MessageMenuSheet
-        target={messageMenu}
-        onClose={() => setMessageMenu(null)}
+        request={messageSheet}
+        onRequest={setMessageSheet}
+        onClose={() => setMessageSheet(null)}
         onReply={(target) => {
           setReplyTo({
             messageId: target.messageId,
             name: target.name,
             excerpt: target.text.slice(0, 300),
           });
-          setMessageMenu(null);
+          setMessageSheet(null);
         }}
       />
       <FilePreviewSheet

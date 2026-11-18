@@ -59,6 +59,7 @@ import {
 import type { BotAvatarShape } from "@t3tools/contracts";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import type { MessageMenuTarget } from "../sheets/MessageMenuSheet";
 import { BotAvatar } from "../shell/BotAvatar";
 import { useHighRefresh } from "../display/useHighRefresh";
 import { tokens } from "../shell/tokens";
@@ -610,9 +611,7 @@ function BlockBody({ block, onOpenFile, onOpenLink, tone }: BlockProps) {
     case "code":
       return (
         <View style={styles.codeBlock}>
-          <Text style={styles.codeText} selectable>
-            {block.text}
-          </Text>
+          <Text style={styles.codeText}>{block.text}</Text>
         </View>
       );
     case "bullet": {
@@ -981,12 +980,7 @@ interface RowShared {
   readonly botName: string;
   readonly currentUserId: string;
   readonly onReply: (quote: PersonalReplyQuote) => void;
-  readonly onMessageMenu: (message: {
-    readonly messageId: string;
-    readonly name: string;
-    readonly text: string;
-    readonly sentAt: Date | null;
-  }) => void;
+  readonly onMessageMenu: (message: MessageMenuTarget) => void;
   readonly onOpenFile: ((request: FileOpenRequest) => void) | undefined;
   readonly onOpenLink: ((href: string) => void) | undefined;
   readonly onChoose: ((text: string) => Promise<boolean>) | undefined;
@@ -1154,6 +1148,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
                 name: item.speaker.name,
                 text: body,
                 sentAt,
+                streaming: message.streaming,
               })
             }
             style={[
@@ -1237,6 +1232,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
                   name: "You",
                   text,
                   sentAt,
+                  streaming: false,
                 })
               }
             />
@@ -1278,6 +1274,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
               name: botName,
               text: body,
               sentAt,
+              streaming: message.streaming,
             })
           }
           style={[
@@ -1360,12 +1357,7 @@ export function MessageList({
   readonly busy: boolean;
   readonly latestMessageStatus: LatestMessageReadStatus | null;
   readonly onReply: (quote: PersonalReplyQuote) => void;
-  readonly onMessageMenu: (message: {
-    readonly messageId: string;
-    readonly name: string;
-    readonly text: string;
-    readonly sentAt: Date | null;
-  }) => void;
+  readonly onMessageMenu: (message: MessageMenuTarget) => void;
   readonly onOpenFile: ((request: FileOpenRequest) => void) | undefined;
   readonly onOpenLink: ((href: string) => void) | undefined;
   /** Sends an option from a reply's choices block; absent where nothing can be sent. */

@@ -1,8 +1,10 @@
 import * as Clipboard from "expo-clipboard";
-import { useEffect, useState } from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { useState } from "react";
+import { StyleSheet, Text } from "react-native";
 
+import type { TextHit } from "../chat/readerDoc";
 import { tokens } from "../shell/tokens";
+import { MessageReader } from "./MessageReader";
 import { SheetAction, SheetCancel, SheetShell } from "./SheetShell";
 
 export interface MessageMenuTarget {
@@ -10,77 +12,72 @@ export interface MessageMenuTarget {
   readonly name: string;
   readonly text: string;
   readonly sentAt: Date | null;
+  /** True when the reply was still growing as the menu opened. */
+  readonly streaming: boolean;
 }
 
+/** A selection hit exists only in select mode: a menu with a preselected word cannot be built. */
+export type MessageSheetRequest =
+  | { readonly kind: "menu"; readonly message: MessageMenuTarget }
+  | { readonly kind: "select"; readonly message: MessageMenuTarget; readonly hit: TextHit | null };
+
 export function MessageMenuSheet({
-  target,
+  request,
+  onRequest,
   onClose,
   onReply,
 }: {
-  readonly target: MessageMenuTarget | null;
+  readonly request: MessageSheetRequest | null;
+  readonly onRequest: (request: MessageSheetRequest) => void;
   readonly onClose: () => void;
   readonly onReply: (target: MessageMenuTarget) => void;
 }) {
-  const [selecting, setSelecting] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (target !== null) {
-      // eslint-disable-next-line react/set-state-in-effect -- a new target starts a fresh menu
-      setSelecting(false);
-      setCopied(false);
-    }
-  }, [target]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const message = request?.message ?? null;
+  const copied = message !== null && copiedId === message.messageId;
+  const close = () => {
+    setCopiedId(null);
+    onClose();
+  };
 
   return (
     <>
-      <SheetShell visible={target !== null && !selecting} title="Message" onClose={onClose}>
+      <SheetShell visible={request?.kind === "menu"} title="Message" onClose={close}>
         <SheetAction
           label="Reply"
           onPress={() => {
-            if (target !== null) {
-              onReply(target);
-              onClose();
+            if (message !== null) {
+              onReply(message);
+              close();
             }
           }}
         />
         <SheetAction
           label={copied ? "Copied" : "Copy text"}
           onPress={() => {
-            if (target === null) return;
-            void Clipboard.setStringAsync(target.text).then(() => setCopied(true));
+            if (message === null) return;
+            void Clipboard.setStringAsync(message.text).then(() => setCopiedId(message.messageId));
           }}
         />
-        <SheetAction label="Select text" onPress={() => setSelecting(true)} />
-        {target?.sentAt != null ? (
+        <SheetAction
+          label="Select text"
+          onPress={() => {
+            if (message !== null) onRequest({ kind: "select", message, hit: null });
+          }}
+        />
+        {message?.sentAt != null ? (
           <Text style={styles.sentAt}>
-            {`Sent ${target.sentAt.toLocaleDateString([], {
+            {`Sent ${message.sentAt.toLocaleDateString([], {
               weekday: "long",
               day: "numeric",
               month: "long",
-            })}, ${target.sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+            })}, ${message.sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
           </Text>
         ) : null}
-        <SheetCancel onPress={onClose} />
+        <SheetCancel onPress={close} />
       </SheetShell>
-      <SheetShell
-        visible={target !== null && selecting}
-        title="Select text"
-        onClose={() => {
-          setSelecting(false);
-          onClose();
-        }}
-      >
-        <View style={styles.selectBody}>
-          <TextInput
-            value={target?.text ?? ""}
-            editable={false}
-            multiline
-            selectTextOnFocus
-            accessibilityLabel="Message text"
-            style={styles.selectInput}
-          />
-        </View>
+      <SheetShell visible={request?.kind === "select"} title="Select text" onClose={close}>
+        <MessageReader text={message?.text ?? ""} />
       </SheetShell>
     </>
   );
@@ -93,18 +90,5 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     paddingHorizontal: 12,
     paddingVertical: 8,
-  },
-  selectBody: { padding: 12, maxHeight: 460 },
-  selectInput: {
-    minHeight: 220,
-    color: tokens.text,
-    fontSize: 15,
-    lineHeight: 21,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: tokens.border,
-    backgroundColor: tokens.bg,
-    padding: 12,
-    textAlignVertical: "top",
   },
 });
