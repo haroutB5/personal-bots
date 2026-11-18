@@ -69,11 +69,15 @@ import type { ChatEnvironment } from "./chatEnvironment";
 import type { FileOpenRequest } from "./fileOpenRequest";
 import {
   claimsReplySwipe,
-  opensMessageMenu,
+  LONG_PRESS_MS,
   pendingNotArrived,
   scrollIndexForItem,
   TABLE_CELL_MIN_WIDTH,
   tableColumnWidths,
+  touchStep,
+  type Point,
+  type TouchEvent as TouchInput,
+  type TouchState,
 } from "./messageListModel";
 import {
   createRowReverser,
@@ -675,44 +679,58 @@ function SentAt({ at, align }: { readonly at: Date; readonly align: "start" | "e
   );
 }
 
-const LONG_PRESS_MS = 350;
-const MESSAGE_ACCESSIBILITY_ACTIONS = [{ name: "longpress" }];
+const MESSAGE_ACCESSIBILITY_ACTIONS = [
+  { name: "longpress" },
+  { name: "selectText", label: "Select text" },
+];
 
 /**
- * A long-press target that never claims the touch responder, so a table's
- * horizontal scroller keeps its drag. A still finger on the body opens the
- * menu, unless the touch began on a link, file chip or choice button; the body
- * stays one accessible node with the menu as its long-press action.
+ * A touch target that never claims the touch responder, so a table's
+ * horizontal scroller keeps its drag. `touchStep` reads the raw touches. A
+ * touch that began on a link, file chip or choice button is theirs.
  */
-function LongPressSurface({
+function MessageTouchSurface({
   onLongPress,
+  onSelectText,
   style,
   children,
 }: {
   readonly onLongPress: () => void;
+  readonly onSelectText: (point: Point | null) => void;
   readonly style: StyleProp<ViewStyle>;
   readonly children: React.ReactNode;
 }) {
+  const touch = useRef<TouchState>({ kind: "idle" });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const origin = useRef<{ readonly x: number; readonly y: number } | null>(null);
-  const latest = useRef<{ readonly x: number; readonly y: number } | null>(null);
-  const startedOnInteractive = useRef(false);
-  const markInteractive = useCallback(() => {
-    startedOnInteractive.current = true;
-  }, []);
-  const cancel = useCallback(() => {
+  const interactiveEarly = useRef(false);
+  const stopTimer = useCallback(() => {
     if (timer.current !== null) {
       clearTimeout(timer.current);
       timer.current = null;
     }
-    origin.current = null;
-    latest.current = null;
   }, []);
-  const reset = useCallback(() => {
-    cancel();
-    startedOnInteractive.current = false;
-  }, [cancel]);
-  useEffect(() => reset, [reset]);
+  const markInteractive = useCallback(() => {
+    interactiveEarly.current = true;
+    touch.current = touchStep(touch.current, { kind: "interactive" }).state;
+  }, []);
+  useEffect(
+    () => () => {
+      stopTimer();
+      touch.current = { kind: "idle" };
+    },
+    [stopTimer],
+  );
+  const send = (event: TouchInput) => {
+    const step = touchStep(touch.current, event);
+    touch.current = step.state;
+    if (step.effect.kind === "menu") onLongPress();
+    else if (step.effect.kind === "select") onSelectText(step.effect.point);
+  };
+  const end = (event: TouchInput) => {
+    stopTimer();
+    interactiveEarly.current = false;
+    send(event);
+  };
   return (
     <MarkInteractiveTouchProvider value={markInteractive}>
       <View
@@ -721,35 +739,24 @@ function LongPressSurface({
         accessibilityActions={MESSAGE_ACCESSIBILITY_ACTIONS}
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === "longpress") onLongPress();
+          if (event.nativeEvent.actionName === "selectText") onSelectText(null);
         }}
         onTouchStart={(event) => {
-          cancel();
-          const { pageX, pageY } = event.nativeEvent;
-          origin.current = { x: pageX, y: pageY };
-          latest.current = { x: pageX, y: pageY };
+          stopTimer();
+          const { pageX, pageY, timestamp } = event.nativeEvent;
+          send({ kind: "down", at: timestamp, point: { x: pageX, y: pageY } });
+          if (interactiveEarly.current) send({ kind: "interactive" });
           timer.current = setTimeout(() => {
             timer.current = null;
-            const start = origin.current;
-            const end = latest.current;
-            origin.current = null;
-            latest.current = null;
-            const interactive = startedOnInteractive.current;
-            startedOnInteractive.current = false;
-            if (
-              start !== null &&
-              end !== null &&
-              opensMessageMenu(interactive, end.x - start.x, end.y - start.y)
-            ) {
-              onLongPress();
-            }
+            send({ kind: "held" });
           }, LONG_PRESS_MS);
         }}
         onTouchMove={(event) => {
           const { pageX, pageY } = event.nativeEvent;
-          latest.current = { x: pageX, y: pageY };
+          send({ kind: "move", point: { x: pageX, y: pageY } });
         }}
-        onTouchEnd={reset}
-        onTouchCancel={reset}
+        onTouchEnd={(event) => end({ kind: "up", at: event.nativeEvent.timestamp })}
+        onTouchCancel={() => end({ kind: "cancel" })}
       >
         {children}
       </View>
@@ -974,6 +981,12 @@ function PendingBubble({
 }
 
 /** What every row shares. A new object here draws every row again, so it is rebuilt only for a real change. */
+/** A double tap on a bot message: the message and where the second tap landed (null from TalkBack). */
+export interface SelectTextRequest {
+  readonly message: MessageMenuTarget;
+  readonly point: Point | null;
+}
+
 interface RowShared {
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
@@ -981,6 +994,7 @@ interface RowShared {
   readonly currentUserId: string;
   readonly onReply: (quote: PersonalReplyQuote) => void;
   readonly onMessageMenu: (message: MessageMenuTarget) => void;
+  readonly onSelectText: (request: SelectTextRequest) => void;
   readonly onOpenFile: ((request: FileOpenRequest) => void) | undefined;
   readonly onOpenLink: ((href: string) => void) | undefined;
   readonly onChoose: ((text: string) => Promise<boolean>) | undefined;
@@ -1009,6 +1023,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
     currentUserId,
     onReply,
     onMessageMenu,
+    onSelectText,
     onOpenFile,
     onOpenLink,
     onChoose,
@@ -1127,6 +1142,13 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
     const body = reply.body;
     const sentAt = Number.isNaN(Date.parse(message.createdAt)) ? null : new Date(message.createdAt);
     const speaker = inputs.speaker;
+    const botTarget: MessageMenuTarget = {
+      messageId: String(message.id),
+      name: item.speaker.name,
+      text: body,
+      sentAt,
+      streaming: message.streaming,
+    };
     return (
       <View style={styles.messageRowStart}>
         <SwipeMessageRow
@@ -1141,16 +1163,9 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
             )
           }
         >
-          <LongPressSurface
-            onLongPress={() =>
-              onMessageMenu({
-                messageId: String(message.id),
-                name: item.speaker.name,
-                text: body,
-                sentAt,
-                streaming: message.streaming,
-              })
-            }
+          <MessageTouchSurface
+            onLongPress={() => onMessageMenu(botTarget)}
+            onSelectText={(point) => onSelectText({ message: botTarget, point })}
             style={[
               styles.assistantPress,
               markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
@@ -1199,7 +1214,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
                 </View>
               ),
             )}
-          </LongPressSurface>
+          </MessageTouchSurface>
         </SwipeMessageRow>
       </View>
     );
@@ -1253,6 +1268,13 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
   if (text.length === 0) return null;
   const reply = replyBody(text, message.streaming, inputs.choice, onChoose);
   const body = reply.body;
+  const botTarget: MessageMenuTarget = {
+    messageId: String(message.id),
+    name: botName,
+    text: body,
+    sentAt,
+    streaming: message.streaming,
+  };
   return (
     <View style={styles.messageRowStart}>
       <SwipeMessageRow
@@ -1267,16 +1289,9 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
           )
         }
       >
-        <LongPressSurface
-          onLongPress={() =>
-            onMessageMenu({
-              messageId: String(message.id),
-              name: botName,
-              text: body,
-              sentAt,
-              streaming: message.streaming,
-            })
-          }
+        <MessageTouchSurface
+          onLongPress={() => onMessageMenu(botTarget)}
+          onSelectText={(point) => onSelectText({ message: botTarget, point })}
           style={[
             styles.assistantPress,
             markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
@@ -1312,7 +1327,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
             <ChoiceButtons options={reply.options} state={reply.state} onChoose={onChoose} />
           ) : null}
           {inputs.contextUsed ? <Text style={styles.contextUsed}>{"Context used ⌄"}</Text> : null}
-        </LongPressSurface>
+        </MessageTouchSurface>
       </SwipeMessageRow>
     </View>
   );
@@ -1332,6 +1347,7 @@ export function MessageList({
   latestMessageStatus,
   onReply,
   onMessageMenu,
+  onSelectText,
   onOpenFile,
   onOpenLink,
   onChoose,
@@ -1358,6 +1374,7 @@ export function MessageList({
   readonly latestMessageStatus: LatestMessageReadStatus | null;
   readonly onReply: (quote: PersonalReplyQuote) => void;
   readonly onMessageMenu: (message: MessageMenuTarget) => void;
+  readonly onSelectText: (request: SelectTextRequest) => void;
   readonly onOpenFile: ((request: FileOpenRequest) => void) | undefined;
   readonly onOpenLink: ((href: string) => void) | undefined;
   /** Sends an option from a reply's choices block; absent where nothing can be sent. */
@@ -1408,6 +1425,7 @@ export function MessageList({
   const handlerProps = {
     onReply,
     onMessageMenu,
+    onSelectText,
     onOpenFile,
     onOpenLink,
     onChoose,
@@ -1433,6 +1451,7 @@ export function MessageList({
       currentUserId,
       onReply: (quote) => latestHandlers.current.onReply(quote),
       onMessageMenu: (message) => latestHandlers.current.onMessageMenu(message),
+      onSelectText: (request) => latestHandlers.current.onSelectText(request),
       onOpenFile: hasOpenFile
         ? (request) => latestHandlers.current.onOpenFile?.(request)
         : undefined,

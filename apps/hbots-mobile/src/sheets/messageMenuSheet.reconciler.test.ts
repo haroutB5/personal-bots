@@ -1,6 +1,6 @@
 // The Message sheet through React's reconciler with stand-in leaves: what the select view draws.
 import { createElement, act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("react-native", async () => {
@@ -59,6 +59,13 @@ function hosts(
   return tree.root.findAll((node) => node.type === type && where(node.props));
 }
 
+/** What the user reads in a Text: its own string children and those of the Text nested in it. */
+function visibleText(node: ReactTestInstance): string {
+  return node.children
+    .map((child) => (typeof child === "string" ? child : visibleText(child)))
+    .join("");
+}
+
 afterEach(() => {
   act(() => renderer?.unmount());
   renderer = null;
@@ -71,7 +78,16 @@ describe("MessageMenuSheet select view", () => {
     const reader = hosts(tree, "Text", (props) => props.accessibilityLabel === "Message text");
     expect(reader).toHaveLength(1);
     expect(reader[0]!.props.selectable).toBe(true);
-    expect(reader[0]!.props.children).toBe(MESSAGE.text);
+    expect(visibleText(reader[0]!)).toBe("Plan\n\nRun fast now.");
+  });
+
+  it("C3 a reply that was still streaming shows the note above the text, a finished one does not", () => {
+    const note = "Still writing. This is the text so far.";
+    const live = mount({ kind: "select", message: { ...MESSAGE, streaming: true }, hit: null });
+    expect(hosts(live, "Text").some((node) => node.props.children === note)).toBe(true);
+    act(() => renderer?.unmount());
+    const done = mount({ kind: "select", message: MESSAGE, hit: null });
+    expect(hosts(done, "Text").some((node) => node.props.children === note)).toBe(false);
   });
 
   it("C2 the menu's Select text row asks for select mode on the same message, nothing preselected", () => {

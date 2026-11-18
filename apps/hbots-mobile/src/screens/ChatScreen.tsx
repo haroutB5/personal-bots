@@ -985,6 +985,9 @@ export function ChatScreen({
                 latestMessageStatus={latestMessageStatus}
                 onReply={(quote) => setReplyTo(quote)}
                 onMessageMenu={(message) => setMessageSheet({ kind: "menu", message })}
+                onSelectText={({ message }) =>
+                  setMessageSheet({ kind: "select", message, hit: null })
+                }
                 onOpenFile={(request) => setFileRequest(request)}
                 onOpenLink={(url) => {
                   void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));

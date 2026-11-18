@@ -127,6 +127,7 @@ function props(over: Record<string, unknown> = {}): Record<string, unknown> {
     latestMessageStatus: null,
     onReply: () => undefined,
     onMessageMenu: () => undefined,
+    onSelectText: () => undefined,
     onOpenFile: () => undefined,
     onOpenLink: () => undefined,
     onCancelQueued: () => undefined,
@@ -533,5 +534,75 @@ describe("MessageList through the reconciler", () => {
     const swipe = hosts("Animated.View")[0]!;
     act(() => swipe.props.panConfig.onPanResponderRelease({}, { dx: 40, dy: 0 }));
     expect(onReply).not.toHaveBeenCalled();
+  });
+});
+
+describe("double tap on a bot message", () => {
+  const surface = () => hosts("View", (node) => node.props.accessibilityActions !== undefined)[0]!;
+  const down = (at: number) =>
+    act(() =>
+      surface().props.onTouchStart({ nativeEvent: { pageX: 100, pageY: 200, timestamp: at } }),
+    );
+  const up = (at: number) =>
+    act(() => surface().props.onTouchEnd({ nativeEvent: { timestamp: at } }));
+  const tap = (at: number) => {
+    down(at);
+    up(at + 40);
+  };
+
+  it("D1 two quick taps select once with that message and never open the menu", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const onSelectText = vi.fn();
+    const onMessageMenu = vi.fn();
+    mount(
+      props({ items: [message("a0", "assistant", "hello world")], onSelectText, onMessageMenu }),
+    );
+    tap(0);
+    tap(140);
+    expect(onSelectText).toHaveBeenCalledTimes(1);
+    expect(onSelectText.mock.calls[0]![0]).toMatchObject({
+      message: { messageId: "a0", text: "hello world", streaming: false },
+      point: { x: 100, y: 200 },
+    });
+    expect(onMessageMenu).not.toHaveBeenCalled();
+  });
+
+  it("D2 one tap calls neither", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const onSelectText = vi.fn();
+    const onMessageMenu = vi.fn();
+    mount(
+      props({ items: [message("a0", "assistant", "hello world")], onSelectText, onMessageMenu }),
+    );
+    tap(0);
+    act(() => vi.advanceTimersByTime(1000));
+    expect(onSelectText).not.toHaveBeenCalled();
+    expect(onMessageMenu).not.toHaveBeenCalled();
+  });
+
+  it("D3 a 350 ms hold opens the menu once", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const onSelectText = vi.fn();
+    const onMessageMenu = vi.fn();
+    mount(
+      props({ items: [message("a0", "assistant", "hello world")], onSelectText, onMessageMenu }),
+    );
+    down(0);
+    act(() => vi.advanceTimersByTime(350));
+    up(400);
+    expect(onMessageMenu).toHaveBeenCalledTimes(1);
+    expect(onSelectText).not.toHaveBeenCalled();
+  });
+
+  it("D4 text that grows after the double tap leaves the captured message as it was", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const onSelectText = vi.fn();
+    const streaming = (text: string) => [message("a0", "assistant", text, { streaming: true })];
+    mount(props({ items: streaming("first part"), onSelectText }));
+    tap(0);
+    tap(140);
+    update(props({ items: streaming("first part and a lot more"), onSelectText }));
+    const request = onSelectText.mock.calls[0]![0];
+    expect(request.message).toMatchObject({ text: "first part", streaming: true });
   });
 });

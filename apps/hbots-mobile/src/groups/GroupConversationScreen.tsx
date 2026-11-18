@@ -412,6 +412,7 @@ export function GroupConversationScreen({
             latestMessageStatus={null}
             onReply={(_quote: PersonalReplyQuote) => undefined}
             onMessageMenu={() => undefined}
+            onSelectText={() => undefined}
             onOpenFile={undefined}
             onOpenLink={(url) => {
               void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));
