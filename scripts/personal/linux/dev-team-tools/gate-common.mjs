@@ -66,7 +66,7 @@ function readerFor(scope,repo,sha) {
 const repoRelative=(repo,file)=>{
   const inside=(a,b)=>{const rel=path.relative(a,b);return rel!==''&&!rel.startsWith('..')&&!path.isAbsolute(rel)?rel.split(path.sep).join('/'):null};
   let real=null;
-  try { real=inside(fs.realpathSync(repo),fs.realpathSync(file)) } catch { /* a missing file has no real path */ }
+  try { real=inside(fs.realpathSync(repo),fs.realpathSync(file)) } catch { real=null }
   return inside(repo,file)??real;
 };
 const showFile=(repo,rev,rel)=>{
