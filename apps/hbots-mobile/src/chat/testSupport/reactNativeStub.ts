@@ -4,6 +4,7 @@
 import { createElement, PureComponent, type ReactNode } from "react";
 
 const host = (name: string) => (props: Record<string, unknown>) => createElement(name, props);
+export const findNodeHandle = (): number | null => null;
 export const View = host("View");
 export const Text = host("Text");
 export const ScrollView = host("ScrollView");

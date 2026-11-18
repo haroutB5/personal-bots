@@ -43,6 +43,7 @@ import {
 import {
   Animated,
   FlatList,
+  findNodeHandle,
   PanResponder,
   Pressable,
   ScrollView,
@@ -696,10 +697,12 @@ function MessageTouchSurface({
   children,
 }: {
   readonly onLongPress: () => void;
-  readonly onSelectText: (point: Point | null) => void;
+  readonly onSelectText: (point: Point | null, surfaceTag: number | null) => void;
   readonly style: StyleProp<ViewStyle>;
   readonly children: React.ReactNode;
 }) {
+  const surface = useRef<View>(null);
+  const surfaceTag = () => (surface.current === null ? null : findNodeHandle(surface.current));
   const touch = useRef<TouchState>({ kind: "idle" });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactiveEarly = useRef(false);
@@ -724,7 +727,7 @@ function MessageTouchSurface({
     const step = touchStep(touch.current, event);
     touch.current = step.state;
     if (step.effect.kind === "menu") onLongPress();
-    else if (step.effect.kind === "select") onSelectText(step.effect.point);
+    else if (step.effect.kind === "select") onSelectText(step.effect.point, surfaceTag());
   };
   const end = (event: TouchInput) => {
     stopTimer();
@@ -734,12 +737,13 @@ function MessageTouchSurface({
   return (
     <MarkInteractiveTouchProvider value={markInteractive}>
       <View
+        ref={surface}
         style={style}
         accessible
         accessibilityActions={MESSAGE_ACCESSIBILITY_ACTIONS}
         onAccessibilityAction={(event) => {
           if (event.nativeEvent.actionName === "longpress") onLongPress();
-          if (event.nativeEvent.actionName === "selectText") onSelectText(null);
+          if (event.nativeEvent.actionName === "selectText") onSelectText(null, surfaceTag());
         }}
         onTouchStart={(event) => {
           stopTimer();
@@ -985,6 +989,7 @@ function PendingBubble({
 export interface SelectTextRequest {
   readonly message: MessageMenuTarget;
   readonly point: Point | null;
+  readonly surfaceTag: number | null;
 }
 
 interface RowShared {
@@ -1165,7 +1170,9 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
         >
           <MessageTouchSurface
             onLongPress={() => onMessageMenu(botTarget)}
-            onSelectText={(point) => onSelectText({ message: botTarget, point })}
+            onSelectText={(point, surfaceTag) =>
+              onSelectText({ message: botTarget, point, surfaceTag })
+            }
             style={[
               styles.assistantPress,
               markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
@@ -1291,7 +1298,9 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
       >
         <MessageTouchSurface
           onLongPress={() => onMessageMenu(botTarget)}
-          onSelectText={(point) => onSelectText({ message: botTarget, point })}
+          onSelectText={(point, surfaceTag) =>
+            onSelectText({ message: botTarget, point, surfaceTag })
+          }
           style={[
             styles.assistantPress,
             markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,

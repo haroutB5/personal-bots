@@ -77,7 +77,11 @@ export function MessageMenuSheet({
         <SheetCancel onPress={close} />
       </SheetShell>
       <SheetShell visible={request?.kind === "select"} title="Select text" onClose={close}>
-        <MessageReader text={message?.text ?? ""} streaming={message?.streaming ?? false} />
+        <MessageReader
+          text={message?.text ?? ""}
+          streaming={message?.streaming ?? false}
+          hit={request?.kind === "select" ? request.hit : null}
+        />
       </SheetShell>
     </>
   );

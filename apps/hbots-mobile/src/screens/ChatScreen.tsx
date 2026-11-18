@@ -81,7 +81,8 @@ import { useFreshChipIds } from "../chat/useFreshChipIds";
 import { chatKeyboardLayout } from "../chat/chatKeyboardLayout";
 import { lastTurnStartMessageId } from "../chat/cards/contextTurn";
 import { RulesUsageCard } from "../chat/cards/RulesUsageCard";
-import { MessageList } from "../chat/MessageList";
+import { MessageList, type SelectTextRequest } from "../chat/MessageList";
+import { textHitAt } from "../chat/textSelectNative";
 import type { MessageListHandle } from "../chat/MessageList";
 import { useChatCards } from "../chat/useChatCards";
 import { PermissionCard } from "../notifications/PermissionCard";
@@ -168,6 +169,11 @@ export function ChatScreen({
   const [renameThreadId, setRenameThreadId] = useState<string | null>(null);
   const [snoozeThreadId, setSnoozeThreadId] = useState<string | null>(null);
   const [messageSheet, setMessageSheet] = useState<MessageSheetRequest | null>(null);
+  const openSelectText = async ({ message, point, surfaceTag }: SelectTextRequest) => {
+    const hit =
+      point === null || surfaceTag === null ? null : await textHitAt(surfaceTag, point.x, point.y);
+    setMessageSheet({ kind: "select", message, hit });
+  };
   const [fileRequest, setFileRequest] = useState<FileOpenRequest | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -985,9 +991,7 @@ export function ChatScreen({
                 latestMessageStatus={latestMessageStatus}
                 onReply={(quote) => setReplyTo(quote)}
                 onMessageMenu={(message) => setMessageSheet({ kind: "menu", message })}
-                onSelectText={({ message }) =>
-                  setMessageSheet({ kind: "select", message, hit: null })
-                }
+                onSelectText={(request) => void openSelectText(request)}
                 onOpenFile={(request) => setFileRequest(request)}
                 onOpenLink={(url) => {
                   void Linking.openURL(url).catch(() => setActionError("Couldn't open that link."));

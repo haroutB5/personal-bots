@@ -12,6 +12,10 @@ vi.mock("react-native", async () => {
     useWindowDimensions: () => ({ width: 360, height: 785 }),
   };
 });
+vi.mock("../chat/textSelectNative", () => ({
+  textHitAt: () => Promise.resolve(null),
+  selectWordAt: () => Promise.resolve(null),
+}));
 vi.mock("expo-clipboard", () => ({ setStringAsync: () => Promise.resolve(true) }));
 vi.mock("./SheetShell", async () => {
   const { createElement: h } = await import("react");

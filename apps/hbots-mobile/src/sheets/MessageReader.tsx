@@ -1,7 +1,21 @@
-import { useMemo } from "react";
-import { ScrollView, StyleSheet, Text, useWindowDimensions } from "react-native";
+import { useMemo, useRef } from "react";
+import {
+  findNodeHandle,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  type View,
+} from "react-native";
 
-import { readerDoc, type ReaderRun, type ReaderStyle } from "../chat/readerDoc";
+import {
+  anchorOffset,
+  readerDoc,
+  type ReaderRun,
+  type ReaderStyle,
+  type TextHit,
+} from "../chat/readerDoc";
+import { selectWordAt } from "../chat/textSelectNative";
 import { tokens } from "../shell/tokens";
 
 export const STREAMING_NOTE = "Still writing. This is the text so far.";
@@ -13,21 +27,45 @@ export const STREAMING_NOTE = "Still writing. This is the text so far.";
 export function MessageReader({
   text,
   streaming,
+  hit,
 }: {
   readonly text: string;
   readonly streaming: boolean;
+  readonly hit: TextHit | null;
 }) {
+  const scroller = useRef<ScrollView>(null);
+  const textNode = useRef<Text>(null);
+  const selectedFor = useRef<TextHit | null>(null);
+  const selectTapped = () => {
+    if (hit === null || selectedFor.current === hit) return;
+    selectedFor.current = hit;
+    const offset = anchorOffset(readerDoc(text), hit);
+    const tag =
+      textNode.current === null ? null : findNodeHandle(textNode.current as unknown as View);
+    if (offset === null || tag === null) return;
+    void selectWordAt(tag, offset).then((result) => {
+      if (result !== null)
+        scroller.current?.scrollTo({ y: Math.max(0, result.lineTop - 96), animated: false });
+    });
+  };
   const { height } = useWindowDimensions();
   const keyedRuns = useMemo(() => keyRuns(readerDoc(text).runs), [text]);
   return (
     <>
       {streaming ? <Text style={styles.note}>{STREAMING_NOTE}</Text> : null}
       <ScrollView
+        ref={scroller}
         style={[styles.scroll, { maxHeight: Math.round(height * 0.7) }]}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text selectable accessibilityLabel="Message text" style={styles.text}>
+        <Text
+          ref={textNode}
+          selectable
+          accessibilityLabel="Message text"
+          style={styles.text}
+          onTextLayout={selectTapped}
+        >
           {keyedRuns.map(({ key, run }) => (
             <Text key={key} style={RUN_STYLES[run.style]}>
               {run.text}
