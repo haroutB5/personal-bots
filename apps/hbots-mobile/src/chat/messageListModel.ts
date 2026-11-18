@@ -100,3 +100,109 @@ export function opensMessageMenu(
 ): boolean {
   return !startedOnInteractive && Math.abs(dx) <= slop && Math.abs(dy) <= slop;
 }
+
+/** A second tap within this long of the first starts text selection. */
+export const DOUBLE_TAP_MS = 300;
+/** The two taps of a double tap land within this many dp of each other. */
+export const DOUBLE_TAP_SLOP = 24;
+/** A finger held this long is a long press, which opens the message menu. */
+export const LONG_PRESS_MS = 350;
+
+export type Point = { readonly x: number; readonly y: number };
+
+export type TouchState =
+  | { readonly kind: "idle" }
+  | {
+      readonly kind: "pressing";
+      readonly at: number;
+      readonly origin: Point;
+      readonly latest: Point;
+      /** The touch began on a link, file chip or choice button. */
+      readonly interactive: boolean;
+      /** Set when this press is the second tap of a double tap. */
+      readonly after: { readonly at: number; readonly origin: Point } | null;
+    }
+  | { readonly kind: "tapped"; readonly at: number; readonly origin: Point };
+
+export type TouchEvent =
+  | { readonly kind: "down"; readonly at: number; readonly point: Point }
+  | { readonly kind: "move"; readonly point: Point }
+  | { readonly kind: "interactive" }
+  | { readonly kind: "up"; readonly at: number }
+  | { readonly kind: "cancel" }
+  | { readonly kind: "held" };
+
+export type TouchEffect =
+  | { readonly kind: "none" }
+  | { readonly kind: "menu" }
+  | { readonly kind: "select"; readonly point: Point };
+
+const NO_EFFECT: TouchEffect = { kind: "none" };
+const IDLE: TouchState = { kind: "idle" };
+
+/**
+ * One finger on a bot message. A still tap becomes `tapped`; a second tap soon
+ * and near enough gives `select`; a held finger gives `menu`; anything that
+ * moves, lands on a link or is cancelled gives nothing. Nothing waits for a
+ * single tap, so links stay immediate.
+ */
+export function touchStep(
+  state: TouchState,
+  event: TouchEvent,
+): { readonly state: TouchState; readonly effect: TouchEffect } {
+  switch (event.kind) {
+    case "down": {
+      const after =
+        state.kind === "tapped" &&
+        event.at - state.at <= DOUBLE_TAP_MS &&
+        Math.abs(event.point.x - state.origin.x) <= DOUBLE_TAP_SLOP &&
+        Math.abs(event.point.y - state.origin.y) <= DOUBLE_TAP_SLOP
+          ? { at: state.at, origin: state.origin }
+          : null;
+      return {
+        state: {
+          kind: "pressing",
+          at: event.at,
+          origin: event.point,
+          latest: event.point,
+          interactive: false,
+          after,
+        },
+        effect: NO_EFFECT,
+      };
+    }
+    case "move":
+      if (state.kind !== "pressing") return { state, effect: NO_EFFECT };
+      return {
+        state: { ...state, latest: event.point },
+        effect: NO_EFFECT,
+      };
+    case "interactive":
+      if (state.kind !== "pressing") return { state, effect: NO_EFFECT };
+      return { state: { ...state, interactive: true }, effect: NO_EFFECT };
+    case "up": {
+      if (state.kind !== "pressing") return { state: IDLE, effect: NO_EFFECT };
+      const still = opensMessageMenu(
+        state.interactive,
+        state.latest.x - state.origin.x,
+        state.latest.y - state.origin.y,
+      );
+      if (!still || event.at - state.at >= LONG_PRESS_MS) return { state: IDLE, effect: NO_EFFECT };
+      if (state.after !== null) {
+        return { state: IDLE, effect: { kind: "select", point: state.latest } };
+      }
+      return { state: { kind: "tapped", at: event.at, origin: state.origin }, effect: NO_EFFECT };
+    }
+    case "held": {
+      if (state.kind !== "pressing") return { state, effect: NO_EFFECT };
+      const opens = opensMessageMenu(
+        state.interactive,
+        state.latest.x - state.origin.x,
+        state.latest.y - state.origin.y,
+      );
+      return { state: IDLE, effect: opens ? { kind: "menu" } : NO_EFFECT };
+    }
+    case "cancel":
+      return { state: IDLE, effect: NO_EFFECT };
+  }
+}

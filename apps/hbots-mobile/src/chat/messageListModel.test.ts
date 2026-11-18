@@ -3,12 +3,17 @@ import { describe, expect, it } from "vite-plus/test";
 import type { MarkdownTable } from "./markdown";
 import {
   claimsReplySwipe,
+  LONG_PRESS_MS,
   LONG_PRESS_SLOP,
   opensMessageMenu,
   pendingNotArrived,
   scrollIndexForItem,
   TABLE_CELL_MAX_WIDTH,
   tableColumnWidths,
+  touchStep,
+  type TouchEffect,
+  type TouchEvent,
+  type TouchState,
 } from "./messageListModel";
 
 describe("scrollIndexForItem", () => {
@@ -98,5 +103,79 @@ describe("tableColumnWidths", () => {
   it("holds the maximum width for a word longer than the cap", () => {
     const [width] = tableColumnWidths(tableOf(["Command"], [["x".repeat(120)]]));
     expect(width).toBe(TABLE_CELL_MAX_WIDTH);
+  });
+});
+
+describe("touchStep", () => {
+  /** Plays a script of events and returns every effect it produced, in order. */
+  function play(events: ReadonlyArray<TouchEvent>): {
+    readonly effects: ReadonlyArray<TouchEffect>;
+    readonly state: TouchState;
+  } {
+    let state: TouchState = { kind: "idle" };
+    const effects: TouchEffect[] = [];
+    for (const event of events) {
+      const step = touchStep(state, event);
+      state = step.state;
+      if (step.effect.kind !== "none") effects.push(step.effect);
+    }
+    return { effects, state };
+  }
+  const down = (at: number, x = 100, y = 200): TouchEvent => ({
+    kind: "down",
+    at,
+    point: { x, y },
+  });
+  const up = (at: number): TouchEvent => ({ kind: "up", at });
+
+  it("A1 two taps 120 ms and 8 dp apart select at the second point", () => {
+    const { effects } = play([down(0), up(40), down(160, 108, 200), up(200)]);
+    expect(effects).toEqual([{ kind: "select", point: { x: 108, y: 200 } }]);
+  });
+
+  it("A2 two taps 400 ms apart do nothing", () => {
+    expect(play([down(0), up(40), down(440), up(480)]).effects).toEqual([]);
+  });
+
+  it("A3 two taps 40 dp apart do nothing", () => {
+    expect(play([down(0), up(40), down(160, 140, 200), up(200)]).effects).toEqual([]);
+  });
+
+  it("A4 a first tap on a link never counts toward a double tap", () => {
+    const events: TouchEvent[] = [down(0), { kind: "interactive" }, up(40), down(160), up(200)];
+    expect(play(events).effects).toEqual([]);
+  });
+
+  it("A5 a second touch held to the long press opens the menu, not the reader", () => {
+    const { effects } = play([down(0), up(40), down(160), { kind: "held" }, up(560)]);
+    expect(effects).toEqual([{ kind: "menu" }]);
+  });
+
+  it("A6 a second touch that moves 12 dp does nothing", () => {
+    const events: TouchEvent[] = [
+      down(0),
+      up(40),
+      down(160),
+      { kind: "move", point: { x: 100, y: 212 } },
+      up(200),
+    ];
+    expect(play(events).effects).toEqual([]);
+  });
+
+  it("A7 a single tap gives no effect and waits for a second one", () => {
+    const { effects, state } = play([down(0), up(40)]);
+    expect(effects).toEqual([]);
+    expect(state.kind).toBe("tapped");
+  });
+
+  it("A8 a tap that lasts as long as a long press is not a tap", () => {
+    const { state } = play([down(0), up(LONG_PRESS_MS + 1)]);
+    expect(state.kind).toBe("idle");
+  });
+
+  it("A9 a cancelled first touch forgets the tap", () => {
+    expect(
+      play([down(0), up(40), down(160), { kind: "cancel" }, down(200), up(240)]).effects,
+    ).toEqual([]);
   });
 });
