@@ -283,6 +283,45 @@ else console.log('Tests 3 passed (3)');`);
   assert.match(notes,/^- not run by any gate: packages\/shared\/src\/Orphan\.test\.ts$/m);
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
+test('a change that edits a gate command in its own gates file runs the base command and the edit is reported',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-linux-tools-test-'));
+ try {
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),gatesPath='scripts/personal/node/gates-linux.scoped.json';
+  fs.mkdirSync(repo);installScope(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  const fixture=path.join(root,'command.mjs');
+  fs.writeFileSync(fixture,`const kind=process.argv[2];
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
+else console.log('Tests 3 passed (3)');
+if(kind==='server-tests') console.log('MARK '+process.argv[3]);`);
+  const defsWith=(mark)=>withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':id==='server-tests'?` ${mark}`:''}`]})),id=>`node '${fixture}' ${id}`);
+  const writeGates=(mark)=>{fs.mkdirSync(path.dirname(path.join(repo,gatesPath)),{recursive:true});fs.writeFileSync(path.join(repo,gatesPath),JSON.stringify(defsWith(mark),null,1))};
+  fs.writeFileSync(path.join(repo,'source'),'fixture');writeGates('BASE-COMMAND');git('add','.');git('commit','-qm','base');
+  const base=git('rev-parse','HEAD');
+  writeGates('HEAD-EDITED-COMMAND');git('add','-A');git('commit','-qm','edit a gate command');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  fs.writeFileSync(path.join(releases,'current.txt'),`${base.slice(0,12)}\n`);
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',path.join(repo,gatesPath)];
+  const edited=/^gate command changed in this change: server-tests; the base command runs$/m;
+  const dry=node('gate-evidence.mjs',[...args,'--dry-run'],{env:{...process.env,HBOTS_HEAVY_JOB_HELD:''}});
+  assert.equal(dry.status,0,dry.stdout+dry.stderr);
+  assert.match(dry.stdout,edited);
+  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase())});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.match(r.stdout,edited);
+  const log=fs.readFileSync(path.join(dir,'gate-evidence-logs/server-tests.log'),'utf8');
+  assert.match(log,/MARK BASE-COMMAND/);
+  assert.doesNotMatch(log,/HEAD-EDITED-COMMAND/);
+  const evidence=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
+  assert.match(evidence.gates.find((gate)=>gate.id==='server-tests').commands[0].command,/BASE-COMMAND/);
+  assert.deepEqual(evidence.gateScope.gateChanges,['gate command changed in this change: server-tests; the base command runs']);
+  const notes=fs.readFileSync(path.join(repo,'docs/releases',fs.readdirSync(path.join(repo,'docs/releases'))[0]),'utf8');
+  assert.match(notes,/^- gate command changed in this change: server-tests; the base command runs$/m);
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
 test('server-tests gate runs two whole shards and one selected lane',()=>{
  const root=path.resolve(here,'../../../..');
  const defs=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.scoped.json'),'utf8'));

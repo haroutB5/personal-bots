@@ -379,6 +379,18 @@ NodeTest.describe("the planner command over real commits", () => {
     }),
   );
 
+  NodeTest.it("reads a commit whose body holds the old record and field separator bytes", () => {
+    const result = run(modeFile({ mode: "enforce" }), (repo) => [
+      edit(repo, 2, "first change\n\nbody with \x1e a record byte and \x1f a field byte\n\nVerified: ran the suite"),
+      edit(repo, 3, "second change\n\nnote \x1e\x1e\x1f\n\nVerified: none (comment only)"),
+      edit(repo, 4, "third change\n\nbody with \x1e and no stamp"),
+    ]);
+    NodeAssert.equal(result.code, 2, result.err);
+    NodeAssert.match(result.err, /FAIL verify stamp: 1 of 3 commits unstamped \(enforce; 1 stamped none, 0 exempt\)/);
+    NodeAssert.ok(result.err.includes(`  ${result.shas[2].slice(0, 10)} third change`));
+    NodeAssert.ok(!result.err.includes(result.shas[0].slice(0, 10)));
+  });
+
   const seal = (setup) => {
     let problems;
     withRepo(setup, ({ repo, trunk, dir }) => {

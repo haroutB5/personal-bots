@@ -891,35 +891,32 @@ export const gateDefsOfChange = (repo, base, head) =>
     headSource: gitFile(repo, head, GATES_FILE),
   });
 
-const FIELD = "\x1f";
-const RECORD = "\x1e";
+const COMMIT_FIELDS = 4;
 
+/** Git refuses a NUL byte in a commit message, so NUL is the one separator a message cannot hold. */
 function commitsOf(repo, base, head) {
-  const log = gitOut(repo, [
-    "log",
-    `--format=%H${FIELD}%P${FIELD}%s${FIELD}%b${RECORD}`,
-    `${base}..${head}`,
-  ]);
-  return log
-    .split(RECORD)
-    .map((record) => record.replace(/^\n/, ""))
-    .filter(Boolean)
-    .map((record) => {
-      const [sha, parents, subject, body] = record.split(FIELD);
-      const paths = RELEASE_SUBJECT.test(subject)
-        ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean)
-        : [];
-      return {
-        sha,
-        parents: parents.split(" ").filter(Boolean).length,
-        subject,
-        body,
-        paths,
-        packageVersionOnly:
-          paths.includes(PACKAGE_FILE) &&
-          versionOnlyChange(gitFile(repo, `${sha}^`, PACKAGE_FILE), gitFile(repo, sha, PACKAGE_FILE)),
-      };
-    });
+  const fields = gitOut(repo, ["log", "-z", "--format=%H%x00%P%x00%s%x00%b", `${base}..${head}`]).split("\0");
+  if (fields.at(-1) === "") fields.pop();
+  if (fields.length % COMMIT_FIELDS !== 0)
+    throw new Error(`git log gave ${fields.length} fields, not a multiple of ${COMMIT_FIELDS}`);
+  const records = Array.from({ length: fields.length / COMMIT_FIELDS }, (_, index) =>
+    fields.slice(index * COMMIT_FIELDS, (index + 1) * COMMIT_FIELDS),
+  );
+  return records.map(([sha, parents, subject, body]) => {
+    const paths = RELEASE_SUBJECT.test(subject)
+      ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean)
+      : [];
+    return {
+      sha,
+      parents: parents.split(" ").filter(Boolean).length,
+      subject,
+      body,
+      paths,
+      packageVersionOnly:
+        paths.includes(PACKAGE_FILE) &&
+        versionOnlyChange(gitFile(repo, `${sha}^`, PACKAGE_FILE), gitFile(repo, sha, PACKAGE_FILE)),
+    };
+  });
 }
 
 /**

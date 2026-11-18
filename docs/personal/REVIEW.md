@@ -147,6 +147,14 @@ diff tree-plan.txt installed-plan.txt
 - **incidents:** 16 Nov 2026, Harout found by hand that 1.67.27 sent 1 of 3 picked photos and showed a camera in the composer (fixed in 1.67.28), and that 1.67.31 pushed replies on the Tasks tab instead of showing them in-app (fixed in 1.67.32, `src/shell`). Replayed red in `qa/hbots-daily-use/VERIFY.md`.
 - **added:** 2026-11-17. **last-hit:** 2026-11-16. **retire:** when S6 (`verify-hbots-android`) runs before each phone release.
 
+### R12 apk-check-allowlist-grew
+- **trigger:** `apps/hbots-mobile/scripts/verify-apk*.mjs`
+- **check 1 (must-fix, git):** Did a name join the exported-component allowlist (`expectedExported`, `widgetProviders`), or did a check loosen (a FAIL made a warning, a required permission made optional)? Read `git diff -U0 <base> <head> -- apps/hbots-mobile/scripts/verify-apk.mjs`. Each growth needs a cited reason in the file next to the entry or in the commit body: who reaches the component, that it is exported, and which permission guards it. The entries there today each carry one (`ProfileInstallReceiver`, `ShareActivity`, `CtoTileService`, `DebugPushReceiver`, `ShortcutTrampolineActivity`, `FCM_RECEIVER`). A growth with no reason is a flag.
+- **check 2 (must-fix, git):** Does each newly allowed exported component also get its own shape check in the same file (exported, permission, actions), as the eight widget providers and the Firebase receiver do? A name in the list with no shape check lets any manifest entry of that name through.
+- **check 3 (should-fix, git):** Does the same range add the exported component the allowlist now names (a manifest, plugin or module edit that sets `android:exported="true"`)? An allowlist edit with no component behind it is growth with no reason.
+- **incidents:** 12 Nov 2026, 1.67.11 stopped at the APK build (`qa/hbots-16711/ship/STOPPED-3.md`). `dfae33bfcd` added seven exported widget receivers and `expectedExported` listed one, so the `exported` check printed FAIL. The Shipper did not edit the list: "a security allowlist, not bookkeeping". `5a1d157f60` extended it to all eight and added a check that each is exported with no permission and answers only the widget update. The same list grew earlier for the shortcut trampoline (`57c48640d0`) and the Firebase receiver (`04d69f9aae`).
+- **added:** 2026-11-18. **last-hit:** 2026-11-12.
+
 ## Known gaps
 
 No item covers these. Each gets an item at its first real incident.
