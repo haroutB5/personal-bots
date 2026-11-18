@@ -12,6 +12,7 @@
 //   ASKQ   asks the owner a question (AskUserQuestion) and waits for the answer.
 //   BADCHOICES, CHOICESBUSY, CHOICES, CHOICES6, CHOICES7  replies that end with a choices block.
 //   LONGMSG  a long multi-paragraph reply.   SLOW<n>  works for n seconds, then answers.
+//   LATEQ<n>  stays silent for n seconds, then asks a choices question (a question that lands after the owner left).
 //   A message that arrives while a SLOW job runs is folded into it ("Folded in: ...", no result
 //   of its own) like the real CLI's steer, and every prompt reports command_lifecycle frames
 //   (started/completed) - the delivery signal the server's steer-row fix reads. Every assistant
@@ -651,6 +652,21 @@ Text after the placeholder.
         finish("ok", false);
       },
       Number(slow[1]) * 1000,
+    );
+    return;
+  }
+  const lateq = text.match(/LATEQ(\d+)/);
+  if (lateq) {
+    slowJobActive = true;
+    setTimeout(
+      () => {
+        slowJobActive = false;
+        assistant(
+          `Which build should go out tonight?\n\n${fence}choices\nShip it\nHold it\n${fence}`,
+        );
+        finish("ok", false);
+      },
+      Number(lateq[1]) * 1000,
     );
     return;
   }

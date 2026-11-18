@@ -253,3 +253,9 @@ NodeTest.test("answers sdk_mcp_set_servers with an errors map the SDK can read",
   child.stdin.end();
   child.kill();
 });
+
+NodeTest.test("LATEQ<n> answers nothing at first, then asks a choices question", async () => {
+  const reply = await prompt("LATEQ1");
+  NodeAssert.match(reply, /Which build should go out tonight\?/);
+  NodeAssert.match(reply, /```choices\nShip it\nHold it\n```/);
+});
