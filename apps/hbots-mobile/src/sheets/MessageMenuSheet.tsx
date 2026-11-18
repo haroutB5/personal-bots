@@ -1,10 +1,10 @@
 import * as Clipboard from "expo-clipboard";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { StyleSheet, Text } from "react-native";
 
 import type { TextHit } from "../chat/readerDoc";
 import { tokens } from "../shell/tokens";
-import { MessageReader } from "./MessageReader";
+import { MessageReader, type ReaderHandle } from "./MessageReader";
 import { SheetAction, SheetCancel, SheetShell } from "./SheetShell";
 
 export interface MessageMenuTarget {
@@ -34,10 +34,17 @@ export function MessageMenuSheet({
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const message = request?.message ?? null;
+  const reader = useRef<ReaderHandle>(null);
   const copied = message !== null && copiedId === message.messageId;
   const close = () => {
     setCopiedId(null);
     onClose();
+  };
+  // Back first clears a selection, so the next Back closes the sheet.
+  const back = () => {
+    void (reader.current?.clearSelection() ?? Promise.resolve(false)).then((cleared) => {
+      if (!cleared) close();
+    });
   };
 
   return (
@@ -76,8 +83,14 @@ export function MessageMenuSheet({
         ) : null}
         <SheetCancel onPress={close} />
       </SheetShell>
-      <SheetShell visible={request?.kind === "select"} title="Select text" onClose={close}>
+      <SheetShell
+        visible={request?.kind === "select"}
+        title="Select text"
+        onClose={close}
+        onBack={back}
+      >
         <MessageReader
+          ref={reader}
           text={message?.text ?? ""}
           streaming={message?.streaming ?? false}
           hit={request?.kind === "select" ? request.hit : null}

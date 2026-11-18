@@ -9,6 +9,7 @@ interface TextSelectNative {
     textTag: number,
     offset: number,
   ): Promise<{ readonly lineTop: number; readonly mode: string } | null>;
+  clearSelection(textTag: number): Promise<boolean>;
 }
 
 const native =
@@ -40,5 +41,15 @@ export async function selectWordAt(
     return await native.selectWordAt(textTag, offset);
   } catch {
     return null;
+  }
+}
+
+/** Clears the reader's selection and its handles. True when there was one, so Back can stop there. */
+export async function clearSelection(textTag: number): Promise<boolean> {
+  if (native === null) return false;
+  try {
+    return await native.clearSelection(textTag);
+  } catch {
+    return false;
   }
 }

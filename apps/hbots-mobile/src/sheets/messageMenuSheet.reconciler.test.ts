@@ -3,6 +3,8 @@ import { createElement, act } from "react";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+const native = vi.hoisted(() => ({ clearSelection: vi.fn() }));
+
 vi.mock("react-native", async () => {
   const stub = await import("../chat/testSupport/reactNativeStub");
   const { createElement: h } = await import("react");
@@ -10,18 +12,32 @@ vi.mock("react-native", async () => {
     ...stub,
     TextInput: (props: Record<string, unknown>) => h("TextInput", props),
     useWindowDimensions: () => ({ width: 360, height: 785 }),
+    findNodeHandle: () => 7,
   };
 });
 vi.mock("../chat/textSelectNative", () => ({
   textHitAt: () => Promise.resolve(null),
   selectWordAt: () => Promise.resolve(null),
+  clearSelection: native.clearSelection,
 }));
 vi.mock("expo-clipboard", () => ({ setStringAsync: () => Promise.resolve(true) }));
 vi.mock("./SheetShell", async () => {
   const { createElement: h } = await import("react");
   return {
-    SheetShell: (props: { visible: boolean; title: string; children?: React.ReactNode }) =>
-      props.visible ? h("Sheet", { title: props.title }, props.children) : null,
+    SheetShell: (props: {
+      visible: boolean;
+      title: string;
+      onClose: () => void;
+      onBack?: () => void;
+      children?: React.ReactNode;
+    }) =>
+      props.visible
+        ? h(
+            "Sheet",
+            { title: props.title, onClose: props.onClose, onBack: props.onBack },
+            props.children,
+          )
+        : null,
     SheetAction: (props: { label: string; onPress: () => void }) => h("Action", props),
     SheetCancel: (props: { onPress: () => void }) => h("Cancel", props),
   };
@@ -41,15 +57,20 @@ const MESSAGE = {
 };
 
 let renderer: ReactTestRenderer | null = null;
-function mount(request: Request, onRequest: (next: NonNullable<Request>) => void = () => {}) {
+function mount(
+  request: Request,
+  onRequest: (next: NonNullable<Request>) => void = () => {},
+  onClose: () => void = () => {},
+) {
   act(() => {
     renderer = create(
       createElement(MessageMenuSheet, {
         request,
         onRequest,
-        onClose: () => {},
+        onClose,
         onReply: () => {},
       }),
+      { createNodeMock: () => ({}) },
     );
   });
   return renderer!;
@@ -101,5 +122,16 @@ describe("MessageMenuSheet select view", () => {
     act(() => row.props.onPress());
     expect(onRequest).toHaveBeenCalledWith({ kind: "select", message: MESSAGE, hit: null });
     expect(hosts(tree, "Text")).toHaveLength(0);
+  });
+
+  it("C4 Back clears a selection first, and closes only when nothing is selected", async () => {
+    native.clearSelection.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const onClose = vi.fn();
+    const tree = mount({ kind: "select", message: MESSAGE, hit: null }, () => {}, onClose);
+    const sheet = hosts(tree, "Sheet")[0]!;
+    await act(async () => sheet.props.onBack());
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => sheet.props.onBack());
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

@@ -18,7 +18,8 @@ import expo.modules.kotlin.functions.Queues
 /**
  * Carries a double tap on chat text into the Select text reader. `textHitAt` finds the word under
  * the second tap in the chat. `selectWordAt` selects the same word in the reader, with the system
- * handles and toolbar, by sending the reader's TextView the touches a finger would.
+ * handles and toolbar, by sending the reader's TextView a long press at that word. A synthetic double
+ * tap selected the word but showed no handles or toolbar on the emulator.
  */
 class HbotsTextSelectModule : Module() {
   private val main = Handler(Looper.getMainLooper())
@@ -43,6 +44,12 @@ class HbotsTextSelectModule : Module() {
       mapOf("text" to view.text.toString(), "offset" to offset)
     }.runOnQueue(Queues.MAIN)
 
+    /** Clears the reader's selection. True when there was one. */
+    AsyncFunction("clearSelection") { textTag: Int ->
+      val view = appContext.findView<TextView>(textTag) ?: return@AsyncFunction false
+      clearSelection(view)
+    }.runOnQueue(Queues.MAIN)
+
     /** Selects the word at `offset` in the reader's TextView, then reports where its line sits in dp. */
     AsyncFunction("selectWordAt") { textTag: Int, offset: Int, promise: Promise ->
       val view = appContext.findView<TextView>(textTag)
@@ -56,19 +63,23 @@ class HbotsTextSelectModule : Module() {
       val lineTop = (layout.getLineTop(line) + view.totalPaddingTop) / density
       val point = pointForOffset(view, offset)
       view.requestFocus()
-      sendDoubleTap(view, point.first, point.second)
-      main.postDelayed({
-        if (hasSelection(view)) {
-          promise.resolve(mapOf("lineTop" to lineTop, "mode" to "doubleTap"))
-        } else {
-          sendLongPress(view, point.first, point.second) {
-            promise.resolve(
-              mapOf("lineTop" to lineTop, "mode" to if (hasSelection(view)) "longPress" else "none"),
-            )
-          }
-        }
-      }, SETTLE_MS)
+      sendLongPress(view, point.first, point.second) {
+        promise.resolve(
+          mapOf("lineTop" to lineTop, "mode" to if (hasSelection(view)) "longPress" else "none"),
+        )
+      }
     }.runOnQueue(Queues.MAIN)
+  }
+
+  /** Drops the reader's selection, handles and toolbar. Returns whether there was a selection. */
+  private fun clearSelection(view: TextView): Boolean {
+    val had = hasSelection(view)
+    if (!had) return false
+    (view.text as? Spannable)?.let { Selection.removeSelection(it) }
+    view.clearFocus()
+    view.setTextIsSelectable(false)
+    view.setTextIsSelectable(true)
+    return true
   }
 
   private fun hasSelection(view: TextView): Boolean {
@@ -116,18 +127,6 @@ class HbotsTextSelectModule : Module() {
     event.recycle()
   }
 
-  private fun sendDoubleTap(view: View, x: Float, y: Float) {
-    var delay = 0L
-    repeat(2) {
-      main.postDelayed({
-        val downTime = SystemClock.uptimeMillis()
-        touch(view, downTime, MotionEvent.ACTION_DOWN, x, y)
-        touch(view, downTime, MotionEvent.ACTION_UP, x, y)
-      }, delay)
-      delay += TAP_GAP_MS
-    }
-  }
-
   private fun sendLongPress(view: View, x: Float, y: Float, done: () -> Unit) {
     val downTime = SystemClock.uptimeMillis()
     touch(view, downTime, MotionEvent.ACTION_DOWN, x, y)
@@ -138,7 +137,6 @@ class HbotsTextSelectModule : Module() {
   }
 
   private companion object {
-    const val TAP_GAP_MS = 60L
     const val SETTLE_MS = 250L
     const val LONG_PRESS_MARGIN_MS = 80L
   }

@@ -31,12 +31,15 @@ export function SheetShell({
   visible,
   title,
   onClose,
+  onBack,
   children,
   inline = false,
 }: PropsWithChildren<{
   readonly visible: boolean;
   readonly title: string;
   readonly onClose: () => void;
+  /** The hardware Back press, when it has a step before closing; defaults to `onClose`. */
+  readonly onBack?: () => void;
   /** Render inside the screen instead of a Modal: text fields keep their taps above the IME. */
   readonly inline?: boolean;
 }>) {
@@ -142,7 +145,7 @@ export function SheetShell({
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={onBack ?? onClose}
     >
       {content}
     </Modal>

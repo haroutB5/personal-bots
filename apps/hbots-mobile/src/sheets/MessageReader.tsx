@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useImperativeHandle, useMemo, useRef, type Ref } from "react";
 import {
   findNodeHandle,
   ScrollView,
@@ -15,8 +15,13 @@ import {
   type ReaderStyle,
   type TextHit,
 } from "../chat/readerDoc";
-import { selectWordAt } from "../chat/textSelectNative";
+import { clearSelection, selectWordAt } from "../chat/textSelectNative";
 import { tokens } from "../shell/tokens";
+
+export interface ReaderHandle {
+  /** Clears the selection and its handles. True when something was selected. */
+  readonly clearSelection: () => Promise<boolean>;
+}
 
 export const STREAMING_NOTE = "Still writing. This is the text so far.";
 
@@ -28,14 +33,27 @@ export function MessageReader({
   text,
   streaming,
   hit,
+  ref,
 }: {
   readonly text: string;
   readonly streaming: boolean;
   readonly hit: TextHit | null;
+  readonly ref?: Ref<ReaderHandle>;
 }) {
   const scroller = useRef<ScrollView>(null);
   const textNode = useRef<Text>(null);
   const selectedFor = useRef<TextHit | null>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      clearSelection: async () => {
+        const tag =
+          textNode.current === null ? null : findNodeHandle(textNode.current as unknown as View);
+        return tag === null ? false : clearSelection(tag);
+      },
+    }),
+    [],
+  );
   const selectTapped = () => {
     if (hit === null || selectedFor.current === hit) return;
     selectedFor.current = hit;
