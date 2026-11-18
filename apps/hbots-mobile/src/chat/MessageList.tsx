@@ -98,6 +98,7 @@ import {
   linkTarget,
   markdownBlocks,
   markdownNeedsWidth,
+  sameBlock,
   type FileLink,
   type InlineSpan,
   type MarkdownBlock,
@@ -574,17 +575,24 @@ function TableGrid({
   );
 }
 
-function Block({
-  block,
-  onOpenFile,
-  onOpenLink,
-  tone,
-}: {
+interface BlockProps {
   readonly block: MarkdownBlock;
   readonly onOpenFile?: ((path: string) => void) | undefined;
   readonly onOpenLink?: ((href: string) => void) | undefined;
   readonly tone: "assistant" | "user";
-}) {
+}
+
+/** Settled blocks of a streaming reply keep their draw; only the growing tail redraws. */
+const Block = memo(
+  BlockBody,
+  (previous, next) =>
+    previous.tone === next.tone &&
+    previous.onOpenFile === next.onOpenFile &&
+    previous.onOpenLink === next.onOpenLink &&
+    sameBlock(previous.block, next.block),
+);
+
+function BlockBody({ block, onOpenFile, onOpenLink, tone }: BlockProps) {
   const base = tone === "user" ? styles.userText : styles.assistantText;
   if ("files" in block && block.files !== undefined) {
     return <FileChips files={block.files} onOpenFile={onOpenFile} />;

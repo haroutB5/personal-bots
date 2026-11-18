@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { messageFileLinkPaths } from "@t3tools/shared/messageFileLinks";
 
-import { linkTarget, markdownBlocks, markdownNeedsWidth } from "./markdown";
+import { linkTarget, markdownBlocks, markdownNeedsWidth, sameBlock } from "./markdown";
 
 /** The spans of a one-paragraph source, for exact span assertions. */
 function paragraphSpans(source: string) {
@@ -664,5 +664,40 @@ describe("linkTarget", () => {
     expect(linkTarget("C:/work/a.ts")).toEqual({ kind: "file", path: "C:/work/a.ts" });
     expect(linkTarget("~/notes/a.md")).toEqual({ kind: "file", path: "~/notes/a.md" });
     expect(linkTarget("~/.ssh/id_rsa")).toEqual({ kind: "file", path: "~/.ssh/id_rsa" });
+  });
+});
+
+describe("sameBlock", () => {
+  const first = (source: string) => markdownBlocks(source)[0]!;
+
+  it("matches a block parsed again from the same text", () => {
+    const source = "Some **bold** and `code` with [a link](https://example.com)";
+    expect(sameBlock(first(source), first(source))).toBe(true);
+  });
+
+  it("matches the settled paragraphs of a reply that grew", () => {
+    const before = markdownBlocks("One.\n\nTwo.\n\nThr");
+    const after = markdownBlocks("One.\n\nTwo.\n\nThree is longer");
+    expect(sameBlock(before[0]!, after[0]!)).toBe(true);
+    expect(sameBlock(before[1]!, after[1]!)).toBe(true);
+    expect(sameBlock(before[2]!, after[2]!)).toBe(false);
+  });
+
+  it("tells a list marker, a depth and a kind apart", () => {
+    expect(sameBlock(first("- same"), first("* same"))).toBe(true);
+    expect(sameBlock(first("- same"), first("  - same"))).toBe(false);
+    expect(sameBlock(first("- same"), first("1. same"))).toBe(false);
+    expect(sameBlock(first("same"), first("# same"))).toBe(false);
+  });
+
+  it("sees a table row appended under the same header", () => {
+    const head = "| a | b |\n| - | - |\n| 1 | 2 |";
+    expect(sameBlock(first(head), first(head))).toBe(true);
+    expect(sameBlock(first(head), first(`${head}\n| 3 | 4 |`))).toBe(false);
+  });
+
+  it("sees a code block that gained a line", () => {
+    expect(sameBlock(first("```ts\nlet a\n```"), first("```ts\nlet a\nlet b\n```"))).toBe(false);
+    expect(sameBlock(first("```ts\nlet a\n```"), first("```js\nlet a\n```"))).toBe(false);
   });
 });

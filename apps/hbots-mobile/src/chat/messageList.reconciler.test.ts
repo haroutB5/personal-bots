@@ -5,7 +5,11 @@ import { createElement, act } from "react";
 import { create, type ReactTestRenderer, type ReactTestInstance } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const counts = vi.hoisted(() => ({ messageRows: 0, cards: 0 }));
+const counts = vi.hoisted(() => ({
+  messageRows: 0,
+  cards: 0,
+  textDraws: new Map<string, number>(),
+}));
 
 vi.mock("@hbots/personal-client/feed/composerText", async (original) => {
   const real = await original<Record<string, unknown>>();
@@ -64,7 +68,19 @@ vi.mock("../ui/icons", () => {
     IconPaperclip: icon,
   };
 });
-vi.mock("react-native", () => import("./testSupport/reactNativeStub"));
+vi.mock("react-native", async () => {
+  const stub = await import("./testSupport/reactNativeStub");
+  const { createElement: h } = await import("react");
+  return {
+    ...stub,
+    Text: (props: { children?: unknown }) => {
+      if (typeof props.children === "string") {
+        counts.textDraws.set(props.children, (counts.textDraws.get(props.children) ?? 0) + 1);
+      }
+      return h("Text", props);
+    },
+  };
+});
 vi.mock("../display/useHighRefresh", () => ({ useHighRefresh: () => ({}) }));
 vi.mock("./useStreamCommitPerf", () => ({ useStreamCommitPerf: () => undefined }));
 
@@ -150,6 +166,7 @@ function hosts(type: string, where: (node: ReactTestInstance) => boolean = () =>
 function reset() {
   counts.messageRows = 0;
   counts.cards = 0;
+  counts.textDraws.clear();
 }
 
 beforeEach(reset);
@@ -472,6 +489,25 @@ describe("MessageList through the reconciler", () => {
     act(() => vi.advanceTimersByTime(30_000));
     expect(label()).toMatch(/^Yesterday/u);
     expect(counts.messageRows).toBe(0);
+  });
+
+  it("R17 growing the last paragraph of a streaming reply draws no earlier paragraph again", () => {
+    const first = "First paragraph of the reply.";
+    const second = "Second paragraph of the reply.";
+    const reply = (tail: string) => [
+      message("u0", "user", "q"),
+      message("a0", "assistant", `${first}\n\n${second}\n\n${tail}`, { streaming: true }),
+    ];
+    mount(props({ items: reply("Third") }));
+    expect(counts.textDraws.get(first)).toBe(1);
+    reset();
+    for (const tail of ["Third para", "Third paragraph is", "Third paragraph is growing now"]) {
+      update(props({ items: reply(tail) }));
+      expect(strings()).toContain(tail);
+    }
+    expect(counts.textDraws.get(first) ?? 0).toBe(0);
+    expect(counts.textDraws.get(second) ?? 0).toBe(0);
+    expect(counts.textDraws.get("Third paragraph is growing now")).toBe(1);
   });
 
   it("R15 a swipe to reply on a reply that grew after its row mounted quotes the grown text", () => {

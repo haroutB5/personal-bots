@@ -308,6 +308,30 @@ function fileFields(spans: ReadonlyArray<InlineSpan>): {
   return files.length > 0 ? { files } : {};
 }
 
+/** Same drawn content, so a block parsed again from grown text need not redraw. */
+export function sameBlock(a: MarkdownBlock, b: MarkdownBlock): boolean {
+  return sameValue(a, b);
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, index) => sameValue(item, b[index]))
+    );
+  }
+  const left = Object.entries(a);
+  const right = b as Record<string, unknown>;
+  return (
+    left.length === Object.keys(right).length &&
+    left.every(([key, value]) => key in right && sameValue(value, right[key]))
+  );
+}
+
 export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
   const lines = source.replaceAll("\r\n", "\n").split("\n");
   const blocks: MarkdownBlock[] = [];
