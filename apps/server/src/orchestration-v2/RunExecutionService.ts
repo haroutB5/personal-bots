@@ -1,4 +1,4 @@
-import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
+import { makePersonalAssistantStreamingFilter } from "../personal/liveStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -1126,7 +1126,7 @@ export const layer: Layer.Layer<
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
         let rootTurnOwnershipChecked = false;
-        const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
+        const assistantStreaming = makePersonalAssistantStreamingFilter(responseStreamingMode);
         // Set when ingestion ends or finalization settles the run's open items, which a later
         // streaming snapshot must not reopen.
         let idleFlushClosed = false;

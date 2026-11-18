@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   CheckpointScopeId,
   ChatAttachmentId,
@@ -74,6 +75,13 @@ const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>
       ),
     ...implementation,
   });
+
+const paragraphStreaming = <A, E, R>(self: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => vi.stubEnv("T3CODE_PERSONAL_LIVE_STREAMING", "off")),
+    () => self,
+    () => Effect.sync(() => vi.unstubAllEnvs()),
+  );
 
 const driver = ProviderDriverKind.make("codex");
 const rootAppThread = (id: ThreadId) =>
@@ -2587,7 +2595,7 @@ it.effect(
         ),
         "late provider completion must not be ingested after interrupt",
       );
-    }),
+    }).pipe(paragraphStreaming),
 );
 
 it.effect("settles native subagents when a workspace handoff completes the root run", () =>
@@ -4425,6 +4433,102 @@ it.effect.each([
       `message.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
       `turn_item.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
     ]);
+  }).pipe(paragraphStreaming),
+);
+
+it.effect("streams a reply live through the run loop, one release every 100 ms", () =>
+  Effect.gen(function* () {
+    const key = "live-streaming";
+    const ids = backgroundScenarioIds(key);
+    const now = yield* DateTime.now;
+    const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const deliveries = yield* Queue.unbounded<string>();
+    const blockerIngested = yield* Deferred.make<void>();
+    const assistantText = (text: string, streaming: boolean) =>
+      [
+        {
+          type: "message.updated",
+          driver,
+          message: {
+            createdBy: "agent",
+            creationSource: "provider",
+            id: MessageId.make(`message:${key}`),
+            threadId: ids.threadId,
+            runId: ids.runId,
+            nodeId: ids.rootNodeId,
+            role: "assistant",
+            text,
+            attachments: [],
+            streaming,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            ...makeLinkedChildTurnItemFixture({ ids, driver, type: "assistant_message" }),
+            id: ids.itemId,
+            threadId: ids.threadId,
+            runId: ids.runId,
+            nodeId: ids.rootNodeId,
+            providerTurnId: ids.rootProviderTurnId,
+            messageId: MessageId.make(`message:${key}`),
+            text,
+            streaming,
+          },
+        },
+      ] as ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
+    const blocker = streamedMessageEvent({
+      id: `message:${key}:blocker`,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      role: "assistant",
+      text: "Other",
+      streaming: false,
+    });
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(providerEvents), {
+      batched: true,
+      onIngest: (event) => {
+        if (event.type === "message.updated" && event.message.text === "Other")
+          return Deferred.succeed(blockerIngested, undefined).pipe(Effect.asVoid);
+        if (event.type !== "message.updated" && event.type !== "turn_item.updated")
+          return Effect.void;
+        const body = event.type === "message.updated" ? event.message : event.turnItem;
+        const text = "text" in body ? body.text : "";
+        const streaming = "streaming" in body && body.streaming;
+        return Queue.offer(
+          deliveries,
+          `${event.type}:${streaming ? "streaming" : "final"}:${text}`,
+        ).pipe(Effect.asVoid);
+      },
+    }).pipe(Effect.forkChild);
+    const nextTwo = Effect.all([Queue.take(deliveries), Queue.take(deliveries)]);
+
+    yield* Queue.offerAll(providerEvents, assistantText("Hello wor", true));
+    assert.deepEqual(yield* nextTwo, [
+      "message.updated:streaming:Hello wor",
+      "turn_item.updated:streaming:Hello wor",
+    ]);
+
+    yield* Queue.offerAll(providerEvents, [...assistantText("Hello world, how", true), blocker]);
+    yield* Deferred.await(blockerIngested);
+    assert.strictEqual(yield* Queue.size(deliveries), 0, "text inside the interval is held");
+
+    yield* TestClock.adjust("100 millis");
+    assert.deepEqual(yield* nextTwo, [
+      "message.updated:streaming:Hello world, how",
+      "turn_item.updated:streaming:Hello world, how",
+    ]);
+
+    yield* Queue.offerAll(providerEvents, assistantText("Hello world, how are you?", false));
+    yield* Queue.offer(providerEvents, rootTerminalEvent(ids, "completed"));
+    yield* Fiber.join(scenario);
+    assert.deepEqual(yield* nextTwo, [
+      "message.updated:final:Hello world, how are you?",
+      "turn_item.updated:final:Hello world, how are you?",
+    ]);
   }),
 );
 
@@ -4518,7 +4622,7 @@ it.effect("settles a child message only an idle flush wrote when the root is int
     assert.equal(settled[0]?.status, "interrupted");
     assert.equal("text" in settled[0]! ? settled[0].text : null, heldChildText);
     assert.isFalse("streaming" in settled[0]! && settled[0].streaming);
-  }),
+  }).pipe(paragraphStreaming),
 );
 
 it.effect.each([
@@ -4578,7 +4682,7 @@ it.effect.each([
     ]);
     // A streaming write after the run settled would reopen the root's message.
     assert.deepEqual(yield* Ref.get(rootWrites), ["Root.\n\n"]);
-  }),
+  }).pipe(paragraphStreaming),
 );
 
 function streamedMessageEvent(input: {
@@ -4672,5 +4776,5 @@ it.effect("drops a child's held text once the child is handed to another run", (
     yield* Fiber.join(scenario);
 
     assert.deepEqual(yield* Ref.get(staleWrites), []);
-  }),
+  }).pipe(paragraphStreaming),
 );
