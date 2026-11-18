@@ -141,6 +141,15 @@ describe("touchStep", () => {
     expect(play([down(0), up(40), down(160, 140, 200), up(200)]).effects).toEqual([]);
   });
 
+  it("A3b two taps 40 dp apart vertically do nothing", () => {
+    expect(play([down(0), up(40), down(160, 100, 240), up(200)]).effects).toEqual([]);
+  });
+
+  it("A3c two taps 20 dp apart vertically select at the second point", () => {
+    const { effects } = play([down(0), up(40), down(160, 100, 220), up(200)]);
+    expect(effects).toEqual([{ kind: "select", point: { x: 100, y: 220 } }]);
+  });
+
   it("A4 a first tap on a link never counts toward a double tap", () => {
     const events: TouchEvent[] = [down(0), { kind: "interactive" }, up(40), down(160), up(200)];
     expect(play(events).effects).toEqual([]);
