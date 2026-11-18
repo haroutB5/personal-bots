@@ -50,6 +50,8 @@ private fun readFully(input: InputStream, into: ByteArray): Int {
   return read
 }
 
+private class NotSealed(message: String) : java.io.IOException(message)
+
 private fun startsWith(bytes: ByteArray, magic: ByteArray): Boolean =
   bytes.size >= magic.size && magic.indices.all { bytes[it] == magic[it] }
 
@@ -257,9 +259,9 @@ class FileCrypto(private val keys: CacheKeys) {
     val magic = ByteArray(MAGIC_V1.size)
     val iv = ByteArray(IV_BYTES)
     if (readFully(input, magic) != magic.size || !magic.contentEquals(MAGIC_V1)) {
-      throw java.io.IOException("not v1")
+      throw NotSealed("not v1")
     }
-    if (readFully(input, iv) != iv.size) throw java.io.IOException("short iv")
+    if (readFully(input, iv) != iv.size) throw NotSealed("short iv")
     val cipher = Cipher.getInstance(TRANSFORM)
     cipher.init(Cipher.DECRYPT_MODE, keys.key(), GCMParameterSpec(TAG_BITS, iv))
     pump("dec", cipher, input, out)
@@ -319,19 +321,22 @@ class FileCrypto(private val keys: CacheKeys) {
     atomically(File(destination)) { out -> source.use { encryptInto(it, out) } }
   }
 
-  /** True when `destination` now holds the plaintext. A file that cannot be read is deleted. */
+  /**
+   * True when `destination` now holds the plaintext. The source is the only copy of a queued
+   * attachment, so it is deleted only when the file itself is bad: a failed tag or a missing
+   * header. An out of memory, a Keystore error or a full disk keeps it for the next try.
+   */
   fun decryptFile(source: String, destination: String): Boolean {
     val file = File(source)
     if (!file.exists()) return false
     return try {
       file.inputStream().use { raw -> atomically(File(destination)) { out -> decryptInto(raw, out) } }
       true
-    } catch (_: Exception) {
-      file.delete()
+    } catch (e: Exception) {
+      if (e is javax.crypto.AEADBadTagException || e is NotSealed) file.delete()
       File(destination).delete()
       false
     } catch (_: OutOfMemoryError) {
-      file.delete()
       File(destination).delete()
       false
     }
