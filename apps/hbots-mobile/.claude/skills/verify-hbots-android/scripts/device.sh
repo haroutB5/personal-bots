@@ -59,7 +59,8 @@ up)
   fi
   ADBP=$(get ADB_PREFIX)
   t0=$SECONDS
-  $ADBP wait-for-device
+  # An emulator that dies before adb sees it must not hang the run until the heavy-job limit: wait for the device at most 120 s.
+  timeout 120 $ADBP wait-for-device || { echo "device: adb did not see the emulator in 120 s (see emulator.log)"; exit 2; }
   until [[ "$($ADBP shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; do
     [[ $((SECONDS - t0)) -lt 240 ]] || { echo "device: no boot in 240 s (see emulator.log)"; exit 2; }
     sleep 2

@@ -20,13 +20,35 @@ SLOW_SECONDS = 6
 SLOW_BACKGROUND_SECONDS = 7
 LATEQ_SECONDS = 4
 CHAT_TABS = ("Chats", "Tasks", "Computer", "Files")
+SEND_DESC = r"Send(?:,.*)?"  # online "Send", offline "Send, waits here until your laptop reconnects"
 PAIR_ATTEMPTS = 3
 PAIR_WAIT = 40
-# What the app shows when the link to the laptop is gone: the Offline banner ("Laptop offline · last contact ..", "Reconnecting to your laptop…")
-# and the composer line "Offline. Your draft is saved ...".
-OFFLINE_TEXT = r"Laptop offline.*|Reconnecting to your laptop.*|Offline\. Your draft is saved.*"
-# cloudflared lines that show a dropped link or aborted requests. Some also appear on a normal client cancel, so a line alone never decides.
-TUNNEL_LOG_BAD = re.compile(r"(Unable to reach the origin|Lost connection|connection with the edge|failed to serve|Unable to establish|Retrying connection|Request failed|ended abruptly|stream canceled)", re.I)
+# What the app shows when the link to the laptop is gone. These strings come from packages/personal-client/src/bots/offlineBanner.ts
+# (offlineBannerText: "Laptop offline", "Laptop offline · last contact 5m ago", "Reconnecting to your laptop…"; offlineBannerHint: the line under it).
+# The composer's own offline line is NOT matched: its copy changes ("Offline. Messages you send now go out when the laptop is back.").
+OFFLINE_TEXT = (r"Laptop offline.*|Reconnecting to your laptop.*|Messages you send will go out when it reconnects\.|"
+                r"\d+ messages? (?:is|are) waiting to send\..*")
+# cloudflared lines that mean the tunnel itself dropped, at any log level: "ERR Serve tunnel error ... no recent network activity" and the
+# "INF Retrying connection in up to 2s" that follows it. A flow that fails while one of these is new is a lost link, not an app verdict.
+TUNNEL_LOG_DOWN = re.compile(r"(Serve tunnel error|no recent network activity|Retrying connection|Lost connection|connection with the edge|Unable to establish)", re.I)
+# cloudflared lines about aborted requests. Some also appear on a normal client cancel, so these alone never decide: they need the Offline banner.
+TUNNEL_LOG_BAD = re.compile(r"(Unable to reach the origin|failed to serve|Request failed|ended abruptly|stream canceled)", re.I)
+# What the bot's prompt log line looks like around the text that was typed: the reply quote in front, the attached photos behind.
+PROMPT_LINE = re.compile(r' prompt (".*")$')
+REPLY_QUOTE = re.compile(r'^\[Replying to my earlier message: ".*?"\]\n\n', re.S)
+ATTACHED = re.compile(r'(?:\n\n)?\[Attached image "[^"]*" is saved at: [^\]]*\]')
+
+
+def prompt_text(line):
+    """The text the bot was handed, from one fake-claude.log 'prompt "..."' line, with the reply quote and the attached-photo notes taken off."""
+    m = PROMPT_LINE.search(line)
+    if not m:
+        return None
+    try:
+        text = json.loads(m.group(1))
+    except ValueError:
+        return None
+    return ATTACHED.sub("", REPLY_QUOTE.sub("", text, count=1)).strip()
 
 
 def field_is_draft(field, text):
@@ -50,8 +72,9 @@ class Run:
     def note(self, msg):
         line = f"{time.strftime('%H:%M:%S', time.gmtime())} {msg}"
         print(line, flush=True)
-        with open(f"{self.ev}/run.log", "a") as f:
-            f.write(line + "\n")
+        if not os.environ.get("VERIFY_STDOUT_TEED"):  # verify.sh tees this stdout into run.log itself: writing it here too doubled every line
+            with open(f"{self.ev}/run.log", "a") as f:
+                f.write(line + "\n")
 
     def shot(self, name):
         self.d.shot(f"{self.ev}/shots/{name}.png")
@@ -108,7 +131,7 @@ class Run:
             n = next((x for x in s.find(desc=name) if x.clickable), None)
             if n:
                 self.h[name] = n.center
-        for key, kw in (("back", {"desc": "Back"}), ("plus", {"rid": "composer-plus"}), ("send", {"desc": "Send"}), ("attach-add", {"rid": "attach-add"})):
+        for key, kw in (("back", {"desc": "Back"}), ("plus", {"rid": "composer-plus"}), ("send", {"desc": SEND_DESC}), ("attach-add", {"rid": "attach-add"})):
             n = next((x for x in s.find(**kw) if x.clickable), None)
             if n:
                 self.h[key] = n.center
@@ -160,6 +183,29 @@ class Run:
             return True
         return False
 
+    def clear_composer(self, s):
+        """Empty the composer of the chat in front: remove tray photos and delete draft text. A draft survives leaving a chat (it is saved per chat,
+        and an app crash plus relaunch restores it), so every flow clears it where it types. Returns the screen after clearing."""
+        cleaned = []
+        for _ in range(8):
+            tray = next((x for x in s.find(desc=r"Remove .*, \d+ of \d+") if x.clickable), None)
+            field = self.composer_field(s)
+            # uiautomator reports the hint ("Message Developer…") as the text of an empty field, so only other text is a draft
+            has_text = bool(field and field.text.strip() and field.text != field.desc and not re.fullmatch(r"Message .*…", field.text))
+            if tray:
+                cleaned.append("photo tray"); self.d.tap(tray); time.sleep(0.5)
+            elif has_text:
+                cleaned.append("draft text"); self.d.tap(field); time.sleep(0.3)
+                self.d.sh("input keycombination KEYCODE_CTRL_LEFT KEYCODE_A"); self.d.key(67); self.d.key(111); time.sleep(0.4)
+            else:
+                break
+            s = self.d.dump()
+        else:
+            raise AssertionError(f"could not empty the composer ({', '.join(cleaned)})")
+        if cleaned:
+            self.note(f"composer cleared on open: {', '.join(sorted(set(cleaned)))}")
+        return s
+
     def reset(self):
         """Back to a known screen before every flow: close any menu, sheet or reply bar, drop leftover photos and draft text, then show the Chats tab.
         A flow that failed halfway (flow 9 with its reply bar open) must not turn the next flow red."""
@@ -189,16 +235,19 @@ class Run:
         if cleaned:
             self.note(f"reset: closed {', '.join(cleaned)}")
 
-    def tunnel_log_errors(self):
-        """New cloudflared problem lines since the last look."""
+    def tunnel_log_new(self):
+        """New cloudflared lines since the last look, as (down, aborted): `down` the lines that say the tunnel dropped (at any level),
+        `aborted` the ERR/WRN lines about aborted requests."""
         path = self.a.tunnel_log
         if not path or not os.path.exists(path):
-            return []
+            return [], []
         with open(path, "rb") as f:
             f.seek(self.tlog_pos)
             text = f.read().decode("utf-8", "replace")
             self.tlog_pos = f.tell()
-        return [l for l in text.splitlines() if re.search(r"\b(ERR|WRN)\b", l) and TUNNEL_LOG_BAD.search(l)]
+        lines = text.splitlines()
+        return ([l for l in lines if TUNNEL_LOG_DOWN.search(l)],
+                [l for l in lines if re.search(r"\b(ERR|WRN)\b", l) and TUNNEL_LOG_BAD.search(l)])
 
     def public_url_status(self):
         """http status of the throwaway server's environment route through the public tunnel URL, name resolved over 1.1.1.1 https. Never printed."""
@@ -206,27 +255,41 @@ class Run:
                             f"{self.a.link_host}/.well-known/t3/environment"], capture_output=True, text=True)
         return r.stdout.strip() or "none"
 
+    def offline_banner(self, s):
+        return next((n.text for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None)
+
     def link_problem(self, full=False):
-        """Why the link to the throwaway server looks lost, or None. Three signals: the tunnel unit is gone, the public URL does not answer twice
-        in a row, or (only with full) the app shows its Offline banner while cloudflared logged aborted requests since the last look."""
+        """Why the link to the throwaway server looks lost, or None. Signals: the tunnel unit is gone, the public URL does not answer twice
+        in a row, and (only with full, right after a flow failed) any of: cloudflared logged a serve error or a retry since the last look;
+        the screen shows 'Not sent' together with the Offline banner; the Offline banner together with aborted-request lines."""
         unit = self.a.tunnel_unit
         if unit and subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit]).returncode != 0:
             return f"the tunnel unit {unit} is not running"
-        bad = self.tunnel_log_errors()
+        down, aborted = self.tunnel_log_new()
         code = self.public_url_status()
         if code != "200":
             time.sleep(3)
             code = self.public_url_status()
             if code != "200":
-                return f"the public tunnel URL does not answer (http {code}); cloudflared logged {len(bad)} problem line(s)"
-        if full and bad:
-            try:
-                s = self.d.dump()
-            except Exception:
-                return None
-            banner = next((n.text for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None)
-            if banner:
-                return f"the app shows its Offline banner ({banner[:40]!r}) and cloudflared logged {len(bad)} aborted request line(s): {bad[-1][-100:]!r}"
+                return f"the public tunnel URL does not answer (http {code}); cloudflared logged {len(down) + len(aborted)} problem line(s)"
+        if not full:
+            return None
+        if not down:
+            # cloudflared writes its serve error a moment after the link comes back: look once more before ruling it out
+            time.sleep(3)
+            more_down, more_aborted = self.tunnel_log_new()
+            down, aborted = down + more_down, aborted + more_aborted
+        if down:
+            return f"cloudflared logged {len(down)} dropped-tunnel line(s) during the flow: {down[-1][-110:]!r}"
+        try:
+            s = self.d.dump()
+        except Exception:
+            return None
+        banner = self.offline_banner(s)
+        if banner and s.first(text=r"Not sent.*"):
+            return f"the app shows 'Not sent' and its Offline banner ({banner[:40]!r})"
+        if banner and aborted:
+            return f"the app shows its Offline banner ({banner[:40]!r}) and cloudflared logged {len(aborted)} aborted request line(s): {aborted[-1][-100:]!r}"
         return None
 
     def bot_row(self, s, bot):
@@ -270,10 +333,17 @@ class Run:
             s, n = self.d.wait(lambda s: s.first(desc=r"Message .*…"), 10)
         if not n or n.text == "Start chat":
             raise AssertionError(f"{bot} chat did not open (no composer)")
+        s = self.clear_composer(s)
         self.learn(s)
         return s
 
-    def say(self, bot, text, expect=None):
+    def received(self, before, text):
+        """The first prompt line since `before` whose text, once the reply quote and attached-photo notes are taken off, equals `text`. None if none does."""
+        return next((l for l in self.fake_lines()[before:] if prompt_text(l) == text), None)
+
+    def say(self, bot, text, expect=True):
+        """Type `text`, tap Send, and (expect) wait until the bot was handed exactly `text`. A prompt that merely contains it is a failure:
+        a draft left in the composer turns 'SLOW6' into 'PLANTDRASLOW6FT', and that must not pass. Returns the bot's prompt log line."""
         before = len(self.fake_lines())
         self.d.tap_xy(*self.h["field"])
         time.sleep(0.3)
@@ -281,21 +351,26 @@ class Run:
         self.d.key(111)
         time.sleep(0.4)
         self.d.tap_xy(*self.h["send"])
-        if expect:
-            retried = False
-            for i in range(30):
-                if any(expect in l for l in self.fake_lines()[before:]):
-                    return
-                if i == 10 and not retried:
-                    # 3 s on and the bot has nothing: if the text is still sitting in the composer the Send tap did not fire (seen once in
-                    # 9 runs, the tap landing while the keyboard was still closing). Tap once more and say so in the log.
-                    field = self.composer_field(self.d.dump())
-                    if field and text in field.text:
-                        retried = True
-                        self.note(f"send tap did not fire for {text!r}, tapping Send again")
-                        self.d.tap_xy(*self.h["send"])
-                time.sleep(0.3)
-            raise AssertionError(f"the bot never received {expect!r}")
+        if not expect:
+            return None
+        retried = False
+        for i in range(30):
+            line = self.received(before, text)
+            if line:
+                return line
+            if i == 10 and not retried:
+                # 3 s on and the bot has nothing: if the text is still sitting in the composer the Send tap did not fire (seen once in
+                # 9 runs, the tap landing while the keyboard was still closing). Tap once more and say so in the log.
+                field = self.composer_field(self.d.dump())
+                if field and text in field.text:
+                    retried = True
+                    self.note(f"send tap did not fire for {text!r}, tapping Send again")
+                    self.d.tap_xy(*self.h["send"])
+            time.sleep(0.3)
+        got = [prompt_text(l) for l in self.fake_lines()[before:] if prompt_text(l) is not None]
+        if got:
+            raise AssertionError(f"the bot received {got[-1][:60]!r}, the flow sent {text!r} (not an exact match)")
+        raise AssertionError(f"the bot never received {text!r}")
 
     def leave_chat(self):
         self.d.tap_xy(*self.h["back"])
@@ -418,7 +493,7 @@ class Run:
 
     def f1(self):
         self.open_bot("Developer")
-        self.say("Developer", "hello_verify", expect='prompt "hello_verify')
+        self.say("Developer", "hello_verify")
         time.sleep(1.2)
         self.dismiss()
         s, ok = self.d.wait(lambda s: s.first(text=r"Got it\.") and s.first(text=r"Idle .*"), 15)
@@ -435,7 +510,7 @@ class Run:
 
     def f7(self):
         self.open_bot("Developer")
-        self.say("Developer", "LONGMSG", expect="LONGMSG")
+        self.say("Developer", "LONGMSG")
         time.sleep(2.0)
         s, got = self.d.wait(lambda s: s.first(text=r"End of the long report\."), 20)
         if not got:
@@ -482,7 +557,7 @@ class Run:
 
     def f9(self):
         self.open_bot("Developer")
-        self.say("Developer", "LPRESS", expect="LPRESS")
+        self.say("Developer", "LPRESS")
         s, ok = self.d.wait(lambda s: s.first(text=r"Idle .*") and next((x for x in s.find(desc="LPRESS") if x.clickable), None), 15)
         bubble = next((x for x in s.find(desc="LPRESS") if x.clickable), None)
         if not bubble or not s.first(text="LPRESS"):
@@ -490,9 +565,7 @@ class Run:
         why, _ = self.long_press_reply(s, bubble, "You", lambda t: t == "LPRESS", "the sent message")
         if why:
             return "FAIL", why
-        before = len(self.fake_lines())
-        self.say("Developer", "LPQ", expect="LPQ")
-        line = next(l for l in self.fake_lines()[before:] if "LPQ" in l)
+        line = self.say("Developer", "LPQ")
         if "Replying to my earlier message" not in line or "LPRESS" not in line:
             return "FAIL", f"the bot received the reply without the quote of 'LPRESS': {line[-90:]!r}"
         s, echo = self.d.wait(lambda s: next((n for n in s.nodes if n.text.startswith("Got it.\nI received this quote with your message") and s.drawn(n)), None), 15)
@@ -557,9 +630,7 @@ class Run:
         s = self.d.dump()
         previews = sorted({n.desc for n in s.find(desc=r"Preview .*")})
         self.shot("f2-tray")
-        before = len(self.fake_lines())
-        self.say("Developer", "PHOTOS3", expect="PHOTOS3")
-        line = next(l for l in self.fake_lines()[before:] if "PHOTOS3" in l)
+        line = self.say("Developer", "PHOTOS3")
         files = re.findall(r'Attached image \\"[^"]+?\\" is saved at: ([^\]]+?)\]', line)
         got = len(files)
         digests = set()
@@ -600,7 +671,7 @@ class Run:
         s = self.d.dump()
         field = self.composer_field(s)
         previews = len({n.desc for n in s.find(desc=r"Preview .*")})
-        offline = bool(s.first(text=r"Offline\. Your draft is saved.*") or next((n for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None))
+        offline = bool(self.offline_banner(s))
         bubble = bool(s.first(text=text) or s.first(desc=text))
         scrolled = 0
         while not bubble and scrolled < 4 and not field_is_draft(field, text):
@@ -617,17 +688,27 @@ class Run:
         self.shot(f"probe-{tag}")
         return f"[{tag}] scrolled {scrolled}x; composer text={field.text if field else None!r} tray photos={previews} sent-thumbnails={thumbs} bubble with text={bubble} offline notice={offline} status texts={waiting}"
 
+    def tap_live_send(self):
+        """Tap the Send button where it is now. Offline the composer's notice line pushes the row up, so the cached online position misses, and the
+        node's label changes to 'Send, waits here until your laptop reconnects'. Find it by a description that starts with 'Send'."""
+        s, node = self.d.wait(lambda s: next((x for x in s.find(desc=SEND_DESC) if x.clickable), None), 6)
+        if not node:
+            raise AssertionError("no live Send node (description starting with 'Send') on the screen")
+        self.note(f"tapping the live Send node {node.desc[:50]!r} at {node.center} (cached online point was {self.h.get('send')})")
+        self.d.tap(node)
+
     def wait_arrival(self, tag, before, seconds):
         end = time.time() + seconds
         t0 = time.time()
         while time.time() < end:
-            line = next((l for l in self.fake_lines()[before:] if tag in l), None)
+            line = next((l for l in self.fake_lines()[before:] if prompt_text(l) == tag), None)
             if line:
                 return round(time.time() - t0, 1), len(re.findall(r'Attached image \\"[^"]+?\\" is saved at:', line))
             time.sleep(0.5)
         return None, 0
 
     def probe_offline_draft(self):
+        """Cases C (online baseline) and B (airplane mode, real Send on the live node, network back). Not a verification flow."""
         out = []
 
         def log(m):
@@ -647,17 +728,17 @@ class Run:
         compose("BASE3")
         log(self.draft_state("C-composed", "BASE3"))
         before = len(self.fake_lines())
-        self.d.tap_xy(*self.h["send"])
+        self.tap_live_send()
         secs, files = self.wait_arrival("BASE3", before, 90)
         log(f"C online baseline: the bot got BASE3 with {files} photos after {secs} s (None = never in 90 s)")
         self.reset(); self.open_bot("Developer")
         # B: airplane mode on the phone, then send, then network back
         compose("AIRPL3")
         self.d.sh("cmd connectivity airplane-mode enable")
-        s, off = self.d.wait(lambda s: next((n for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None), 60)
+        s, off = self.d.wait(lambda s: self.offline_banner(s), 60)
         log(self.draft_state("B-offline-before-send", "AIRPL3"))
         before = len(self.fake_lines())
-        self.d.tap_xy(*self.h["send"])
+        self.tap_live_send()
         time.sleep(3)
         log(self.draft_state("B-offline-after-send", "AIRPL3"))
         secs, files = self.wait_arrival("AIRPL3", before, 10)
@@ -668,26 +749,16 @@ class Run:
         time.sleep(2)
         log(self.draft_state("B-back-online", "AIRPL3"))
         self.reset(); self.open_bot("Developer")
-        # A: the tunnel stops right after Send (the rig case, cloudflared aborts the requests)
-        compose("TUNNEL3")
-        log(self.draft_state("A-composed", "TUNNEL3"))
-        before = len(self.fake_lines())
-        self.d.tap_xy(*self.h["send"])
-        subprocess.run(["systemctl", "--user", "stop", self.a.tunnel_unit])
-        log("A: tunnel unit stopped right after tapping Send")
-        s, off = self.d.wait(lambda s: next((n for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None), 90)
-        log(self.draft_state("A-after-tunnel-stop", "TUNNEL3"))
-        secs, files = self.wait_arrival("TUNNEL3", before, 20)
-        log(f"A: the bot got TUNNEL3 after {secs} s ({files} photos); None = nothing arrived (the link never came back: a quick tunnel gets a new URL)")
+        # Case A (stop the tunnel right after Send) is not run: it kills the tunnel the rest of the run needs, and the offline copy is covered by B.
         with open(f"{self.ev}/probe-offline-draft.txt", "w") as f:
             f.write("\n".join(out) + "\n")
 
     def f4_seed(self):
         self.open_bot("Planner")
-        self.say("Planner", f"LATEQ{LATEQ_SECONDS}", expect="LATEQ")
+        self.say("Planner", f"LATEQ{LATEQ_SECONDS}")
         self.leave_chat()
         self.open_bot("Researcher")
-        self.say("Researcher", "CHOICES", expect="CHOICES")
+        self.say("Researcher", "CHOICES")
         self.d.wait(lambda s: s.first(text=r".*Ready to ship the release\?.*"), 15)
         self.leave_chat()
 
@@ -703,7 +774,7 @@ class Run:
     def f5(self):
         self.open_bot("Developer")
         m = self.mark()
-        self.say("Developer", f"SLOW{SLOW_SECONDS}", expect="SLOW")
+        self.say("Developer", f"SLOW{SLOW_SECONDS}")
         self.leave_chat()
         self.tab("Tasks")
         s, running = self.d.wait(lambda s: s.first(text=r"Working · .*"), 5)
@@ -752,7 +823,7 @@ class Run:
     def f6(self):
         self.open_bot("Researcher")
         m = self.mark()
-        self.say("Researcher", f"SLOW{SLOW_BACKGROUND_SECONDS}", expect="SLOW")
+        self.say("Researcher", f"SLOW{SLOW_BACKGROUND_SECONDS}")
         self.leave_chat()
         self.d.key(3)
         paths = self.wait_paths(m, SLOW_BACKGROUND_SECONDS)
@@ -909,7 +980,9 @@ def main():
         r.save_diag("setup-fail")
         return 2
     if a.probe == "offline-draft":
+        t = time.time()
         r.probe_offline_draft()
+        json.dump({"version": r.version, "probe": a.probe, "flows_seconds": round(time.time() - t), "setup_reason": "", "results": []}, open(f"{r.ev}/drive.json", "w"), indent=1)
         return 0
     t = time.time()
     r.flows()

@@ -95,13 +95,14 @@ bash "$HERE/tunnel.sh" up 2>&1 | tee -a "$EV/run.log"
 [[ ${PIPESTATUS[0]} -eq 0 ]] || fail 2 "$(grep -E '^tunnel:' "$EV/run.log" | tail -1 | cut -c1-180)"
 LINK_HOST=$(grep -E '^TUNNEL_URL=' "$STATE" | tail -1 | cut -d= -f2-)
 t=$SECONDS
-VERIFY_RELEASE="$VERIFY_RELEASE" VERIFY_SERVER_PORT="$VERIFY_SERVER_PORT" HBOTS_VERIFY_EVIDENCE="${HBOTS_VERIFY_EVIDENCE:-$S/evidence}" PYTHONDONTWRITEBYTECODE=1 \
+VERIFY_RELEASE="$VERIFY_RELEASE" VERIFY_SERVER_PORT="$VERIFY_SERVER_PORT" HBOTS_VERIFY_EVIDENCE="${HBOTS_VERIFY_EVIDENCE:-$S/evidence}" PYTHONDONTWRITEBYTECODE=1 VERIFY_STDOUT_TEED=1 \
   python3 -I "$HERE/drive.py" --apk "$APK" --adb "$ADB_PREFIX" --evidence "$EV" --srv "$SRV" --link-host "$LINK_HOST" --tunnel-unit "$(grep -E '^TUNNEL_UNIT=' "$STATE" | tail -1 | cut -d= -f2-)" --tunnel-log "$EV/tunnel.log" ${ONLY:+--only "$ONLY"} ${VERIFY_PROBE:+--probe "$VERIFY_PROBE"} 2>&1 | tee -a "$EV/run.log"
 drive=${PIPESTATUS[0]}
 T_drive=$((SECONDS - t))
 total=$(( $(date +%s) - ${VERIFY_T0:-$GOT} )); work=$(( total - QUEUE ))
 flows=$(python3 -I -c "import json,sys; print(json.load(open(sys.argv[1]))['flows_seconds'])" "$EV/drive.json" 2>/dev/null || echo "?")
-timing="${total}s total, ${QUEUE}s waiting for a heavy-job slot, ${work}s of work (emulator boot ${T_device}s, setup+drive ${T_drive}s, flows ${flows}s)"
+[[ -n "${VERIFY_PROBE:-}" ]] && flows_txt="probe ${VERIFY_PROBE} ${flows}s, no flows judged" || flows_txt="flows ${flows}s"
+timing="${total}s total, ${QUEUE}s waiting for a heavy-job slot, ${work}s of work (emulator boot ${T_device}s, setup+drive ${T_drive}s, ${flows_txt})"
 why=""; [[ $drive -eq 2 ]] && why=" ($(cat "$EV/setup-reason.txt" 2>/dev/null | head -1 | cut -c1-260 || true))"
 line="RESULT $([[ $drive -eq 0 ]] && echo PASS || { [[ $drive -eq 2 ]] && echo SETUP-FAIL || echo FAIL; })$why in $timing, device $DEVICE_MODE, evidence $EV"
 echo "$line" >> "$EV/run.log"; echo "$line" > "$INFO.result"
