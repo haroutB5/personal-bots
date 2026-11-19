@@ -29,6 +29,10 @@ OFFLINE_TEXT = r"Laptop offline.*|Reconnecting to your laptop.*|Offline\. Your d
 TUNNEL_LOG_BAD = re.compile(r"(Unable to reach the origin|Lost connection|connection with the edge|failed to serve|Unable to establish|Retrying connection|Request failed|ended abruptly|stream canceled)", re.I)
 
 
+def field_is_draft(field, text):
+    return bool(field and text in field.text)
+
+
 class Run:
     def __init__(self, a):
         self.a = a
@@ -113,6 +117,7 @@ class Run:
             self.h["field"] = field.center
 
     def tab(self, name):
+        self.ensure_app()
         if name not in self.h:
             s, ok = self.d.wait(lambda s: self.tabs_visible(s), 10)
             if not ok:
@@ -131,6 +136,7 @@ class Run:
 
     def to_chats(self):
         for _ in range(4):
+            self.ensure_app()
             s = self.d.dump()
             if self.tabs_visible(s):
                 self.learn(s)
@@ -143,11 +149,23 @@ class Run:
     def composer_field(self, s):
         return next((x for x in s.find(desc=r"Message .*…") if x.cls.endswith("EditText")), None)
 
+    def ensure_app(self):
+        """The app must be in front before any tap. A Back at the Chats root, or a crash, leaves the launcher in front, and a tap there opens
+        other apps (seen: Google Search). Relaunch the app and say so."""
+        out = self.d.sh("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+        if out.strip() and PKG not in out:
+            self.note(f"the app was not in front ({out.strip().splitlines()[0].strip()[:90]}), relaunched")
+            self.d.sh(f"monkey -p {PKG} -c android.intent.category.LAUNCHER 1")
+            time.sleep(2.5)
+            return True
+        return False
+
     def reset(self):
         """Back to a known screen before every flow: close any menu, sheet or reply bar, drop leftover photos and draft text, then show the Chats tab.
         A flow that failed halfway (flow 9 with its reply bar open) must not turn the next flow red."""
         cleaned = []
         for _ in range(10):
+            self.ensure_app()
             s = self.d.dump()
             self.dismiss(s)
             bar = next((x for x in s.find(desc="Cancel reply") if x.clickable), None)
@@ -584,10 +602,20 @@ class Run:
         previews = len({n.desc for n in s.find(desc=r"Preview .*")})
         offline = bool(s.first(text=r"Offline\. Your draft is saved.*") or next((n for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None))
         bubble = bool(s.first(text=text) or s.first(desc=text))
+        scrolled = 0
+        while not bubble and scrolled < 4 and not field_is_draft(field, text):
+            # a long sent message (text plus three tall photos) can sit above the top of the screen: scroll the chat up to read its text
+            self.d.swipe(540, 700, 540, 1700, 300)
+            time.sleep(0.8)
+            scrolled += 1
+            s2 = self.d.dump()
+            bubble = bool(s2.first(text=text) or s2.first(desc=text))
+            if bubble:
+                s = s2
         thumbs = len({n.desc for n in s.nodes if n.cls.endswith("ImageButton") and re.fullmatch(r".*\.(png|jpg)", n.desc) and s.drawn(n)})
         waiting = [n.text for n in s.nodes if n.text and s.drawn(n) and re.search(r"(?i)waiting|queued|sending|will send|not sent|failed", n.text)][:3]
         self.shot(f"probe-{tag}")
-        return f"[{tag}] composer text={field.text if field else None!r} tray photos={previews} sent-thumbnails={thumbs} bubble with text={bubble} offline notice={offline} status texts={waiting}"
+        return f"[{tag}] scrolled {scrolled}x; composer text={field.text if field else None!r} tray photos={previews} sent-thumbnails={thumbs} bubble with text={bubble} offline notice={offline} status texts={waiting}"
 
     def wait_arrival(self, tag, before, seconds):
         end = time.time() + seconds
@@ -855,7 +883,7 @@ class Run:
         only = set(self.a.only.split(",")) if self.a.only else None
         done = {str(x[0]) for x in self.results}
         left = [str(f) for f, _, _ in self.order if f != "4s" and str(f) not in done and (not only or str(f) in only)]
-        self.setup_reason = f"link to the throwaway server lost at flow {flow} ({name}): {prob}. Rig or tunnel connection dropped, not an app verdict. Flows {','.join(left)} not judged. Rerun."
+        self.setup_reason = f"link lost at flow {flow} ({name}), not an app verdict, flows {','.join(left)} not judged, rerun: {prob}"
         self.note(f"LINK LOST: {self.setup_reason}")
         self.shot(f"link-lost-f{flow}")
 

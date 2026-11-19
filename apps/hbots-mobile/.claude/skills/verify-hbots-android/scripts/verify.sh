@@ -102,7 +102,7 @@ T_drive=$((SECONDS - t))
 total=$(( $(date +%s) - ${VERIFY_T0:-$GOT} )); work=$(( total - QUEUE ))
 flows=$(python3 -I -c "import json,sys; print(json.load(open(sys.argv[1]))['flows_seconds'])" "$EV/drive.json" 2>/dev/null || echo "?")
 timing="${total}s total, ${QUEUE}s waiting for a heavy-job slot, ${work}s of work (emulator boot ${T_device}s, setup+drive ${T_drive}s, flows ${flows}s)"
-why=""; [[ $drive -eq 2 ]] && why=" ($(cat "$EV/setup-reason.txt" 2>/dev/null | head -1 | cut -c1-200 || true))"
+why=""; [[ $drive -eq 2 ]] && why=" ($(cat "$EV/setup-reason.txt" 2>/dev/null | head -1 | cut -c1-260 || true))"
 line="RESULT $([[ $drive -eq 0 ]] && echo PASS || { [[ $drive -eq 2 ]] && echo SETUP-FAIL || echo FAIL; })$why in $timing, device $DEVICE_MODE, evidence $EV"
 echo "$line" >> "$EV/run.log"; echo "$line" > "$INFO.result"
 exit "$drive"
