@@ -1,0 +1,28 @@
+Only in apps/hbots-mobile/.claude/skills/verify-hbots-android: features
+Only in apps/hbots-mobile/.claude/skills/verify-hbots-android: .gitignore
+diff -ru -x .scratch -x __pycache__ apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/drive.py apps/hbots-mobile/.claude/skills/r3plant-vha/scripts/drive.py
+--- apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/drive.py	2026-11-19 13:26:31.832970294 +0000
++++ apps/hbots-mobile/.claude/skills/r3plant-vha/scripts/drive.py	2026-11-19 13:26:37.225604376 +0000
+@@ -348,7 +348,7 @@
+         before = len(self.fake_lines())
+         self.d.tap_xy(*self.h["field"])
+         time.sleep(0.3)
+-        self.d.type(text)
++        self.d.type(("PLANTX" if os.environ.get("PLANT") == "prefix" else "") + text)
+         self.d.key(111)
+         time.sleep(0.4)
+         self.d.tap_xy(*self.h["send"])
+@@ -609,6 +609,11 @@
+ 
+     def f2(self):
+         self.open_bot("Developer")
++        if os.environ.get("PLANT") == "draft":
++            self.attach_three()
++            self.d.tap_xy(*self.h["field"]); time.sleep(0.3); self.d.type("PLANTDRAFT"); self.d.key(111); time.sleep(1.5)
++            self.leave_chat()
++            return "FAIL", "PLANT: flow 2 fails with a draft and 3 photos left in the Developer chat"
+         self.d.tap_xy(*self.h["plus"])
+         time.sleep(1.2)
+         s, _ = self.d.wait(lambda s: s.first(rid="attach-photos"), 6)
+Only in apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts: test_drive.py
+Only in apps/hbots-mobile/.claude/skills/verify-hbots-android: SKILL.md

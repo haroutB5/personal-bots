@@ -1,0 +1,46 @@
+heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android f1c8e0e36ab8 2026-11-19T14:42:08Z label r3blip15, run r20261119T144208-2065000, queue wait 0s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: ok   server binary 0130b5adf7b1 (read only)
+doctor: info checkout version 1.67.37 at f1c8e0e36ab8
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 36 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+{"up":true,"pid":2066791,"port":34671,"release":"0130b5adf7b1"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T144208-2065000.service; invocation ID: 4ee9b1d52dc94d74bc582eaf44930393
+tunnel: up, answered http 200 from outside after 3 s
+14:42:59 apk app-1.67.37-x86_64.apk sha256 4158c6fcd4db3751
+14:43:40 paired, app shows v1.67.37, setup 41 s
+14:44:27 flow 2 pick-three-photos LINK-LOST (35 s): AssertionError: the bot never received 'PHOTOS3' (not an app verdict: the public tunnel URL does not answer (http 530); cloudflared logged 0 problem line(s))
+14:44:27 LINK LOST: link lost at flow 2 (pick-three-photos), not an app verdict, flows  not judged, rerun: the public tunnel URL does not answer (http 530); cloudflared logged 0 problem line(s)
+14:44:27 SETUP FAILED (exit 2): link lost at flow 2 (pick-three-photos), not an app verdict, flows  not judged, rerun: the public tunnel URL does not answer (http 530); cloudflared logged 0 problem line(s)
+stopped 2066791
+tunnel: pstack-hbots-verify-tunnel-r20261119T144208-2065000 inactive
+device: emulator pid 2065266 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): none
+heavy slot held during the run: omarchy-heavy-1.lock by pid 2065032 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-1.lock used by pid 2065032, now released, none of this run's processes holds it
+RESULT SETUP-FAIL (link lost at flow 2 (pick-three-photos), not an app verdict, flows  not judged, rerun: the public tunnel URL does not answer (http 530); cloudflared logged 0 problem line(s)) in 139s total, 0s waiting for a heavy-job slot, 139s of work (emulator boot 37s, setup+drive 88s, flows 47s), device laptop, evidence /home/harout/Claude/AI/dev-team/qa/verify-skills/hbots-android/round3/ev/r3blip15-20261119T144208Z
