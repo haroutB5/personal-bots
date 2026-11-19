@@ -19,6 +19,14 @@ bin=/home/harout/.personal-bots/releases/$VERIFY_RELEASE/dist/bin.mjs
 ver=$(cat "$ROOT/scripts/personal/app-version.txt" 2>/dev/null)
 echo "doctor: info checkout version $ver at $(git -C "$ROOT" rev-parse --short=12 HEAD)"
 [[ -f "$ROOT/scripts/personal/testing/fake-claude/cli.js" ]] && grep -q LATEQ "$ROOT/scripts/personal/testing/fake-claude/cli.js" && ok "fake claude has LATEQ" || no "fake claude lacks LATEQ (this checkout predates the skill)"
+case "${HBOTS_VERIFY_DEVICE:-laptop}" in
+laptop)
+  if bash "$HERE/avd.sh" check >/dev/null 2>&1; then ok "AVD $VERIFY_AVD exists"
+  elif [[ -d "$ANDROID_HOME/system-images/android-36/google_apis/x86_64" ]] && command -v avdmanager >/dev/null; then echo "doctor: info AVD $VERIFY_AVD is missing, device.sh up creates it (API 36, 1080x2355 at 480 dpi)"
+  else no "AVD $VERIFY_AVD is missing and the API 36 x86_64 system image or avdmanager is not installed under $ANDROID_HOME"; fi ;;
+rig) ok "device route: gaming PC rig (opt in, no heavy-job slot)" ;;
+*) no "HBOTS_VERIFY_DEVICE must be laptop (default) or rig, got '${HBOTS_VERIFY_DEVICE}'" ;;
+esac
 for t in adb emulator python3 node; do command -v "$t" >/dev/null && ok "$t" || no "$t missing"; done
 [[ -n "$(find "$ROOT" -maxdepth 1 -name ".env*" ! -name "*.example" ! -name "*.sample" ! -name "*.template" 2>/dev/null)" ]] && no ".env file in the checkout" || ok "no .env in the checkout"
 if [[ "${1:-}" == --pre ]]; then

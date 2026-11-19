@@ -2,6 +2,8 @@
 # build-apk.sh <out.apk> [--arch x86_64]: throwaway-signed x86_64 APK of THIS checkout, for the emulator.
 # Run it under heavy-job.sh with HEAVY_JOB_MEMORY_MAX=7G HEAVY_JOB_SWAP_MAX=8G. Never uses ~/.config/hbots-android.
 set -euo pipefail
+# The new laptop has no android.conf, so a bare shell has no SDK path (Gradle: "SDK location not found"). Same fallback as env.sh.
+export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}
 out=${1:?usage: build-apk.sh <out.apk>}
 root=$(git rev-parse --show-toplevel)
 app=$root/apps/hbots-mobile

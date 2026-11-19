@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """verify-hbots-android driver. python3 -I drive.py --apk A --adb "adb -P .. -s .." --evidence DIR --srv DIR --link-host URL [--only 1,2]
-Exit 0 all flows PASS, 1 a flow FAILED, 2 setup failed (no verdict)."""
+Exit 0 all flows PASS, 1 a flow FAILED, 2 setup failed or the link to the throwaway server was lost (no verdict)."""
 import argparse
 import json
 import os
@@ -22,6 +22,11 @@ LATEQ_SECONDS = 4
 CHAT_TABS = ("Chats", "Tasks", "Computer", "Files")
 PAIR_ATTEMPTS = 3
 PAIR_WAIT = 40
+# What the app shows when the link to the laptop is gone: the Offline banner ("Laptop offline · last contact ..", "Reconnecting to your laptop…")
+# and the composer line "Offline. Your draft is saved ...".
+OFFLINE_TEXT = r"Laptop offline.*|Reconnecting to your laptop.*|Offline\. Your draft is saved.*"
+# cloudflared lines that show a dropped link or aborted requests. Some also appear on a normal client cancel, so a line alone never decides.
+TUNNEL_LOG_BAD = re.compile(r"(Unable to reach the origin|Lost connection|connection with the edge|failed to serve|Unable to establish|Retrying connection|Request failed|ended abruptly|stream canceled)", re.I)
 
 
 class Run:
@@ -35,6 +40,8 @@ class Run:
         self.srvlog = f"{a.srv}/server.log"
         self.fakelog = f"{a.srv}/fake-pids/fake-claude.log"
         self.h = {}
+        self.setup_reason = ""
+        self.tlog_pos = os.path.getsize(a.tunnel_log) if a.tunnel_log and os.path.exists(a.tunnel_log) else 0
 
     def note(self, msg):
         line = f"{time.strftime('%H:%M:%S', time.gmtime())} {msg}"
@@ -132,6 +139,77 @@ class Run:
             self.d.key(4)
             time.sleep(0.6)
         self.tab("Chats")
+
+    def composer_field(self, s):
+        return next((x for x in s.find(desc=r"Message .*…") if x.cls.endswith("EditText")), None)
+
+    def reset(self):
+        """Back to a known screen before every flow: close any menu, sheet or reply bar, drop leftover photos and draft text, then show the Chats tab.
+        A flow that failed halfway (flow 9 with its reply bar open) must not turn the next flow red."""
+        cleaned = []
+        for _ in range(10):
+            s = self.d.dump()
+            self.dismiss(s)
+            bar = next((x for x in s.find(desc="Cancel reply") if x.clickable), None)
+            overlay = s.first(text="Copy text") or s.first(rid="attach-camera") or s.first(rid="attach-photos") or s.first(text=r"Add \d+ photos?")
+            tray = next((x for x in s.find(desc=r"Remove .*, \d+ of \d+") if x.clickable), None)
+            field = self.composer_field(s)
+            if overlay:
+                cleaned.append("menu or sheet"); self.d.key(4); time.sleep(0.6); continue
+            if bar:
+                cleaned.append("reply bar"); self.d.tap(bar); time.sleep(0.5); continue
+            if tray:
+                cleaned.append("photo tray"); self.d.tap(tray); time.sleep(0.5); continue
+            # uiautomator reports the hint ("Message Developer…") as the text of an empty field, so only other text is a draft
+            if field and field.text.strip() and field.text != field.desc and not re.fullmatch(r"Message .*…", field.text):
+                cleaned.append("draft text"); self.d.tap(field); time.sleep(0.3)
+                self.d.sh("input keycombination KEYCODE_CTRL_LEFT KEYCODE_A"); self.d.key(67); self.d.key(111); time.sleep(0.4); continue
+            if self.tabs_visible(s):
+                break
+            self.d.key(4); time.sleep(0.6)
+        self.to_chats()
+        if cleaned:
+            self.note(f"reset: closed {', '.join(cleaned)}")
+
+    def tunnel_log_errors(self):
+        """New cloudflared problem lines since the last look."""
+        path = self.a.tunnel_log
+        if not path or not os.path.exists(path):
+            return []
+        with open(path, "rb") as f:
+            f.seek(self.tlog_pos)
+            text = f.read().decode("utf-8", "replace")
+            self.tlog_pos = f.tell()
+        return [l for l in text.splitlines() if re.search(r"\b(ERR|WRN)\b", l) and TUNNEL_LOG_BAD.search(l)]
+
+    def public_url_status(self):
+        """http status of the throwaway server's environment route through the public tunnel URL, name resolved over 1.1.1.1 https. Never printed."""
+        r = subprocess.run(["curl", "-s", "--doh-url", "https://1.1.1.1/dns-query", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "6",
+                            f"{self.a.link_host}/.well-known/t3/environment"], capture_output=True, text=True)
+        return r.stdout.strip() or "none"
+
+    def link_problem(self, full=False):
+        """Why the link to the throwaway server looks lost, or None. Three signals: the tunnel unit is gone, the public URL does not answer twice
+        in a row, or (only with full) the app shows its Offline banner while cloudflared logged aborted requests since the last look."""
+        unit = self.a.tunnel_unit
+        if unit and subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit]).returncode != 0:
+            return f"the tunnel unit {unit} is not running"
+        bad = self.tunnel_log_errors()
+        code = self.public_url_status()
+        if code != "200":
+            time.sleep(3)
+            code = self.public_url_status()
+            if code != "200":
+                return f"the public tunnel URL does not answer (http {code}); cloudflared logged {len(bad)} problem line(s)"
+        if full and bad:
+            try:
+                s = self.d.dump()
+            except Exception:
+                return None
+            banner = next((n.text for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None)
+            if banner:
+                return f"the app shows its Offline banner ({banner[:40]!r}) and cloudflared logged {len(bad)} aborted request line(s): {bad[-1][-100:]!r}"
+        return None
 
     def bot_row(self, s, bot):
         return next((n for n in s.find(desc=rf"{bot}, .*") if n.clickable), None)
@@ -305,6 +383,7 @@ class Run:
         return "PASS", "sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify"
 
     def f7(self):
+        self.open_bot("Developer")
         self.say("Developer", "LONGMSG", expect="LONGMSG")
         time.sleep(2.0)
         s, got = self.d.wait(lambda s: s.first(text=r"End of the long report\."), 20)
@@ -351,6 +430,7 @@ class Run:
         return None, texts
 
     def f9(self):
+        self.open_bot("Developer")
         self.say("Developer", "LPRESS", expect="LPRESS")
         s, ok = self.d.wait(lambda s: s.first(text=r"Idle .*") and next((x for x in s.find(desc="LPRESS") if x.clickable), None), 15)
         bubble = next((x for x in s.find(desc="LPRESS") if x.clickable), None)
@@ -379,7 +459,7 @@ class Run:
         return "PASS", "long press on the sent 'LPRESS' and on the bot reply opened the menu, Reply showed the right name and text in the composer, the bot received the quote"
 
     def f3(self):
-        s = self.d.dump()
+        s = self.open_bot("Developer")
         self.learn(s)
         plus = next((n for n in s.find(rid="composer-plus")), None)
         if not plus:
@@ -393,7 +473,6 @@ class Run:
         self.d.tap_xy(*self.h["plus"])
         time.sleep(1.2)
         s, sheet = self.d.wait(lambda s: s.first(rid="attach-camera"), 6)
-        self.sheet = s
         self.shot("f3-plus-sheet")
         camera_text = [n for n in s.find(text="Camera")]
         camera_btn = [n for n in s.find(rid="attach-camera")]
@@ -404,7 +483,10 @@ class Run:
         return "PASS", f"composer row holds only {labels}, plus sheet shows 'Camera' once"
 
     def f2(self):
-        s = self.sheet
+        self.open_bot("Developer")
+        self.d.tap_xy(*self.h["plus"])
+        time.sleep(1.2)
+        s, _ = self.d.wait(lambda s: s.first(rid="attach-photos"), 6)
         grid = s.first(rid="attach-photos")
         if not grid:
             self.shot("f2-fail")
@@ -447,6 +529,97 @@ class Run:
         if digests != want:
             return "FAIL", f"the 3 files the bot received are not the 3 different photos picked ({len(digests & want)} of 3 match)"
         return "PASS", "tray showed 3 photos, the sent message shows 3 images, the bot got the 3 distinct picked files"
+
+    # ---- probe: what the app does with a draft of text plus photos while the link is gone (N3). Not a verification flow. ----
+    def attach_three(self):
+        self.d.tap_xy(*self.h["plus"])
+        time.sleep(1.2)
+        s, _ = self.d.wait(lambda s: s.first(rid="attach-photos"), 6)
+        l, t, r, b = s.first(rid="attach-photos").box
+        w = (r - l) // 3
+        for k in range(3):
+            self.d.tap_xy(l + w * k + w // 2, t + w // 2)
+            time.sleep(0.6)
+        s, add = self.d.wait(lambda s: s.first(text="Add 3 photos"), 4)
+        self.d.tap(add)
+        time.sleep(1.2)
+
+    def draft_state(self, tag, text):
+        """What the user sees: composer text, photos in the tray, the Offline line, a bubble with the text, the queued state of the send."""
+        s = self.d.dump()
+        field = self.composer_field(s)
+        previews = len({n.desc for n in s.find(desc=r"Preview .*")})
+        offline = bool(s.first(text=r"Offline\. Your draft is saved.*") or next((n for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None))
+        bubble = bool(s.first(text=text) or s.first(desc=text))
+        thumbs = len({n.desc for n in s.nodes if n.cls.endswith("ImageButton") and re.fullmatch(r".*\.(png|jpg)", n.desc) and s.drawn(n)})
+        waiting = [n.text for n in s.nodes if n.text and s.drawn(n) and re.search(r"(?i)waiting|queued|sending|will send|not sent|failed", n.text)][:3]
+        self.shot(f"probe-{tag}")
+        return f"[{tag}] composer text={field.text if field else None!r} tray photos={previews} sent-thumbnails={thumbs} bubble with text={bubble} offline notice={offline} status texts={waiting}"
+
+    def wait_arrival(self, tag, before, seconds):
+        end = time.time() + seconds
+        t0 = time.time()
+        while time.time() < end:
+            line = next((l for l in self.fake_lines()[before:] if tag in l), None)
+            if line:
+                return round(time.time() - t0, 1), len(re.findall(r'Attached image \\"[^"]+?\\" is saved at:', line))
+            time.sleep(0.5)
+        return None, 0
+
+    def probe_offline_draft(self):
+        out = []
+
+        def log(m):
+            out.append(m)
+            self.note("probe: " + m)
+
+        def compose(tag):
+            self.attach_three()
+            self.d.tap_xy(*self.h["field"])
+            time.sleep(0.3)
+            self.d.type(tag)
+            self.d.key(111)
+            time.sleep(0.4)
+
+        self.open_bot("Developer")
+        # C: online baseline, text plus 3 photos
+        compose("BASE3")
+        log(self.draft_state("C-composed", "BASE3"))
+        before = len(self.fake_lines())
+        self.d.tap_xy(*self.h["send"])
+        secs, files = self.wait_arrival("BASE3", before, 90)
+        log(f"C online baseline: the bot got BASE3 with {files} photos after {secs} s (None = never in 90 s)")
+        self.reset(); self.open_bot("Developer")
+        # B: airplane mode on the phone, then send, then network back
+        compose("AIRPL3")
+        self.d.sh("cmd connectivity airplane-mode enable")
+        s, off = self.d.wait(lambda s: next((n for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None), 60)
+        log(self.draft_state("B-offline-before-send", "AIRPL3"))
+        before = len(self.fake_lines())
+        self.d.tap_xy(*self.h["send"])
+        time.sleep(3)
+        log(self.draft_state("B-offline-after-send", "AIRPL3"))
+        secs, files = self.wait_arrival("AIRPL3", before, 10)
+        log(f"B while offline: the bot got AIRPL3 after {secs} s ({files} photos); None = nothing arrived, as expected")
+        self.d.sh("cmd connectivity airplane-mode disable")
+        secs, files = self.wait_arrival("AIRPL3", before, 120)
+        log(f"B after the network came back: the bot got AIRPL3 with {files} photos after {secs} s (None = never in 120 s)")
+        time.sleep(2)
+        log(self.draft_state("B-back-online", "AIRPL3"))
+        self.reset(); self.open_bot("Developer")
+        # A: the tunnel stops right after Send (the rig case, cloudflared aborts the requests)
+        compose("TUNNEL3")
+        log(self.draft_state("A-composed", "TUNNEL3"))
+        before = len(self.fake_lines())
+        self.d.tap_xy(*self.h["send"])
+        subprocess.run(["systemctl", "--user", "stop", self.a.tunnel_unit])
+        log("A: tunnel unit stopped right after tapping Send")
+        s, off = self.d.wait(lambda s: next((n for n in s.nodes if n.text and s.drawn(n) and re.fullmatch(OFFLINE_TEXT, n.text)), None), 90)
+        log(self.draft_state("A-after-tunnel-stop", "TUNNEL3"))
+        secs, files = self.wait_arrival("TUNNEL3", before, 20)
+        log(f"A: the bot got TUNNEL3 after {secs} s ({files} photos); None = nothing arrived (the link never came back: a quick tunnel gets a new URL)")
+        with open(f"{self.ev}/probe-offline-draft.txt", "w") as f:
+            f.write("\n".join(out) + "\n")
 
     def f4_seed(self):
         self.open_bot("Planner")
@@ -600,9 +773,20 @@ class Run:
                  ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8)]
         only = set(self.a.only.split(",")) if self.a.only else None
         seed_secs = 0
+        self.order = order
+        ran = []
         for flow, name, fn in order:
             if only and str(flow).rstrip("s") not in only:
                 continue
+            ran.append(flow)
+            try:
+                self.reset()
+            except Exception as e:
+                self.note(f"reset before flow {flow} failed: {type(e).__name__}: {str(e)[:120]}")
+            prob = self.link_problem()
+            if prob:
+                self.link_lost(flow, name, prob, ran)
+                return
             t = time.time()
             if flow == "4s":
                 try:
@@ -621,7 +805,21 @@ class Run:
                     self.shot(f"f{flow}-fail")
                 except Exception:
                     pass
+                prob = self.link_problem(full=True)
+                if prob:
+                    self.result(flow, name, "LINK-LOST", f"{reason} (not an app verdict: {prob})", secs)
+                    self.link_lost(flow, name, prob, ran)
+                    return
             self.result(flow, name, verdict, reason, secs)
+
+    def link_lost(self, flow, name, prob, ran):
+        """The link to the throwaway server dropped. That is a setup failure (exit 2), never a flow FAIL: flows after this one are not judged."""
+        only = set(self.a.only.split(",")) if self.a.only else None
+        done = {str(x[0]) for x in self.results}
+        left = [str(f) for f, _, _ in self.order if f != "4s" and str(f) not in done and (not only or str(f) in only)]
+        self.setup_reason = f"link to the throwaway server lost at flow {flow} ({name}): {prob}. Rig or tunnel connection dropped, not an app verdict. Flows {','.join(left)} not judged. Rerun."
+        self.note(f"LINK LOST: {self.setup_reason}")
+        self.shot(f"link-lost-f{flow}")
 
 
 def main():
@@ -632,19 +830,30 @@ def main():
     p.add_argument("--srv", required=True)
     p.add_argument("--link-host", required=True)
     p.add_argument("--only", default="")
+    p.add_argument("--probe", default="")
+    p.add_argument("--tunnel-unit", default="")
+    p.add_argument("--tunnel-log", default="")
     a = p.parse_args()
     r = Run(a)
     try:
         r.setup()
     except Exception as e:
         r.note(f"SETUP FAILED: {type(e).__name__}: {e}")
+        open(f"{r.ev}/setup-reason.txt", "w").write(f"{type(e).__name__}: {str(e)[:160]}\n")
         r.save_diag("setup-fail")
         return 2
+    if a.probe == "offline-draft":
+        r.probe_offline_draft()
+        return 0
     t = time.time()
     r.flows()
     total = time.time() - t
     fails = [x for x in r.results if x[2] != "PASS"]
-    json.dump({"version": r.version, "flows_seconds": round(total), "results": [dict(zip(("flow", "name", "verdict", "reason", "secs"), x)) for x in r.results]}, open(f"{r.ev}/drive.json", "w"), indent=1)
+    json.dump({"version": r.version, "flows_seconds": round(total), "setup_reason": r.setup_reason, "results": [dict(zip(("flow", "name", "verdict", "reason", "secs"), x)) for x in r.results]}, open(f"{r.ev}/drive.json", "w"), indent=1)
+    if r.setup_reason:
+        open(f"{r.ev}/setup-reason.txt", "w").write(r.setup_reason + "\n")
+        r.note(f"SETUP FAILED (exit 2): {r.setup_reason}")
+        return 2
     r.note(f"DONE {len(r.results) - len(fails)} PASS, {len(fails)} FAIL, flows {total:.0f} s")
     return 1 if fails or not r.results else 0
 
