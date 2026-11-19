@@ -143,6 +143,7 @@ import Migration0147 from "./Migrations/147_PersonalBotPinOrder.ts";
 import Migration0148 from "./Migrations/148_OrchestrationV2CommandReadIndexes.ts";
 import Migration0158 from "./Migrations/158_PersonalProjects.ts";
 import Migration0159 from "./Migrations/159_PersonalProjectsWhyHistory.ts";
+import Migration0161 from "./Migrations/161_PersonalEmailConnections.ts";
 import MigrationUpstream0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import MigrationUpstream0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 import MigrationUpstream0055 from "./Migrations/055_OrchestrationV2.ts";
@@ -390,6 +391,7 @@ const migrationEntries = [
   [159, "PersonalProjectsWhyHistory", Migration0159],
   // Upstream 063_DropUnusedV1Projections, renumbered (see upstreamMigrationIds.ts).
   [160, "DropUnusedV1Projections", MigrationUpstream0063],
+  [161, "PersonalEmailConnections", Migration0161],
   // Ids are contiguous. The migrator runs only ids above the latest applied
   // one, so every new migration (ours or upstream's) takes the next free id;
   // never deploy a gap. Upstream migrations keep their file name and are

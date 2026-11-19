@@ -10,8 +10,21 @@ export const PersonalConnectionVendorId = Schema.Literals([
   "neon",
   "upstash",
   "whatsapp",
+  "gmail",
+  "outlook",
 ]);
 export type PersonalConnectionVendorId = typeof PersonalConnectionVendorId.Type;
+
+/**
+ * Vendors whose owner can connect several accounts: one mailbox per row. The
+ * other vendors hold exactly one connection, and the type below keeps a lookup
+ * by vendor alone from compiling for a vendor that has many.
+ */
+export const EmailVendorId = Schema.Literals(["gmail", "outlook"]);
+export type EmailVendorId = typeof EmailVendorId.Type;
+export type SingleAccountVendorId = Exclude<PersonalConnectionVendorId, EmailVendorId>;
+export const isEmailVendorId = (vendorId: PersonalConnectionVendorId): vendorId is EmailVendorId =>
+  vendorId === "gmail" || vendorId === "outlook";
 
 /**
  * How the owner proves the account is theirs.
@@ -21,8 +34,15 @@ export type PersonalConnectionVendorId = typeof PersonalConnectionVendorId.Type;
  * profile, and nothing about it is ever stored by this feature. The two kinds
  * lead to different connect screens and different server paths, so a vendor
  * has to say which it is rather than defaulting into the paste flow.
+ *
+ * `oauth` is a sign-in at the provider that ends in a refresh token the server
+ * keeps. The owner never sees or pastes a token.
  */
-export const PersonalConnectionAuthKind = Schema.Literals(["token-paste", "browser-session"]);
+export const PersonalConnectionAuthKind = Schema.Literals([
+  "token-paste",
+  "browser-session",
+  "oauth",
+]);
 export type PersonalConnectionAuthKind = typeof PersonalConnectionAuthKind.Type;
 
 /**
