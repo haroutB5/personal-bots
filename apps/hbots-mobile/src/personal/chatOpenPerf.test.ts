@@ -178,15 +178,16 @@ describe("chat open timings", () => {
     expect(report.line).toBe("[perf] chat-open-ms 300 memory request-at-ms - list-ms 96");
   });
 
-  it("keeps the first list commit when a later one follows, and clears it once reported", () => {
-    noteListCommit("t-list-two", { at: 2_100, ms: 70, rows: 12 });
+  it("lets the next open's commit replace one an earlier open left behind after its report", () => {
+    // A chat opened with no rows reports first. Its rows commit later, with nobody to take them.
     noteListCommit("t-list-two", { at: 2_400, ms: 25, rows: 13 });
+    noteListCommit("t-list-two", { at: 3_100, ms: 70, rows: 12 });
 
-    expect(takeChatOpenReport("t-list-two", 2_000, 2_500).body).toMatchObject({
+    expect(takeChatOpenReport("t-list-two", 3_000, 3_500).body).toMatchObject({
       listMs: 70,
       rows: 12,
     });
-    expect(takeChatOpenReport("t-list-two", 3_000, 3_100).body).not.toHaveProperty("listMs");
+    expect(takeChatOpenReport("t-list-two", 4_000, 4_100).body).not.toHaveProperty("listMs");
   });
 
   it("leaves out listMs and rows when the list never committed rows", () => {

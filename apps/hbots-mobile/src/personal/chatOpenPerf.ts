@@ -31,7 +31,7 @@ interface ListCommit {
 }
 
 const reads = new Map<string, CacheRead>();
-/** The first list commit with rows per chat, kept until an open takes it. */
+/** The latest list commit with rows per chat, kept until an open takes it. */
 const listCommits = new Map<string, ListCommit>();
 interface RequestMark {
   readonly at: number;
@@ -51,9 +51,13 @@ export function noteCacheRead(threadId: string, read: CacheRead): string {
   return `[perf] cache-read-ms ${Math.round(read.ms)} bytes ${read.bytes} decode-ms ${Math.round(read.decodeMs)} ${read.hit ? "hit" : "miss"}`;
 }
 
-/** The list committed rows. The first one stays until a report takes it. */
+/**
+ * The list committed rows. Each list notes once per mount, so the newest note is the one that
+ * belongs to the open in progress: a chat opened with no rows reports before its rows commit,
+ * and that late note must not hold the place of the next open's.
+ */
 export function noteListCommit(threadId: string, commit: ListCommit): void {
-  if (!listCommits.has(threadId)) listCommits.set(threadId, commit);
+  listCommits.set(threadId, commit);
 }
 
 export function noteRequestStart(threadId: string, at: number, prefetched = false): void {
