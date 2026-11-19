@@ -1,6 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - the lock tests inspect real files in the store folder.
+import * as NodeFS from "node:fs";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,6 +13,15 @@ import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
+import {
+  DATA_KEY_FILE,
+  NEW_MACHINE,
+  OLD_MACHINE,
+  layerStoreOnMachine,
+  seedSealedStore,
+  snapshotDir,
+  writeKeyFileFor,
+} from "../personal/testing/lockedSecretStoreFixture.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 const layerServerConfig = () =>
@@ -298,4 +310,98 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
         assert.equal(new TextDecoder().decode(Option.getOrThrow(second)), "tvly-legacy-plain-key");
       }).pipe(Effect.provide(layerServerConfig())),
   );
+
+  describe("a sealed store whose key does not open on this machine", () => {
+    const entry = "personal-secret-x";
+    const value = "sk-fake-value";
+    const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
+    it.effect("fails get, set and create with a typed lock error and writes nothing", () => {
+      let dir = "";
+      return Effect.gen(function* () {
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        const before = snapshotDir(dir);
+
+        const read = yield* store.get(entry).pipe(Effect.flip);
+        const write = yield* store.set(entry, new TextEncoder().encode("other")).pipe(Effect.flip);
+        const created = yield* store
+          .create("personal-secret-new", new TextEncoder().encode("other"))
+          .pipe(Effect.flip);
+
+        for (const error of [read, write, created]) {
+          assert.equal(error._tag, "SecretStoreLockedError");
+          if (error._tag === "SecretStoreLockedError") {
+            assert.equal(error.reason, "material-mismatch");
+            assert.equal(error.source, "machine-id");
+          }
+        }
+        assert.deepEqual(snapshotDir(dir), before);
+      }).pipe(
+        Effect.provide(
+          Layer.provideMerge(
+            layerStoreOnMachine(NEW_MACHINE, (secretsDir) => {
+              dir = secretsDir;
+              seedSealedStore(secretsDir, OLD_MACHINE, { [entry]: value });
+            }),
+            layerServerConfig(),
+          ),
+        ),
+      );
+    });
+
+    it.effect("recovers on the same store instance once the key file opens", () => {
+      let dir = "";
+      let dataKey: Uint8Array<ArrayBufferLike> = new Uint8Array();
+      return Effect.gen(function* () {
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        const locked = yield* store.get(entry).pipe(Effect.flip);
+        assert.equal(locked._tag, "SecretStoreLockedError");
+        const stillLocked = yield* store.get(entry).pipe(Effect.flip);
+        assert.equal(stillLocked._tag, "SecretStoreLockedError");
+
+        writeKeyFileFor(dir, dataKey, NEW_MACHINE);
+
+        assert.equal(text(Option.getOrThrow(yield* store.get(entry))), value);
+        yield* store.set("personal-secret-y", new TextEncoder().encode("second"));
+        assert.equal(text(Option.getOrThrow(yield* store.get("personal-secret-y"))), "second");
+      }).pipe(
+        Effect.provide(
+          Layer.provideMerge(
+            layerStoreOnMachine(NEW_MACHINE, (secretsDir) => {
+              dir = secretsDir;
+              dataKey = seedSealedStore(secretsDir, OLD_MACHINE, { [entry]: value });
+            }),
+            layerServerConfig(),
+          ),
+        ),
+      );
+    });
+
+    it.effect("never mints a key when the key file is gone but sealed files remain", () => {
+      let dir = "";
+      return Effect.gen(function* () {
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        const before = snapshotDir(dir);
+
+        const failure = yield* store
+          .set("personal-secret-new", new TextEncoder().encode("other"))
+          .pipe(Effect.flip);
+
+        assert.equal(failure._tag, "SecretStoreLockedError");
+        if (failure._tag === "SecretStoreLockedError") assert.equal(failure.reason, "key-missing");
+        assert.deepEqual(snapshotDir(dir), before);
+        assert.isFalse(NodeFS.existsSync(`${dir}/${DATA_KEY_FILE}`));
+      }).pipe(
+        Effect.provide(
+          Layer.provideMerge(
+            layerStoreOnMachine(NEW_MACHINE, (secretsDir) => {
+              dir = secretsDir;
+              seedSealedStore(secretsDir, OLD_MACHINE, { [entry]: value }, { keyFile: false });
+            }),
+            layerServerConfig(),
+          ),
+        ),
+      );
+    });
+  });
 });

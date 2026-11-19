@@ -33,6 +33,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { storeFailureMessage } from "./secretStoreFailure.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { uninterruptibleWrite } from "../uninterruptibleWrite.ts";
 import * as PersonalSecretRepository from "./PersonalSecretRepository.ts";
@@ -348,7 +349,9 @@ export const make = Effect.gen(function* () {
             ? Effect.succeed(found)
             : store.get(personalSecretStoreKey(row.name)),
         ),
-        Effect.mapError((cause) => fail("Could not read the secret store.", cause)),
+        Effect.mapError((cause) =>
+          fail(storeFailureMessage(cause, "Could not read the secret store."), cause),
+        ),
       );
 
   // Presence check for `request`, which never runs inside a locked section: it
@@ -484,7 +487,11 @@ export const make = Effect.gen(function* () {
     yield* requireSlotAccessMatch({ name: pending.name, botId: pending.botId, shared }, access);
     yield* store
       .set(personalSecretStoreKey({ name: pending.name, botId: pending.botId, shared }), bytes)
-      .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
+      .pipe(
+        Effect.mapError((cause) =>
+          fail(storeFailureMessage(cause, "Could not store the secret."), cause),
+        ),
+      );
     const fulfilledAt = yield* DateTime.now;
     const written = yield* db(
       "fulfill",
@@ -600,7 +607,9 @@ export const make = Effect.gen(function* () {
     for (const key of keys) {
       const existed = yield* store.get(key).pipe(
         Effect.map(Option.isSome),
-        Effect.mapError((cause) => fail("Could not read the secret store.", cause)),
+        Effect.mapError((cause) =>
+          fail(storeFailureMessage(cause, "Could not read the secret store."), cause),
+        ),
       );
       stored = stored || existed;
       yield* store
@@ -743,7 +752,11 @@ export const make = Effect.gen(function* () {
     );
     const previous = yield* store
       .get(storeKey)
-      .pipe(Effect.mapError((cause) => fail("Could not read the secret store.", cause)));
+      .pipe(
+        Effect.mapError((cause) =>
+          fail(storeFailureMessage(cause, "Could not read the secret store."), cause),
+        ),
+      );
     const putBackBytes = (
       Option.isSome(previous) ? store.set(storeKey, previous.value) : store.remove(storeKey)
     ).pipe(
@@ -778,7 +791,9 @@ export const make = Effect.gen(function* () {
         ).pipe(Effect.tapError(() => putBackAccess));
       }
       yield* store.set(storeKey, bytes).pipe(
-        Effect.mapError((cause) => fail("Could not store the secret.", cause)),
+        Effect.mapError((cause) =>
+          fail(storeFailureMessage(cause, "Could not store the secret."), cause),
+        ),
         Effect.tapError(() => (unchanged ? Effect.void : putBackAccess)),
       );
       secretRedactor.set(input.name, Redacted.value(input.value), storeKey);
@@ -792,7 +807,11 @@ export const make = Effect.gen(function* () {
 
     yield* store
       .set(storeKey, bytes)
-      .pipe(Effect.mapError((cause) => fail("Could not store the secret.", cause)));
+      .pipe(
+        Effect.mapError((cause) =>
+          fail(storeFailureMessage(cause, "Could not store the secret."), cause),
+        ),
+      );
     secretRedactor.set(input.name, Redacted.value(input.value), storeKey);
     const createdAt = yield* DateTime.now;
     const row: PersonalSecretRequest = {

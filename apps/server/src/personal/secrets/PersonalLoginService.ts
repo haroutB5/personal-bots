@@ -20,6 +20,7 @@ import * as Redacted from "effect/Redacted";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import { storeFailureMessage } from "./secretStoreFailure.ts";
 import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import type { PersonalLoginFilledField } from "../browser/pageOperations.ts";
 import * as PersonalLoginRepository from "./PersonalLoginRepository.ts";
@@ -169,7 +170,9 @@ export const make = Effect.gen(function* () {
     };
     const key = personalLoginStoreKey(stored.secretRef);
     yield* store.create(key, password).pipe(
-      Effect.mapError((cause) => fail("Could not store the password.", cause)),
+      Effect.mapError((cause) =>
+        fail(storeFailureMessage(cause, "Could not store the password."), cause),
+      ),
       Effect.ensuring(wipe(password)),
     );
     yield* db("create", repository.create(stored)).pipe(
@@ -200,7 +203,9 @@ export const make = Effect.gen(function* () {
     yield* Effect.uninterruptible(
       Effect.gen(function* () {
         yield* store.create(nextKey, password).pipe(
-          Effect.mapError((cause) => fail("Could not store the password.", cause)),
+          Effect.mapError((cause) =>
+            fail(storeFailureMessage(cause, "Could not store the password."), cause),
+          ),
           Effect.ensuring(wipe(password)),
         );
         yield* db("update", repository.update(next)).pipe(
