@@ -36,3 +36,20 @@ None. Params use `--migration-before 160 --migration-after 160`, so the runner s
 ## Rollback
 
 Binary rollback to `9b4be0babfcb` (1.67.37). No data change, so no data restore.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=6e7bc80a84ea13d9e56dfba71c48a5fc1d4609bd release=6e7bc80a84ea json-sha256=d66d137db76682ccab71f92880dd4fe8be7b3e08af466815ad9ec09bbed99f49 result=PASS -->
+
+- server-tests: SKIPPED, skip: no changed path is an input of server-tests: apps/server, packages, scripts/personal/adblock, scripts/personal/dsh-runtime, scripts/personal/updates, scripts/personal/sync, scripts/personal/testing (not packages/personal-client/, packages/client-runtime/)
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: SKIPPED, skip: no changed path is an input of e2e: apps/server, apps/web, packages, scripts/personal/e2e, scripts/personal/node/e2e-smoke.mjs, scripts/personal/testing
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+- hbots-mobile-kotlin: PASS, selected: hbots-mobile-kotlin inputs changed: apps/hbots-mobile/modules/hbots-textselect/android/build.gradle, apps/hbots-mobile/modules/hbots-textselect/android/src/main/java/expo/modules/hbotstextselect/Dismissal.kt, apps/hbots-mobile/modules/hbots-textselect/android/src/main/java/expo/modules/hbotstextselect/HbotsTextSelectModule.kt, apps/hbots-mobile/modules/hbots-textselect/android/src/test/java/expo/modules/hbotstextselect/DismissalTest.kt, ...; selected 1 Gradle tasks
+
+<!-- gate-evidence:end -->
