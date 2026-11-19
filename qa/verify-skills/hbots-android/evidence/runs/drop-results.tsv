@@ -1,0 +1,3 @@
+1	chat-send-reply	PASS	31	sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify
+7	swipe-quote	PASS	21	reply bar quotes the reply excerpt (299 chars, a prefix of the full 1009)
+9	long-press-reply	PASS	44	long press on the sent 'LPRESS' and on the bot reply opened the menu, Reply showed the right name and text in the composer, the bot received the quote

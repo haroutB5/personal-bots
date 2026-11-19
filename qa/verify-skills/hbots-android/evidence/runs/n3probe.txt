@@ -1,0 +1,56 @@
+heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android f91e7a04afa4 2026-11-19T11:09:07Z label n3probe, run r20261119T110907-1449977, queue wait 0s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: info another run's tunnel is active and stays untouched: pstack-hbots-verify-tunnel-r20261119T105603-1413185.service
+doctor: ok   server binary 6e7bc80a84ea (read only)
+doctor: info checkout version 1.67.37 at f91e7a04afa4
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 61 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+{"up":true,"pid":1452532,"port":34671,"release":"6e7bc80a84ea"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T110907-1449977.service; invocation ID: e9ebd314f14f468994246c4478ee2bd3
+tunnel: up, answered http 200 from outside after 11 s
+11:10:36 apk app.apk sha256 4158c6fcd4db3751
+11:11:35 paired, app shows v1.67.37, setup 59 s
+11:12:00 probe: [C-composed] scrolled 0x; composer text='BASE3' tray photos=3 sent-thumbnails=0 bubble with text=True offline notice=False status texts=[]
+11:12:02 probe: C online baseline: the bot got BASE3 with 3 photos after 2.0 s (None = never in 90 s)
+11:12:37 probe: [B-offline-before-send] scrolled 0x; composer text='AIRPL3' tray photos=3 sent-thumbnails=0 bubble with text=True offline notice=True status texts=[]
+11:12:43 probe: [B-offline-after-send] scrolled 0x; composer text='AIRPL3' tray photos=3 sent-thumbnails=0 bubble with text=True offline notice=True status texts=[]
+11:12:53 probe: B while offline: the bot got AIRPL3 after None s (0 photos); None = nothing arrived, as expected
+11:14:53 probe: B after the network came back: the bot got AIRPL3 with 0 photos after None s (None = never in 120 s)
+11:14:57 probe: [B-back-online] scrolled 0x; composer text='AIRPL3' tray photos=3 sent-thumbnails=3 bubble with text=True offline notice=False status texts=[]
+11:15:16 reset: closed photo tray, photo tray, photo tray, draft text
+11:15:37 probe: [A-composed] scrolled 0x; composer text='TUNNEL3' tray photos=3 sent-thumbnails=3 bubble with text=True offline notice=False status texts=[]
+11:16:07 probe: A: tunnel unit stopped right after tapping Send
+11:16:15 probe: [A-after-tunnel-stop] scrolled 1x; composer text='Message Developer…' tray photos=0 sent-thumbnails=0 bubble with text=True offline notice=True status texts=[]
+11:16:35 probe: A: the bot got TUNNEL3 after None s (0 photos); None = nothing arrived (the link never came back: a quick tunnel gets a new URL)
+stopped 1452532
+tunnel: pstack-hbots-verify-tunnel-r20261119T110907-1449977 inactive
+device: emulator pid 1450289 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): none
+heavy slot held during the run: omarchy-heavy-1.lock by pid 1450005 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-1.lock used by pid 1450005, now released, none of this run's processes holds it
+RESULT PASS in 448s total, 0s waiting for a heavy-job slot, 448s of work (emulator boot 62s, setup+drive 359s, flows ?s), device laptop, evidence /home/harout/Claude/AI/_wt/verify-hbots-android-r2/apps/hbots-mobile/.claude/skills/verify-hbots-android/.scratch/evidence/n3probe-20261119T110907Z

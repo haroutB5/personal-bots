@@ -1,0 +1,7 @@
+== 13:49:18 cleanup check after cold1
+listeners 34671/5171/5672/5673: 0
+qemu on port 5672 / adb 5171 / cloudflared to 34671:
+tunnel units:
+heavy locks:
+emulators running:
+

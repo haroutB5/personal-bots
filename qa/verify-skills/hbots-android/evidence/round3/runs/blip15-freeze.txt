@@ -1,0 +1,2 @@
+14:44:05 freeze: trigger f2-picked seen, unit pstack-hbots-verify-tunnel-r20261119T144208-2065000, SIGSTOP cloudflared pid 2067149
+14:44:20 freeze: SIGCONT cloudflared pid 2067149 after 15 s

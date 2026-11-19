@@ -1,0 +1,54 @@
+heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android f1c8e0e36ab8 2026-11-19T14:28:46Z label r3cold2, run r20261119T142846-2039135, queue wait 0s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: ok   server binary 0130b5adf7b1 (read only)
+doctor: info checkout version 1.67.37 at f1c8e0e36ab8
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 37 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+{"up":true,"pid":2040672,"port":34671,"release":"0130b5adf7b1"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T142846-2039135.service; invocation ID: 621a6a17ad064b9ca6baad9d30eb3098
+tunnel: up, answered http 200 from outside after 3 s
+14:29:40 apk app-1.67.37-x86_64.apk sha256 4158c6fcd4db3751
+14:30:21 paired, app shows v1.67.37, setup 41 s
+14:30:46 flow 1 chat-send-reply PASS (19 s): sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify
+14:31:12 flow 7 swipe-quote PASS (18 s): reply bar quotes the reply excerpt (299 chars, a prefix of the full 1009)
+14:31:54 flow 9 long-press-reply PASS (34 s): long press on the sent 'LPRESS' and on the bot reply opened the menu, Reply showed the right name and text in the composer, the bot received the quote
+14:32:14 flow 3 camera-entry-once PASS (12 s): composer row holds only ['Add photos', 'Attach files', 'Message Developer…', 'Send'], plus sheet shows 'Camera' once
+14:32:25 reset: closed menu or sheet
+14:32:50 flow 2 pick-three-photos PASS (25 s): tray showed 3 photos, the sent message shows 3 images, the bot got the 3 distinct picked files
+14:33:56 flow 5 in-app-on-tasks-tab PASS (20 s): Tasks tab showed Developer 'Working · …', then 'No bot is working right now.'; server logged path in-app and nothing else
+14:34:04 flow 4 work-card-unread-only PASS (34 s): 1 card with Planner's unread question, none for the read Researcher question, none for Developer reports
+14:34:35 flow 6 background-goes-push PASS (26 s): server logged path push only with the app in the background; back in the app the Researcher row shows 'Slow job finished.'
+14:35:10 flow 8 open-and-back-logcat-clean PASS (29 s): Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid 3932 alive, FATAL 0, JS errors 0
+14:35:10 DONE 9 PASS, 0 FAIL, flows 289 s
+stopped 2040672
+tunnel: pstack-hbots-verify-tunnel-r20261119T142846-2039135 inactive
+device: emulator pid 2039392 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): none
+heavy slot held during the run: omarchy-heavy-1.lock by pid 2039163 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-1.lock used by pid 2039163, now released, none of this run's processes holds it
+RESULT PASS in 384s total, 0s waiting for a heavy-job slot, 384s of work (emulator boot 39s, setup+drive 330s, flows 289s), device laptop, evidence /home/harout/Claude/AI/_wt/verify-hbots-android-r2/apps/hbots-mobile/.claude/skills/verify-hbots-android/.scratch/evidence/r3cold2-20261119T142846Z

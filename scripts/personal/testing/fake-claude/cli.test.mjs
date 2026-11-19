@@ -270,3 +270,9 @@ NodeTest.test("BGSTART leaves a background task running and BGEND ends it", asyn
     [["task_notification", "bg-fake", "completed"]],
   );
 });
+
+NodeTest.test("LATEQ<n> answers nothing at first, then asks a choices question", async () => {
+  const reply = await prompt("LATEQ1");
+  NodeAssert.match(reply, /Which build should go out tonight\?/);
+  NodeAssert.match(reply, /```choices\nShip it\nHold it\n```/);
+});

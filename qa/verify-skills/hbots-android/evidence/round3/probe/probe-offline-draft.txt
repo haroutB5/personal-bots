@@ -1,0 +1,7 @@
+[C-composed] scrolled 0x; composer text='BASE3' tray photos=3 sent-thumbnails=0 bubble with text=True offline notice=False status texts=[]
+C online baseline: the bot got BASE3 with 3 photos after 2.0 s (None = never in 90 s)
+[B-offline-before-send] scrolled 0x; composer text='AIRPL3' tray photos=3 sent-thumbnails=0 bubble with text=True offline notice=True status texts=[]
+[B-offline-after-send] scrolled 0x; composer text='Message Developer…' tray photos=0 sent-thumbnails=0 bubble with text=True offline notice=True status texts=['Queued']
+B while offline: the bot got AIRPL3 after None s (0 photos); None = nothing arrived, as expected
+B after the network came back: the bot got AIRPL3 with 3 photos after 3.5 s (None = never in 120 s)
+[B-back-online] scrolled 0x; composer text='Message Developer…' tray photos=0 sent-thumbnails=3 bubble with text=True offline notice=False status texts=[]

@@ -1,0 +1,47 @@
+heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android f1c8e0e36ab8 2026-11-19T13:34:59Z label r3prefix, run r20261119T133459-1934696, queue wait 0s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: ok   server binary 6e7bc80a84ea (read only)
+doctor: info checkout version 1.67.37 at f1c8e0e36ab8
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 44 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+mise WARN  Failed to resolve tool version list for cursor-agent: [~/.config/mise/config.toml] cursor-agent@latest: no versions found for cursor-agent matching minimum_release_age (24h): it hid 1 release, the newest being 2026.11.19-f005e9d (released 2026-11-19, eligible 2026-11-20 23:59 GMT). Install that one now with `cursor-agent@2026.11.19-f005e9d`, or lower minimum_release_age.
+{"up":true,"pid":1937458,"port":34671,"release":"6e7bc80a84ea"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T133459-1934696.service; invocation ID: eb428bf71be64f968d21c73f17fb98ed
+tunnel: up, answered http 200 from outside after 0 s
+13:35:56 apk app-1.67.37-x86_64.apk sha256 4158c6fcd4db3751
+13:36:40 paired, app shows v1.67.37, setup 44 s
+13:37:19 flow 5 in-app-on-tasks-tab FAIL (25 s): AssertionError: the bot received 'PLANTXSLOW6', the flow sent 'SLOW6' (not an exact match)
+13:37:19 DONE 0 PASS, 1 FAIL, flows 38 s
+mise WARN  Failed to resolve tool version list for cursor-agent: [~/.config/mise/config.toml] cursor-agent@latest: no versions found for cursor-agent matching minimum_release_age (24h): it hid 1 release, the newest being 2026.11.19-f005e9d (released 2026-11-19, eligible 2026-11-20 23:59 GMT). Install that one now with `cursor-agent@2026.11.19-f005e9d`, or lower minimum_release_age.
+stopped 1937458
+tunnel: pstack-hbots-verify-tunnel-r20261119T133459-1934696 inactive
+device: emulator pid 1934964 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): none
+heavy slot held during the run: omarchy-heavy-1.lock by pid 1934724 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-1.lock used by pid 1934724, now released, none of this run's processes holds it
+RESULT FAIL in 140s total, 0s waiting for a heavy-job slot, 140s of work (emulator boot 44s, setup+drive 83s, flows 38s), device laptop, evidence /home/harout/Claude/AI/dev-team/qa/verify-skills/hbots-android/round3/ev/r3prefix-20261119T133459Z

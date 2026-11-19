@@ -1,0 +1,55 @@
+heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android c79f0f088482 2026-11-19T09:30:21Z label clean2, run r20261119T093021-1154072, queue wait 0s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: info another run's tunnel is active and stays untouched: pstack-hbots-verify-tunnel-r20261119T092849-1148635.service
+doctor: ok   server binary 6e7bc80a84ea (read only)
+doctor: info checkout version 1.67.37 at c79f0f088482
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 95 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+{"up":true,"pid":1158726,"port":34671,"release":"6e7bc80a84ea"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T093021-1154072.service; invocation ID: a754fc3972ca4f08a76b592808e7b5ae
+tunnel: up, answered http 200 from outside after 15 s
+09:32:36 apk app.apk sha256 4158c6fcd4db3751
+09:33:56 paired, app shows v1.67.37, setup 80 s
+09:34:34 flow 1 chat-send-reply PASS (28 s): sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify
+09:35:07 flow 7 swipe-quote PASS (23 s): reply bar quotes the reply excerpt (299 chars, a prefix of the full 1009)
+09:35:55 flow 9 long-press-reply PASS (38 s): long press on the sent 'LPRESS' and on the bot reply opened the menu, Reply showed the right name and text in the composer, the bot received the quote
+09:36:17 flow 3 camera-entry-once PASS (13 s): composer row holds only ['Add photos', 'Attach files', 'Message Developer…', 'Send'], plus sheet shows 'Camera' once
+09:36:30 reset: closed menu or sheet
+09:37:00 flow 2 pick-three-photos PASS (31 s): tray showed 3 photos, the sent message shows 3 images, the bot got the 3 distinct picked files
+09:38:10 flow 5 in-app-on-tasks-tab PASS (22 s): Tasks tab showed Developer 'Working · …', then 'No bot is working right now.'; server logged path in-app and nothing else
+09:38:19 flow 4 work-card-unread-only PASS (36 s): 1 card with Planner's unread question, none for the read Researcher question, none for Developer reports
+09:38:56 flow 6 background-goes-push PASS (32 s): server logged path push only with the app in the background; back in the app the Researcher row shows 'Slow job finished.'
+09:39:33 flow 8 open-and-back-logcat-clean PASS (31 s): Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid 4352 alive, FATAL 0, JS errors 0
+09:39:33 DONE 9 PASS, 0 FAIL, flows 337 s
+stopped 1158726
+tunnel: pstack-hbots-verify-tunnel-r20261119T093021-1154072 inactive
+device: emulator pid 1154357 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): pstack-hbots-verify-tunnel-r20261119T092849-1148635.service
+heavy slot held during the run: omarchy-heavy-4.lock by pid 1154100 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-4.lock used by pid 1154100, now released, none of this run's processes holds it
+RESULT PASS in 552s total, 0s waiting for a heavy-job slot, 552s of work (emulator boot 95s, setup+drive 418s, flows 337s), device laptop, evidence /home/harout/Claude/AI/_wt/verify-hbots-android-r2/apps/hbots-mobile/.claude/skills/verify-hbots-android/.scratch/evidence/clean2-20261119T093021Z

@@ -1,0 +1,8 @@
+== 13:34:58 cleanup check after draft
+listeners 34671/5171/5672/5673: 0
+qemu on port 5672 / adb 5171 / cloudflared to 34671:
+tunnel units:
+heavy locks:
+pid 1856916 cwd /home/harout/Claude/AI/_wt/hbots-rc16739
+emulators running:
+
