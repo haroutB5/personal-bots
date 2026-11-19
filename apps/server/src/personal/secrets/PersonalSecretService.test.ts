@@ -47,7 +47,7 @@ import {
   seedSealedStore,
   snapshotDir,
 } from "../testing/lockedSecretStoreFixture.ts";
-import { LOCKED_SECRETS_MESSAGE } from "./secretStoreFailure.ts";
+import { lockedSecretsMessage } from "./secretStoreFailure.ts";
 import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
 import { PersonalToolkitHandlersLive } from "../../mcp/toolkits/personal/handlers.ts";
 import { PersonalToolkit } from "../../mcp/toolkits/personal/tools.ts";
@@ -344,13 +344,55 @@ describe("personal secret requests on a locked store", () => {
         .fulfill({ requestId: requested.request.requestId, value: Redacted.make(SECRET_VALUE) })
         .pipe(Effect.flip);
 
-      expect(failure.message).toBe(LOCKED_SECRETS_MESSAGE);
+      expect(failure.message).toBe(lockedSecretsMessage("material-mismatch"));
       expect(failure.message).not.toContain(SECRET_VALUE);
       expect(snapshotDir(dir)).toEqual(before);
       const pending = yield* secrets.listPending();
       expect(pending.requests.map((entry) => entry.name)).toEqual(["GITHUB_TOKEN"]);
     }).pipe(Effect.provide(makeLayer(harness, lockedStore)));
   });
+
+  it.effect(
+    "fulfil says the key file is missing, saves nothing and leaves the request pending",
+    () => {
+      const harness = makeHarness();
+      let dir = "";
+      const lockedStore = layerStoreOnMachine(NEW_MACHINE, (secretsDir) => {
+        dir = secretsDir;
+        seedSealedStore(
+          secretsDir,
+          OLD_MACHINE,
+          { "personal-secret-x": "old-value" },
+          { keyFile: false },
+        );
+      });
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const secrets = yield* PersonalSecretService.PersonalSecretService;
+        const { task, threadId } = yield* runningTask(harness, "key-missing", "assistant");
+        const requested = yield* secrets.request({
+          task,
+          threadId,
+          botId: botId("assistant"),
+          name: "GITHUB_TOKEN",
+          label: "GitHub token",
+          purpose: "Push the release tag.",
+        });
+        const before = snapshotDir(dir);
+
+        const failure = yield* secrets
+          .fulfill({ requestId: requested.request.requestId, value: Redacted.make(SECRET_VALUE) })
+          .pipe(Effect.flip);
+
+        expect(failure.message).toBe(lockedSecretsMessage("key-missing"));
+        expect(failure.message).not.toContain("another machine");
+        expect(failure.message).not.toContain(SECRET_VALUE);
+        expect(snapshotDir(dir)).toEqual(before);
+        const pending = yield* secrets.listPending();
+        expect(pending.requests.map((entry) => entry.name)).toEqual(["GITHUB_TOKEN"]);
+      }).pipe(Effect.provide(makeLayer(harness, lockedStore)));
+    },
+  );
 });
 
 describe("personal secret requests", () => {

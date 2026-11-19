@@ -145,12 +145,14 @@ export function runSecretsImport(
           imported: result.imported,
           unchanged: result.unchanged,
           dataKeyWritten: result.dataKeyWritten,
+          keyBackup: result.keyBackup,
         })}\n`,
       );
     } else {
       process.stdout.write(
         `Imported ${result.entries} saved secret(s): ${result.imported} written, ${result.unchanged} already present; ` +
-          `${result.dataKeyWritten ? "data key re-sealed for this machine" : "data key already matched"}\n`,
+          `${result.dataKeyWritten ? "data key re-sealed for this machine" : "data key already matched"}` +
+          `${result.keyBackup === null ? "" : `; old key file kept at ${result.keyBackup}`}\n`,
       );
     }
     return 0;

@@ -230,6 +230,27 @@ const writePrivateFile = (file: string, bytes: Uint8Array, overwrite: boolean): 
   }
 };
 
+const isoStamp = (now: number) => new Date(now).toISOString().replace(/[:.]/g, "-");
+
+const writeKeyBackup = (keyPath: string, bytes: Uint8Array, now: number): string => {
+  const backup = `${keyPath}.locked-${isoStamp(now)}`;
+  try {
+    const handle = NodeFS.openSync(backup, "wx", 0o600);
+    try {
+      NodeFS.writeFileSync(handle, bytes);
+      NodeFS.fsyncSync(handle);
+    } finally {
+      NodeFS.closeSync(handle);
+    }
+  } catch (error) {
+    throw new SecretsPortabilityError(
+      "write-failed",
+      `Could not write the key backup ${backup}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return backup;
+};
+
 export interface SecretsExportOptions {
   /** The store's `secrets` folder (ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦/userdata/secrets). */
   readonly secretsDir: string;
@@ -350,6 +371,8 @@ export interface SecretsImportResult {
   readonly unchanged: number;
   /** True when the data key file was (re)written. */
   readonly dataKeyWritten: boolean;
+  /** The replaced key file, kept next to it. Null when no key file was replaced. */
+  readonly keyBackup: string | null;
 }
 
 /**
@@ -453,7 +476,14 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
       }
     }
     let dataKeyWritten = true;
-    if (previousKeyBytes !== null) {
+    if (previousKeyBytes === null) {
+      if (strandedCount > 0) {
+        throw new SecretsPortabilityError(
+          "target-key-differs",
+          `There is no secret key file here (${keyPath}), and ${strandedCount} saved secret(s) do not open with the bundle's key. Importing would overwrite or strand them. Move them aside or restore the key file first.`,
+        );
+      }
+    } else {
       const outcome = tryUnwrapDataKeyText(new TextDecoder().decode(previousKeyBytes), resolve);
       if (outcome._tag === "Opened") {
         const existing = outcome.dataKey;
@@ -484,11 +514,15 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
     }
 
     NodeFS.mkdirSync(options.secretsDir, { recursive: true, mode: 0o700 });
-    const written: string[] = [];
+    const written: Array<{ readonly file: string; readonly previous: Uint8Array | null }> = [];
+    let keyBackup: string | null = null;
     let imported = 0;
     let unchanged = 0;
     try {
       if (dataKeyWritten) {
+        if (previousKeyBytes !== null) {
+          keyBackup = writeKeyBackup(keyPath, previousKeyBytes, (deps.now ?? Date.now)());
+        }
         // Keep the imported data key: a new one would leave every saved secret
         // sealed with a key nothing can open.
         const wrapped = wrapDataKey(dataKey, target);
@@ -502,20 +536,22 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
       }
       for (const entry of decoded) {
         const file = NodePath.join(options.secretsDir, `${entry.name}.bin`);
+        let previous: Uint8Array | null = null;
         try {
-          const current = Uint8Array.from(NodeFS.readFileSync(file));
-          const identical =
-            current.byteLength === entry.bytes.byteLength &&
-            current.every((byte, index) => byte === entry.bytes[index]);
-          if (identical) {
-            unchanged += 1;
-            continue;
-          }
+          previous = Uint8Array.from(NodeFS.readFileSync(file));
         } catch {
           // Not there yet: write it.
         }
+        if (
+          previous !== null &&
+          previous.byteLength === entry.bytes.byteLength &&
+          previous.every((byte, index) => byte === entry.bytes[index])
+        ) {
+          unchanged += 1;
+          continue;
+        }
+        written.push({ file, previous });
         writePrivateFile(file, entry.bytes, true);
-        written.push(file);
         imported += 1;
       }
 
@@ -540,13 +576,15 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
       } finally {
         reopened.fill(0);
       }
-      return { entries: decoded.length, imported, unchanged, dataKeyWritten };
+      return { entries: decoded.length, imported, unchanged, dataKeyWritten, keyBackup };
     } catch (error) {
-      for (const file of written) {
+      const notRestored: string[] = [];
+      for (const { file, previous } of [...written].reverse()) {
         try {
-          NodeFS.rmSync(file, { force: true });
+          if (previous === null) NodeFS.rmSync(file, { force: true });
+          else writePrivateFile(file, previous, true);
         } catch {
-          // Best effort.
+          notRestored.push(NodePath.basename(file));
         }
       }
       if (keyWritten) {
@@ -557,8 +595,19 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
             writePrivateFile(keyPath, previousKeyBytes, true);
           }
         } catch {
-          // The caller sees the original failure either way.
+          notRestored.push(DATA_KEY_FILE_NAME);
         }
+      }
+      if (keyBackup !== null && !notRestored.includes(DATA_KEY_FILE_NAME)) {
+        try {
+          NodeFS.rmSync(keyBackup, { force: true });
+        } catch {}
+      }
+      if (notRestored.length > 0) {
+        throw new SecretsPortabilityError(
+          "write-failed",
+          `The import failed and could not put back: ${notRestored.join(", ")}. ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       throw error;
     }
@@ -672,8 +721,6 @@ export type RewrapResult =
   | { readonly status: "would-rewrap"; readonly entries: number }
   | { readonly status: "rewrapped"; readonly entries: number; readonly backup: string };
 
-const isoStamp = (now: number) => new Date(now).toISOString().replace(/[:.]/g, "-");
-
 export function rewrapDataKey(options: RewrapOptions): RewrapResult {
   const deps = options.deps ?? {};
   const resolve = deps.resolveMachineMaterial ?? resolveMachineMaterial;
@@ -726,22 +773,8 @@ export function rewrapDataKey(options: RewrapOptions): RewrapResult {
         "This machine has no machine material to protect the secret key.",
       );
     }
-    const backup = `${keyPath}.locked-${isoStamp((deps.now ?? Date.now)())}`;
     const oldBytes = Buffer.from(keyText, "utf8");
-    try {
-      const handle = NodeFS.openSync(backup, "wx", 0o600);
-      try {
-        NodeFS.writeFileSync(handle, oldBytes);
-        NodeFS.fsyncSync(handle);
-      } finally {
-        NodeFS.closeSync(handle);
-      }
-    } catch (error) {
-      throw new SecretsPortabilityError(
-        "write-failed",
-        `Could not write the key backup ${backup}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    const backup = writeKeyBackup(keyPath, oldBytes, (deps.now ?? Date.now)());
     try {
       writePrivateFile(
         keyPath,

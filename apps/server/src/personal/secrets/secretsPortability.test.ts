@@ -5,6 +5,8 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeModule from "node:module";
+
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -128,6 +130,7 @@ describe("secretsPortability", () => {
       imported: 3,
       unchanged: 0,
       dataKeyWritten: true,
+      keyBackup: null,
     });
     // The new machine opens the same values with its OWN material.
     expect(readSecrets(target, LINUX)).toEqual(new Map(Object.entries(secrets)));
@@ -141,7 +144,13 @@ describe("secretsPortability", () => {
       passphrase: PASSPHRASE,
       deps: { resolveMachineMaterial: material(LINUX) },
     });
-    expect(again).toEqual({ entries: 3, imported: 0, unchanged: 3, dataKeyWritten: false });
+    expect(again).toEqual({
+      entries: 3,
+      imported: 0,
+      unchanged: 3,
+      dataKeyWritten: false,
+      keyBackup: null,
+    });
   });
 
   it("refuses a wrong passphrase and a tampered bundle", () => {
@@ -353,15 +362,43 @@ const importOnNew = (dir: string, bundleFile: string, force = false) =>
     deps: { resolveMachineMaterial: material(NEW_MACHINE) },
   });
 
+const sealUnderOldKey = (dir: string, name: string, value: string) => {
+  const keyFile = parseWrappedDataKey(
+    NodeFS.readFileSync(NodePath.join(dir, DATA_KEY_FILE_NAME), "utf8"),
+  );
+  const opened = tryUnwrapDataKey(keyFile, OLD_MACHINE);
+  if (opened._tag === "Locked") throw new Error(`key does not open: ${opened.reason}`);
+  NodeFS.writeFileSync(
+    NodePath.join(dir, `${name}.bin`),
+    Buffer.from(sealSecret(opened.dataKey, name, new TextEncoder().encode(value))),
+  );
+  opened.dataKey.fill(0);
+};
+
+const keyBackups = (dir: string) =>
+  NodeFS.readdirSync(dir).filter((name) => name.startsWith(`${DATA_KEY_FILE_NAME}.locked-`));
+
 describe("a moved store whose key does not open here", () => {
   it("imports in place when every local entry opens with the bundle key", () => {
     const { old, moved, bundleFile } = movedStore();
     exportOld(old.dir, bundleFile);
     const entryBytesBefore = [...snapshotDir(moved)].filter(([name]) => name.endsWith(".bin"));
+    const oldKeyText = NodeFS.readFileSync(NodePath.join(moved, DATA_KEY_FILE_NAME), "utf8");
 
     const result = importOnNew(moved, bundleFile);
 
-    expect(result).toEqual({ entries: 13, imported: 0, unchanged: 13, dataKeyWritten: true });
+    const [backupName, ...otherBackups] = keyBackups(moved);
+    expect(otherBackups).toEqual([]);
+    const backupPath = NodePath.join(moved, backupName!);
+    expect(result).toEqual({
+      entries: 13,
+      imported: 0,
+      unchanged: 13,
+      dataKeyWritten: true,
+      keyBackup: backupPath,
+    });
+    expect(NodeFS.readFileSync(backupPath, "utf8")).toBe(oldKeyText);
+    expect(NodeFS.statSync(backupPath).mode & 0o777).toBe(0o600);
     expect(readSecrets(moved, NEW_MACHINE)).toEqual(new Map(Object.entries(thirteen)));
     expect([...snapshotDir(moved)].filter(([name]) => name.endsWith(".bin"))).toEqual(
       entryBytesBefore,
@@ -381,6 +418,71 @@ describe("a moved store whose key does not open here", () => {
 
     expect(codeOf(() => importOnNew(moved, bundleFile))).toBe("target-key-differs");
     expect(codeOf(() => importOnNew(moved, bundleFile, true))).toBe("target-key-differs");
+    expect(snapshotDir(moved)).toEqual(before);
+  });
+});
+
+describe("import over a store with no key file", () => {
+  it("refuses and writes nothing when a local entry is sealed under the lost key", () => {
+    const { old, moved, bundleFile } = movedStore();
+    exportOld(old.dir, bundleFile);
+    NodeFS.rmSync(NodePath.join(moved, DATA_KEY_FILE_NAME));
+    const lost = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-lost-"));
+    seedSealedStore(lost, NEW_MACHINE, { "personal-secret-0": "sealed-under-lost-key" });
+    NodeFS.copyFileSync(
+      NodePath.join(lost, "personal-secret-0.bin"),
+      NodePath.join(moved, "personal-secret-0.bin"),
+    );
+    const before = snapshotDir(moved);
+
+    expect(codeOf(() => importOnNew(moved, bundleFile))).toBe("target-key-differs");
+    expect(codeOf(() => importOnNew(moved, bundleFile, true))).toBe("target-key-differs");
+    expect(snapshotDir(moved)).toEqual(before);
+  });
+
+  it("imports when every local entry is a byte copy of the bundle", () => {
+    const { old, moved, bundleFile } = movedStore();
+    exportOld(old.dir, bundleFile);
+    NodeFS.rmSync(NodePath.join(moved, DATA_KEY_FILE_NAME));
+
+    const result = importOnNew(moved, bundleFile);
+
+    expect(result).toEqual({
+      entries: 13,
+      imported: 0,
+      unchanged: 13,
+      dataKeyWritten: true,
+      keyBackup: null,
+    });
+    expect(readSecrets(moved, NEW_MACHINE)).toEqual(new Map(Object.entries(thirteen)));
+    expect(keyBackups(moved)).toEqual([]);
+  });
+});
+
+describe("a failed import", () => {
+  it("puts back the original bytes of every entry it overwrote and the original key file", () => {
+    const { old, moved, bundleFile } = movedStore({ "personal-secret-zznew": "only-in-bundle" });
+    exportOld(old.dir, bundleFile);
+    NodeFS.rmSync(NodePath.join(moved, "personal-secret-zznew.bin"));
+    sealUnderOldKey(moved, "personal-secret-0", "local-value-differs-from-bundle");
+    const before = snapshotDir(moved);
+
+    const fsCjs = NodeModule.createRequire(import.meta.url)("node:fs") as typeof NodeFS;
+    const original = fsCjs.renameSync;
+    fsCjs.renameSync = ((from: NodeFS.PathLike, to: NodeFS.PathLike) => {
+      if (String(to).endsWith("personal-secret-zznew.bin")) throw new Error("injected ENOSPC");
+      return original(from, to);
+    }) as typeof NodeFS.renameSync;
+    NodeModule.syncBuiltinESMExports();
+    let code = "";
+    try {
+      code = codeOf(() => importOnNew(moved, bundleFile));
+    } finally {
+      fsCjs.renameSync = original;
+      NodeModule.syncBuiltinESMExports();
+    }
+
+    expect(code).toBe("write-failed");
     expect(snapshotDir(moved)).toEqual(before);
   });
 });
