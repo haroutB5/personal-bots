@@ -36,3 +36,21 @@ None. Max migration is 160 in `Migrations.ts` on trunk and on the head, and `app
 ## Rollback
 
 Binary rollback to `6e7bc80a84ea` (1.67.38). No data change, so no data restore.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=0130b5adf7b18f633c17317f12eee39b35921db9 release=0130b5adf7b1 json-sha256=5adbd8bf16a347bc26139c657302e155548f5fe8bc4d2818c7510e04860ad891 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/src/personal/push/clientDiagRoute.test.ts, apps/server/src/personal/push/clientDiagRoute.ts, apps/server/src/personal/tasks/PersonalTaskService.test.ts, apps/server/src/personal/tasks/taskDispatch.ts, ...; selected 220 test files
+- server-tsc: PASS, exit 0
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: PASS, selected: e2e inputs changed: apps/server/src/personal/push/clientDiagRoute.test.ts, apps/server/src/personal/push/clientDiagRoute.ts, apps/server/src/personal/tasks/PersonalTaskService.test.ts, apps/server/src/personal/tasks/taskDispatch.ts, ...; selected 12 journeys
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, selected: hbots-mobile-kotlin inputs changed: apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/HbotsLauncherModule.kt; selected 1 Gradle tasks
+- parity: PASS, exit 0
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/dev-team-tools/heavy-job.sh, scripts/personal/linux/dev-team-tools/tools.test.mjs, scripts/personal/linux/hbots-release/hbots-desk-status; selected 15 test files
+- not run by any gate: scripts/personal/testing/fake-claude/cli.test.mjs
+
+<!-- gate-evidence:end -->
