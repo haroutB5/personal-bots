@@ -89,6 +89,12 @@ export interface ConnectionVendorCall {
   readonly connectionId: ConnectionId;
   readonly settings: PersonalConnectionSettings;
   /**
+   * Where this connection's credential is stored. The gateway always sets it.
+   * Only a vendor whose provider rotates its refresh token reads it, to
+   * rewrite the value in place; every other adapter ignores it.
+   */
+  readonly credentialHandle?: { readonly credentialRef: string; readonly version: number };
+  /**
    * The account this connection was validated against, as the owner saw it on
    * the connect screen. A vendor that scopes requests by team reads it from
    * here rather than re-resolving one per call: the approval was given for a

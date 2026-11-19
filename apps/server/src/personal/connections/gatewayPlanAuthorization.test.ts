@@ -130,6 +130,7 @@ const makeHarness = (options?: HarnessOptions) => {
     CredentialStore.PersonalConnectionCredentialStore.of({
       create: () => Effect.die("unused"),
       createNext: () => Effect.die("unused"),
+      replaceInPlace: () => Effect.die("unused"),
       read: () => Effect.succeed(Option.some({ accessToken: Redacted.make(TOKEN) })),
       remove: () => Effect.void,
     }),

@@ -46,6 +46,16 @@ export class PersonalConnectionCredentialStore extends Context.Service<
       Option.Option<Readonly<Record<string, Redacted.Redacted<string>>>>,
       PersonalConnectionCredentialStoreError
     >;
+    /**
+     * Rewrites the values behind a handle and keeps the handle. A provider that
+     * rotates its refresh token on every use must not mint a new version: the
+     * approval digest binds the version, so a new one would void every pending
+     * send card. Also the way to write a value under a fixed reference.
+     */
+    readonly replaceInPlace: (
+      handle: PersonalConnectionCredentialHandle,
+      values: PersonalConnectionCredentials,
+    ) => Effect.Effect<PersonalConnectionCredentialHandle, PersonalConnectionCredentialStoreError>;
     readonly remove: (
       handle: PersonalConnectionCredentialHandle,
     ) => Effect.Effect<void, PersonalConnectionCredentialStoreError>;
@@ -58,12 +68,13 @@ export const make = Effect.gen(function* () {
   const persist = Effect.fn("PersonalConnectionCredentialStore.persist")(function* (
     handle: PersonalConnectionCredentialHandle,
     values: PersonalConnectionCredentials,
+    write: "create" | "set" = "create",
   ) {
     const plain = Object.fromEntries(
       Object.entries(values).map(([name, value]) => [name, Redacted.value(value)]),
     );
     const bytes = new TextEncoder().encode(encodeCredentialPayload(plain));
-    yield* store.create(personalConnectionCredentialKey(handle), bytes).pipe(
+    yield* store[write](personalConnectionCredentialKey(handle), bytes).pipe(
       Effect.mapError(() => fail("Could not store connection credentials.")),
       Effect.ensuring(Effect.sync(() => bytes.fill(0))),
     );
@@ -75,6 +86,10 @@ export const make = Effect.gen(function* () {
     previous,
     values,
   ) => persist({ credentialRef: NodeCrypto.randomUUID(), version: previous.version + 1 }, values);
+  const replaceInPlace: PersonalConnectionCredentialStore["Service"]["replaceInPlace"] = (
+    handle,
+    values,
+  ) => persist(handle, values, "set");
   const read: PersonalConnectionCredentialStore["Service"]["read"] = (handle) =>
     store.get(personalConnectionCredentialKey(handle)).pipe(
       Effect.mapError(() => fail("Could not read connection credentials.")),
@@ -101,7 +116,7 @@ export const make = Effect.gen(function* () {
       .remove(personalConnectionCredentialKey(handle))
       .pipe(Effect.mapError(() => fail("Could not remove connection credentials.")));
 
-  return PersonalConnectionCredentialStore.of({ create, createNext, read, remove });
+  return PersonalConnectionCredentialStore.of({ create, createNext, read, replaceInPlace, remove });
 });
 
 export const layer = Layer.effect(PersonalConnectionCredentialStore, make);

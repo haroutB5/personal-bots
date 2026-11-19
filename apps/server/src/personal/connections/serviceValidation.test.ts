@@ -91,6 +91,11 @@ const makeHarness = () => {
         secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
         return handle;
       }),
+    replaceInPlace: (handle, credentials) =>
+      Effect.sync(() => {
+        secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
+        return handle;
+      }),
     read: (handle) =>
       Effect.succeed(
         Option.fromNullishOr(secrets.get(CredentialStore.personalConnectionCredentialKey(handle))),

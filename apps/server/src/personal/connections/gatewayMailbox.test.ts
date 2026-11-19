@@ -85,6 +85,7 @@ const makeHarness = (mailboxes: ReadonlyArray<Mailbox>) => {
     CredentialStore.PersonalConnectionCredentialStore.of({
       create: () => Effect.die("unused"),
       createNext: () => Effect.die("unused"),
+      replaceInPlace: () => Effect.die("unused"),
       read: () => Effect.succeed(Option.some({ refreshToken: Redacted.make("refresh-token") })),
       remove: () => Effect.void,
     }),

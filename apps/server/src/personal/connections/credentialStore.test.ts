@@ -83,6 +83,22 @@ describe("PersonalConnectionCredentialStore", () => {
     }).pipe(Effect.provide(makeLayer(values)));
   });
 
+  it.effect("replaces values under the same handle without a new version or key", () => {
+    const values = new Map<string, Uint8Array>();
+    return Effect.gen(function* () {
+      const store = yield* CredentialStore.PersonalConnectionCredentialStore;
+      const handle = yield* store.create({ refreshToken: Redacted.make("old") });
+      const keys = [...values.keys()];
+      const again = yield* store.replaceInPlace(handle, { refreshToken: Redacted.make("new") });
+
+      expect(again).toEqual(handle);
+      expect([...values.keys()]).toEqual(keys);
+      expect(Redacted.value(Option.getOrThrow(yield* store.read(handle)).refreshToken!)).toBe(
+        "new",
+      );
+    }).pipe(Effect.provide(makeLayer(values)));
+  });
+
   it.effect("returns none for a missing credential without exposing its connection id", () => {
     const values = new Map<string, Uint8Array>();
     return Effect.gen(function* () {

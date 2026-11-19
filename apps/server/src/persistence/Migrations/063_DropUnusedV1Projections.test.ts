@@ -42,7 +42,7 @@ layer("063_DropUnusedV1Projections", (it) => {
         migrationManifest.find(([migrationId]) => migrationId === id),
         [160, "DropUnusedV1Projections"],
       );
-      assert.isAtLeast(Math.max(...migrationManifest.map(([migrationId]) => migrationId)), id);
+      assert.isAtLeast(Math.max(...migrationManifest.map(([migrationId]) => migrationId)), 160);
     }),
   );
 

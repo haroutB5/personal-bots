@@ -62,14 +62,13 @@ describe("personal connection catalog", () => {
         requiredScopes: [],
         multiAccount: true,
         oauth: {
-          authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+          flow: "google-native",
           tokenUrl: "https://oauth2.googleapis.com/token",
           revokeUrl: "https://oauth2.googleapis.com/revoke",
           scopes: [
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.compose",
           ],
-          needsClientSecret: true,
           manageAccessUrl: "https://myaccount.google.com/permissions",
         },
       },
@@ -82,11 +81,12 @@ describe("personal connection catalog", () => {
         requiredScopes: [],
         multiAccount: true,
         oauth: {
-          authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-          tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-          revokeUrl: null,
+          flow: "microsoft-device",
+          deviceCodeUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
+          tokenUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+          profileUrl:
+            "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName,displayName",
           scopes: ["Mail.ReadWrite", "Mail.Send", "User.Read", "offline_access"],
-          needsClientSecret: false,
           manageAccessUrl: "https://account.live.com/consent/Manage",
         },
       },

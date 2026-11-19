@@ -4,18 +4,34 @@ import type {
   PersonalConnectionVendorId,
 } from "@t3tools/contracts";
 
-/** Where an OAuth vendor sends the owner to sign in and where tokens are exchanged. */
-export interface PersonalConnectionOAuthDefinition {
-  readonly authorizeUrl: string;
+/**
+ * How an OAuth vendor signs the owner in, as a union on the flow so a field
+ * that only one flow has (a client secret, a device-code URL) cannot be read
+ * from the other.
+ */
+interface OAuthDefinitionBase {
   readonly tokenUrl: string;
-  /** Best-effort revoke on disconnect; absent when the provider has none for this account type. */
-  readonly revokeUrl: string | null;
   readonly scopes: ReadonlyArray<string>;
-  /** Google's Desktop client has a secret; a Microsoft public client has none. */
-  readonly needsClientSecret: boolean;
   /** The provider page where the owner can see and withdraw what they granted. */
   readonly manageAccessUrl: string;
 }
+
+/** The phone's own Google sheet returns a one-time code; the server swaps it using the web client's secret. */
+export interface GoogleNativeOAuthDefinition extends OAuthDefinitionBase {
+  readonly flow: "google-native";
+  readonly revokeUrl: string;
+}
+
+/** The server starts and polls a device code; the owner signs in on any browser. No secret exists. */
+export interface MicrosoftDeviceOAuthDefinition extends OAuthDefinitionBase {
+  readonly flow: "microsoft-device";
+  readonly deviceCodeUrl: string;
+  readonly profileUrl: string;
+}
+
+export type PersonalConnectionOAuthDefinition =
+  | GoogleNativeOAuthDefinition
+  | MicrosoftDeviceOAuthDefinition;
 
 export interface PersonalConnectionDefinition {
   readonly vendorId: PersonalConnectionVendorId;
@@ -111,14 +127,13 @@ export const PERSONAL_CONNECTION_CATALOG = {
     requiredScopes: [],
     multiAccount: true,
     oauth: {
-      authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      flow: "google-native",
       tokenUrl: "https://oauth2.googleapis.com/token",
       revokeUrl: "https://oauth2.googleapis.com/revoke",
       scopes: [
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.compose",
       ],
-      needsClientSecret: true,
       manageAccessUrl: "https://myaccount.google.com/permissions",
     },
   },
@@ -126,10 +141,10 @@ export const PERSONAL_CONNECTION_CATALOG = {
     vendorId: "outlook",
     displayName: "Outlook",
     /**
-     * Personal Microsoft accounts (live.com, outlook.com) and work accounts
-     * through one public client with PKCE. There is no secret to keep, and
-     * Microsoft has no per-token revoke for personal accounts, so disconnect
-     * points the owner at the consent page instead.
+     * Personal Microsoft accounts (live.com, outlook.com) through one public
+     * client and the device-code flow, on the consumers endpoint. There is no
+     * secret to keep, and Microsoft has no per-token revoke for personal
+     * accounts, so disconnect points the owner at the consent page instead.
      */
     authKind: "oauth",
     requiredCredentialFields: ["refreshToken"],
@@ -137,11 +152,11 @@ export const PERSONAL_CONNECTION_CATALOG = {
     requiredScopes: [],
     multiAccount: true,
     oauth: {
-      authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-      tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-      revokeUrl: null,
+      flow: "microsoft-device",
+      deviceCodeUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
+      tokenUrl: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+      profileUrl: "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName,displayName",
       scopes: ["Mail.ReadWrite", "Mail.Send", "User.Read", "offline_access"],
-      needsClientSecret: false,
       manageAccessUrl: "https://account.live.com/consent/Manage",
     },
   },

@@ -470,6 +470,10 @@ export const make = Effect.gen(function* () {
         arguments: prepared.arguments,
         credentials: stored.value,
         connectionId: current.value.connectionId,
+        credentialHandle: {
+          credentialRef: current.value.credentialRef,
+          version: current.value.credentialVersion,
+        },
         // Read with the connection, immediately before dispatch, so a cap the
         // owner lowered while the card was open is the cap that applies.
         settings: current.value.settings,
