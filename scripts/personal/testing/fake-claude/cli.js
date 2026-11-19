@@ -41,6 +41,9 @@
 //   WHATWORD  answers "The codeword was <word>." from an earlier prompt of THIS provider session that said
 //     "the codeword is <word>" (the fake keeps each session's prompts in <pidDir>/sessions), else "I have no
 //     codeword in this session." Proves a turn ran in the session an earlier talk happened in (1.66.12).
+//   BGSTART  starts a background command the way the real CLI reports one (a task_started frame, task
+//     bg-fake) and ends the turn with it still running, so the server's roster lists live background work.
+//   BGEND  ends that command (a task_notification frame) and answers.
 //   CTXSETTINGS  reports the context caps this session was started with (1.66.80): the --settings
 //     autoCompactWindow and bashOutputMaxChars, and CLAUDE_CODE_SUBAGENT_MODEL from its environment.
 //   AUTOCOMPACT  does what the real CLI does when the context passes its auto-compact threshold, when
@@ -69,6 +72,7 @@ const flag = (name) => {
   }
 };
 const NAME = process.argv[1].includes("fakelimit") ? "fakelimit" : "fakeok";
+const BACKGROUND_TASK_ID = "bg-fake";
 NodeFS.mkdirSync(pidDir, { recursive: true });
 const log = (line) =>
   NodeFS.appendFileSync(
@@ -539,6 +543,38 @@ lines.on("line", async (line) => {
       uuid: NodeCrypto.randomUUID(),
     });
     const reply = `AUTOCOMPACT compacted at ${preTokens} and carried on. ${contextCapsLine()}`;
+    assistant(reply);
+    finish(reply, false);
+    return;
+  }
+  if (text.includes("BGSTART") && !/MCP(?:TOOL|ONCE) /.test(text)) {
+    out({
+      type: "system",
+      subtype: "task_started",
+      task_id: BACKGROUND_TASK_ID,
+      task_type: "local_bash",
+      description: "sleep 300",
+      is_backgrounded: true,
+      session_id: sessionId,
+      uuid: NodeCrypto.randomUUID(),
+    });
+    const reply = `BGSTART running ${BACKGROUND_TASK_ID} in the background.`;
+    log(reply);
+    assistant(reply);
+    finish(reply, false);
+    return;
+  }
+  if (text.includes("BGEND") && !/MCP(?:TOOL|ONCE) /.test(text)) {
+    out({
+      type: "system",
+      subtype: "task_notification",
+      task_id: BACKGROUND_TASK_ID,
+      status: "completed",
+      session_id: sessionId,
+      uuid: NodeCrypto.randomUUID(),
+    });
+    const reply = `BGEND ended ${BACKGROUND_TASK_ID}.`;
+    log(reply);
     assistant(reply);
     finish(reply, false);
     return;
