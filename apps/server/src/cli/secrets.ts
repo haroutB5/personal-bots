@@ -1,17 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - the CLI reads one stdin line with plain fs.
 /**
- * `t3 secrets export|import`: move the saved secrets from the Windows install
- * to the Linux one without any plaintext on disk (see
- * `personal/secrets/secretsPortability.ts` for the format and the guarantees).
- *
- *   t3 secrets export --secrets-dir <…/userdata/secrets> --out <bundle>
- *   t3 secrets import --secrets-dir <…/userdata/secrets> --in <bundle>
- *
- * The passphrase comes from `HBOTS_SECRETS_PASSPHRASE` (or `--passphrase-env`)
- * and never from an argument, so it cannot land in a shell history or a
- * process listing. Without it the command reads one line from stdin.
- *
- * Nothing here prints a secret value or the passphrase; counts and paths only.
+ * `t3 secrets export|import|status|rewrap`. The passphrase and the old
+ * machine's material come from environment variables, never from arguments.
+ * Nothing here prints a secret value, a passphrase or key material.
  */
 import * as NodeFS from "node:fs";
 
@@ -23,6 +14,8 @@ import {
   SecretsPortabilityError,
   exportSecretsBundle,
   importSecretsBundle,
+  inspectSealedStore,
+  rewrapDataKey,
 } from "../personal/secrets/secretsPortability.ts";
 
 export const PASSPHRASE_ENV = "HBOTS_SECRETS_PASSPHRASE";
@@ -166,6 +159,142 @@ export function runSecretsImport(
   }
 }
 
+export interface CliIo {
+  readonly out: (text: string) => void;
+  readonly err: (text: string) => void;
+}
+
+const processIo: CliIo = {
+  out: (text) => void process.stdout.write(text),
+  err: (text) => void process.stderr.write(text),
+};
+
+export interface SecretsStatusCliOptions {
+  readonly secretsDir: string;
+  readonly json: boolean;
+}
+
+export function runSecretsStatus(options: SecretsStatusCliOptions, io: CliIo = processIo): number {
+  try {
+    const result = inspectSealedStore(options.secretsDir);
+    if (options.json) {
+      io.out(`${JSON.stringify(result)}\n`);
+    } else if (result.state === "locked") {
+      io.out(
+        `state: locked\nreason: ${result.reason}\nsource: ${result.source ?? "none"}\nsealed: ${result.sealed}\n`,
+      );
+    } else if (result.state === "open") {
+      io.out(
+        `state: open\nsource: ${result.source}\nsealed: ${result.sealed}\nunreadable: ${result.unreadable}\n`,
+      );
+    } else {
+      io.out("state: absent\nsealed: 0\n");
+    }
+    return result.state === "locked" || (result.state === "open" && result.unreadable > 0) ? 1 : 0;
+  } catch (error) {
+    return reportFailure(error);
+  }
+}
+
+export interface SecretsRewrapCliOptions {
+  readonly secretsDir: string;
+  readonly fromMaterialEnv: string;
+  readonly check: boolean;
+  readonly json: boolean;
+}
+
+export function runSecretsRewrap(
+  options: SecretsRewrapCliOptions,
+  deps: { readonly env?: NodeJS.ProcessEnv; readonly io?: CliIo } = {},
+): number {
+  const io = deps.io ?? processIo;
+  const env = deps.env ?? process.env;
+  try {
+    const material = env[options.fromMaterialEnv];
+    if (material === undefined || material.trim() === "") {
+      throw new SecretsPortabilityError(
+        "wrong-material",
+        `No old machine material: set ${options.fromMaterialEnv} in the environment.`,
+      );
+    }
+    const result = rewrapDataKey({
+      secretsDir: options.secretsDir,
+      oldMaterial: material,
+      check: options.check,
+    });
+    if (options.json) {
+      io.out(`${JSON.stringify({ ok: true, ...result })}\n`);
+    } else if (result.status === "already-open") {
+      io.out(
+        `The secret key already opens on this machine (${result.entries} saved secret(s)). Nothing written.\n`,
+      );
+    } else if (result.status === "would-rewrap") {
+      io.out(
+        `Check passed: the old material opens all ${result.entries} saved secret(s). Nothing written.\n`,
+      );
+    } else {
+      io.out(
+        `Re-wrapped the secret key for this machine; ${result.entries} saved secret(s) open. Old key file kept at ${result.backup}\n`,
+      );
+    }
+    return 0;
+  } catch (error) {
+    if (options.json && error instanceof SecretsPortabilityError) {
+      io.out(`${JSON.stringify({ ok: false, code: error.code })}\n`);
+    }
+    io.err(
+      `secrets: ${error instanceof SecretsPortabilityError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return 1;
+  }
+}
+
+const exitWith = (code: number) =>
+  code === 0 ? Effect.void : Effect.sync(() => process.exit(code));
+
+const statusCommand = Command.make(
+  "status",
+  { secretsDir: secretsDirFlag, json: jsonFlag },
+  (flags) =>
+    Effect.sync(() => runSecretsStatus({ secretsDir: flags.secretsDir, json: flags.json })).pipe(
+      Effect.flatMap(exitWith),
+    ),
+).pipe(Command.withDescription("Say whether the saved-secret key opens on this machine."));
+
+const fromMaterialEnvFlag = Flag.String("from-material-env").pipe(
+  Flag.withDescription(
+    "Environment variable holding the old machine's material (e.g. its machine-id).",
+  ),
+);
+
+const checkFlag = Flag.Boolean("check").pipe(
+  Flag.withDescription("Prove the old material opens every saved secret and write nothing."),
+  Flag.withDefault(false),
+);
+
+const rewrapCommand = Command.make(
+  "rewrap",
+  {
+    secretsDir: secretsDirFlag,
+    fromMaterialEnv: fromMaterialEnvFlag,
+    check: checkFlag,
+    json: jsonFlag,
+  },
+  (flags) =>
+    Effect.sync(() =>
+      runSecretsRewrap({
+        secretsDir: flags.secretsDir,
+        fromMaterialEnv: flags.fromMaterialEnv,
+        check: flags.check,
+        json: flags.json,
+      }),
+    ).pipe(Effect.flatMap(exitWith)),
+).pipe(
+  Command.withDescription(
+    "Re-seal the secret key for this machine using the old machine's material.",
+  ),
+);
+
 const exportCommand = Command.make(
   "export",
   {
@@ -219,5 +348,5 @@ const importCommand = Command.make(
 /** `t3 secrets <export|import>`; the migration scripts call it, the app never does. */
 export const secretsCommand = Command.make("secrets").pipe(
   Command.withDescription("Move saved secrets between this machine and another (migration)."),
-  Command.withSubcommands([exportCommand, importCommand]),
+  Command.withSubcommands([exportCommand, importCommand, statusCommand, rewrapCommand]),
 );

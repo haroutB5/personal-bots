@@ -150,10 +150,10 @@ export const make = Effect.gen(function* () {
             const known = reads.get(key);
             if (known !== undefined) return known;
             const found = yield* store.get(key).pipe(
-              Effect.catch(() =>
-                // The key name only: the value is never logged.
+              Effect.catch((error) =>
                 Effect.logWarning("personal secret unreadable; starting the session without it", {
                   key,
+                  error: error._tag,
                 }).pipe(Effect.as(Option.none<Uint8Array>())),
               ),
             );

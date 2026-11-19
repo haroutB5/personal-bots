@@ -33,7 +33,10 @@ import {
   parseWrappedDataKey,
   resolveMachineMaterial,
   serializeWrappedDataKey,
-  unwrapDataKey,
+  tryParseWrappedDataKey,
+  tryUnwrapDataKey,
+  tryUnwrapDataKeyText,
+  type DataKeyLockReason,
   type MachineMaterial,
   type MachineMaterialSource,
 } from "../../auth/secretEncryption.ts";
@@ -66,6 +69,7 @@ export type SecretsPortabilityErrorCode =
   | "checksum-mismatch"
   | "entry-unreadable"
   | "target-key-differs"
+  | "wrong-material"
   | "write-failed";
 
 export class SecretsPortabilityError extends Error {
@@ -119,9 +123,14 @@ const sha256 = (bytes: Uint8Array) =>
 
 const derivePassphraseKey = (passphrase: string, salt: Uint8Array): Uint8Array =>
   Uint8Array.from(
-    NodeCrypto.scryptSync(`${SECRETS_BUNDLE_FORMAT}/v${SECRETS_BUNDLE_VERSION} ${passphrase}`, salt, 32, {
-      ...SCRYPT,
-    }),
+    NodeCrypto.scryptSync(
+      `${SECRETS_BUNDLE_FORMAT}/v${SECRETS_BUNDLE_VERSION} ${passphrase}`,
+      salt,
+      32,
+      {
+        ...SCRYPT,
+      },
+    ),
   );
 
 function assertPassphrase(passphrase: string): void {
@@ -167,11 +176,7 @@ const openWithPassphrase = (passphrase: string, bundle: SecretsBundle): Uint8Arr
   }
   const key = derivePassphraseKey(passphrase, fromBase64(bundle.kdf.salt));
   try {
-    const decipher = NodeCrypto.createDecipheriv(
-      "aes-256-gcm",
-      key,
-      fromBase64(bundle.dataKey.iv),
-    );
+    const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", key, fromBase64(bundle.dataKey.iv));
     decipher.setAAD(PASSPHRASE_AAD);
     decipher.setAuthTag(fromBase64(bundle.dataKey.tag));
     return Uint8Array.from(
@@ -264,15 +269,14 @@ export function exportSecretsBundle(options: SecretsExportOptions): SecretsExpor
       `This machine cannot unwrap the secret key (it was sealed with "${keyFile.source}").`,
     );
   }
-  let dataKey: Uint8Array;
-  try {
-    dataKey = unwrapDataKey(keyFile, material);
-  } catch {
+  const opened = tryUnwrapDataKey(keyFile, material);
+  if (opened._tag === "Locked") {
     throw new SecretsPortabilityError(
       "unreadable-data-key",
       `This machine cannot unwrap the secret key (it was sealed with "${keyFile.source}").`,
     );
   }
+  const dataKey = opened.dataKey;
 
   const entries: BundleEntry[] = [];
   try {
@@ -360,10 +364,7 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
   try {
     raw = NodeFS.readFileSync(options.bundleFile, "utf8");
   } catch {
-    throw new SecretsPortabilityError(
-      "bundle-missing",
-      `Bundle not found: ${options.bundleFile}.`,
-    );
+    throw new SecretsPortabilityError("bundle-missing", `Bundle not found: ${options.bundleFile}.`);
   }
   let parsed: unknown;
   try {
@@ -434,45 +435,51 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
     } catch {
       previousKeyBytes = null;
     }
-    // Existing portable entries would be stranded by a key swap.
-    const strandedCount = NodeFS.existsSync(options.secretsDir)
+    const localPortable = NodeFS.existsSync(options.secretsDir)
       ? NodeFS.readdirSync(options.secretsDir).filter(
           (entry) => entry.endsWith(".bin") && isPortableName(entry.slice(0, -".bin".length)),
-        ).length
-      : 0;
+        )
+      : [];
+    let strandedCount = 0;
+    let localSealedCount = 0;
+    for (const file of localPortable) {
+      const name = file.slice(0, -".bin".length);
+      const bytes = Uint8Array.from(NodeFS.readFileSync(NodePath.join(options.secretsDir, file)));
+      if (isSealedSecret(bytes)) localSealedCount += 1;
+      try {
+        openSecret(dataKey, name, bytes).fill(0);
+      } catch {
+        strandedCount += 1;
+      }
+    }
     let dataKeyWritten = true;
     if (previousKeyBytes !== null) {
-      try {
-        const parsedKey = parseWrappedDataKey(new TextDecoder().decode(previousKeyBytes));
-        const existingMaterial = resolve(parsedKey.source);
-        if (existingMaterial === null) throw new Error("material unavailable");
-        const existing = unwrapDataKey(parsedKey, existingMaterial);
+      const outcome = tryUnwrapDataKeyText(new TextDecoder().decode(previousKeyBytes), resolve);
+      if (outcome._tag === "Opened") {
+        const existing = outcome.dataKey;
         const same =
           existing.byteLength === dataKey.byteLength &&
           existing.every((byte, index) => byte === dataKey[index]);
         existing.fill(0);
-        if (!same) {
-          // Replacing the key would leave every saved login on this machine
-          // sealed with a key nothing can open. Only an empty store may be
-          // re-keyed, and only when the caller asked for it.
-          if (options.force !== true || strandedCount > 0) {
-            throw new SecretsPortabilityError(
-              "target-key-differs",
-              strandedCount > 0
-                ? `This machine already has ${strandedCount} saved secret(s) under a different key (${keyPath}). Move that store aside before importing.`
-                : `This machine already has a different secret key (${keyPath}). Pass force to replace it.`,
-            );
-          }
-        }
-        dataKeyWritten = !same;
-      } catch (error) {
-        if (error instanceof SecretsPortabilityError) throw error;
-        if (options.force !== true || strandedCount > 0) {
+        if (!same && (options.force !== true || strandedCount > 0)) {
           throw new SecretsPortabilityError(
             "target-key-differs",
-            `This machine already has a secret key that does not open (${keyPath}). Pass force to replace it.`,
+            strandedCount > 0
+              ? `This machine already has ${strandedCount} saved secret(s) under a different key (${keyPath}). Move that store aside before importing.`
+              : `This machine already has a different secret key (${keyPath}). Pass force to replace it.`,
           );
         }
+        dataKeyWritten = !same;
+      } else if (strandedCount > 0) {
+        throw new SecretsPortabilityError(
+          "target-key-differs",
+          `${strandedCount} saved secret(s) here do not open with the bundle's key, so replacing the key file (${keyPath}) would strand them.`,
+        );
+      } else if (localSealedCount === 0 && options.force !== true) {
+        throw new SecretsPortabilityError(
+          "target-key-differs",
+          `This machine already has a secret key that does not open (${keyPath}), and no saved secret proves the bundle's key is the right one. Pass force to replace it.`,
+        );
       }
     }
 
@@ -485,11 +492,7 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
         // Keep the imported data key: a new one would leave every saved secret
         // sealed with a key nothing can open.
         const wrapped = wrapDataKey(dataKey, target);
-        writePrivateFile(
-          keyPath,
-          new TextEncoder().encode(serializeWrappedDataKey(wrapped)),
-          true,
-        );
+        writePrivateFile(keyPath, new TextEncoder().encode(serializeWrappedDataKey(wrapped)), true);
         try {
           NodeFS.chmodSync(keyPath, 0o600);
         } catch {
@@ -518,7 +521,14 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
 
       // Prove the store now opens every entry with the key it has on disk.
       const keyFile = parseWrappedDataKey(NodeFS.readFileSync(keyPath, "utf8"));
-      const reopened = unwrapDataKey(keyFile, target);
+      const reopenedOutcome = tryUnwrapDataKey(keyFile, target);
+      if (reopenedOutcome._tag === "Locked") {
+        throw new SecretsPortabilityError(
+          "write-failed",
+          "The re-sealed secret key does not open on this machine.",
+        );
+      }
+      const reopened = reopenedOutcome.dataKey;
       try {
         for (const entry of decoded) {
           const bytes = Uint8Array.from(
@@ -555,6 +565,222 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
   } finally {
     dataKey.fill(0);
     for (const entry of decoded) entry.bytes.fill(0);
+  }
+}
+
+export type SealedStoreInspection =
+  | { readonly state: "absent"; readonly sealed: 0 }
+  | {
+      readonly state: "open";
+      readonly source: MachineMaterialSource;
+      readonly sealed: number;
+      readonly unreadable: number;
+    }
+  | {
+      readonly state: "locked";
+      readonly reason: DataKeyLockReason;
+      readonly source: MachineMaterialSource | null;
+      readonly sealed: number;
+    };
+
+interface SealedFile {
+  readonly name: string;
+  readonly bytes: Uint8Array;
+}
+
+const readSealedFiles = (secretsDir: string): ReadonlyArray<SealedFile> => {
+  if (!NodeFS.existsSync(secretsDir)) return [];
+  const found: SealedFile[] = [];
+  for (const file of NodeFS.readdirSync(secretsDir)) {
+    if (!file.endsWith(".bin")) continue;
+    const name = file.slice(0, -".bin".length);
+    if (!isPortableName(name)) continue;
+    let bytes: Uint8Array;
+    try {
+      bytes = Uint8Array.from(NodeFS.readFileSync(NodePath.join(secretsDir, file)));
+    } catch {
+      continue;
+    }
+    if (isSealedSecret(bytes)) found.push({ name, bytes });
+  }
+  return found;
+};
+
+const countUnreadable = (files: ReadonlyArray<SealedFile>, dataKey: Uint8Array): string[] => {
+  const failed: string[] = [];
+  for (const entry of files) {
+    try {
+      openSecret(dataKey, entry.name, entry.bytes).fill(0);
+    } catch {
+      failed.push(entry.name);
+    }
+  }
+  return failed;
+};
+
+const readKeyText = (keyPath: string): string | null => {
+  try {
+    return NodeFS.readFileSync(keyPath, "utf8");
+  } catch {
+    return null;
+  }
+};
+
+export function inspectSealedStore(
+  secretsDir: string,
+  deps: SecretsPortabilityDeps = {},
+): SealedStoreInspection {
+  const resolve = deps.resolveMachineMaterial ?? resolveMachineMaterial;
+  const files = readSealedFiles(secretsDir);
+  const keyText = readKeyText(NodePath.join(secretsDir, DATA_KEY_FILE_NAME));
+  if (keyText === null) {
+    return files.length > 0
+      ? { state: "locked", reason: "key-missing", source: null, sealed: files.length }
+      : { state: "absent", sealed: 0 };
+  }
+  const outcome = tryUnwrapDataKeyText(keyText, resolve);
+  if (outcome._tag === "Locked") {
+    return {
+      state: "locked",
+      reason: outcome.reason,
+      source: outcome.source,
+      sealed: files.length,
+    };
+  }
+  try {
+    const source = tryParseWrappedDataKey(keyText);
+    return {
+      state: "open",
+      source: source._tag === "Parsed" ? source.file.source : "host",
+      sealed: files.length,
+      unreadable: countUnreadable(files, outcome.dataKey).length,
+    };
+  } finally {
+    outcome.dataKey.fill(0);
+  }
+}
+
+export interface RewrapOptions {
+  readonly secretsDir: string;
+  readonly oldMaterial: string;
+  readonly check: boolean;
+  readonly deps?: SecretsPortabilityDeps;
+}
+
+export type RewrapResult =
+  | { readonly status: "already-open"; readonly entries: number }
+  | { readonly status: "would-rewrap"; readonly entries: number }
+  | { readonly status: "rewrapped"; readonly entries: number; readonly backup: string };
+
+const isoStamp = (now: number) => new Date(now).toISOString().replace(/[:.]/g, "-");
+
+export function rewrapDataKey(options: RewrapOptions): RewrapResult {
+  const deps = options.deps ?? {};
+  const resolve = deps.resolveMachineMaterial ?? resolveMachineMaterial;
+  const keyPath = NodePath.join(options.secretsDir, DATA_KEY_FILE_NAME);
+  const keyText = readKeyText(keyPath);
+  if (keyText === null) {
+    throw new SecretsPortabilityError(
+      "no-data-key",
+      `No secret key file to re-wrap: ${keyPath} does not exist.`,
+    );
+  }
+  const files = readSealedFiles(options.secretsDir);
+  const current = tryUnwrapDataKeyText(keyText, resolve);
+  if (current._tag === "Opened") {
+    current.dataKey.fill(0);
+    return { status: "already-open", entries: files.length };
+  }
+  const parsed = tryParseWrappedDataKey(keyText);
+  if (parsed._tag === "Locked") {
+    throw new SecretsPortabilityError(
+      "unreadable-data-key",
+      `The secret key file cannot be used (${parsed.reason}).`,
+    );
+  }
+  const old = tryUnwrapDataKey(parsed.file, {
+    source: parsed.file.source,
+    material: options.oldMaterial.trim(),
+  });
+  if (old._tag === "Locked") {
+    throw new SecretsPortabilityError(
+      "wrong-material",
+      "The supplied machine material does not open the secret key. Nothing was written.",
+    );
+  }
+  const dataKey = old.dataKey;
+  try {
+    const failed = countUnreadable(files, dataKey);
+    if (failed.length > 0) {
+      throw new SecretsPortabilityError(
+        "entry-unreadable",
+        `${failed.length} saved secret(s) cannot be opened with that key: ${failed.join(", ")}. Nothing was written.`,
+      );
+    }
+    if (options.check) return { status: "would-rewrap", entries: files.length };
+
+    const target = resolve();
+    if (target === null) {
+      throw new SecretsPortabilityError(
+        "write-failed",
+        "This machine has no machine material to protect the secret key.",
+      );
+    }
+    const backup = `${keyPath}.locked-${isoStamp((deps.now ?? Date.now)())}`;
+    const oldBytes = Buffer.from(keyText, "utf8");
+    try {
+      const handle = NodeFS.openSync(backup, "wx", 0o600);
+      try {
+        NodeFS.writeFileSync(handle, oldBytes);
+        NodeFS.fsyncSync(handle);
+      } finally {
+        NodeFS.closeSync(handle);
+      }
+    } catch (error) {
+      throw new SecretsPortabilityError(
+        "write-failed",
+        `Could not write the key backup ${backup}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    try {
+      writePrivateFile(
+        keyPath,
+        new TextEncoder().encode(serializeWrappedDataKey(wrapDataKey(dataKey, target))),
+        true,
+      );
+      const reopened = tryUnwrapDataKeyText(NodeFS.readFileSync(keyPath, "utf8"), resolve);
+      if (reopened._tag === "Locked") {
+        throw new SecretsPortabilityError(
+          "write-failed",
+          "The re-wrapped secret key does not open on this machine.",
+        );
+      }
+      try {
+        const stillFailing = countUnreadable(files, reopened.dataKey);
+        if (stillFailing.length > 0) {
+          throw new SecretsPortabilityError(
+            "entry-unreadable",
+            `${stillFailing.length} saved secret(s) did not open after the re-wrap.`,
+          );
+        }
+      } finally {
+        reopened.dataKey.fill(0);
+      }
+      return { status: "rewrapped", entries: files.length, backup };
+    } catch (error) {
+      try {
+        writePrivateFile(keyPath, oldBytes, true);
+      } catch {}
+      throw error instanceof SecretsPortabilityError
+        ? error
+        : new SecretsPortabilityError(
+            "write-failed",
+            `Could not re-wrap the secret key: ${error instanceof Error ? error.message : String(error)}`,
+          );
+    }
+  } finally {
+    dataKey.fill(0);
+    for (const entry of files) entry.bytes.fill(0);
   }
 }
 

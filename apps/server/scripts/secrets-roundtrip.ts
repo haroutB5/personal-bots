@@ -1,23 +1,14 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off - a standalone proof script: it runs the real CLI and reads the store with plain fs.
 /**
- * End-to-end proof of the secrets export/import path (migration milestone 1).
- *
- * Runs the real CLI twice (`t3 secrets export`, `t3 secrets import`) against
- * throwaway stores sealed with THIS machine's material, then opens the
- * imported store the way the server does. Fake secret values only; the
- * passphrase is a test string passed through the documented environment
- * variable.
- *
- *   cd apps/server && node scripts/secrets-roundtrip.ts
- *
- * Exit 0 and one "PASS" line per check; any failure exits 1.
+ * Round-trips fake secrets through the real `secrets export` and `import` CLI.
+ * Run from apps/server: `node scripts/secrets-roundtrip.ts`. Exit 1 on failure.
  */
-import { spawnSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeURL from "node:url";
 
 import {
   createWrappedDataKey,
@@ -26,11 +17,11 @@ import {
   resolveMachineMaterial,
   sealSecret,
   serializeWrappedDataKey,
-  unwrapDataKey,
+  tryUnwrapDataKey,
 } from "../src/auth/secretEncryption.ts";
 
 const PASS = "roundtrip test passphrase 12345";
-const here = NodePath.dirname(fileURLToPath(import.meta.url));
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const serverDir = NodePath.dirname(here);
 const bin = NodePath.join(serverDir, "src", "bin.ts");
 // --keep leaves the bundle (and its store) on disk and prints its path, so the
@@ -52,7 +43,10 @@ const values = {
 
 const source = temp("secrets-src");
 const { dataKey, file } = createWrappedDataKey();
-NodeFS.writeFileSync(NodePath.join(source, "data-encryption-key.json"), serializeWrappedDataKey(file));
+NodeFS.writeFileSync(
+  NodePath.join(source, "data-encryption-key.json"),
+  serializeWrappedDataKey(file),
+);
 for (const [name, value] of Object.entries(values)) {
   NodeFS.writeFileSync(
     NodePath.join(source, `${name}.bin`),
@@ -63,13 +57,15 @@ dataKey.fill(0);
 process.stdout.write(`PASS source store sealed with ${resolveMachineMaterial()?.source ?? "?"}\n`);
 
 const run = (args: ReadonlyArray<string>): void => {
-  const result = spawnSync(process.execPath, [bin, "secrets", ...args], {
+  const result = NodeChildProcess.spawnSync(process.execPath, [bin, "secrets", ...args], {
     cwd: serverDir,
     env: { ...process.env, HBOTS_SECRETS_PASSPHRASE: PASS },
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    fail(`\`t3 secrets ${args[0]}\` exited ${String(result.status)}: ${(result.stderr ?? "").trim()}`);
+    fail(
+      `\`t3 secrets ${args[0]}\` exited ${String(result.status)}: ${(result.stderr ?? "").trim()}`,
+    );
   }
   // The CLI must never echo the passphrase or a secret value.
   for (const value of [...Object.values(values), PASS]) {
@@ -95,8 +91,13 @@ process.stdout.write("PASS import through the CLI\n");
 // Read it back the way ServerSecretStore does, with this machine's material.
 const material = resolveMachineMaterial();
 if (material === null) throw new Error("no machine material on this computer");
-const keyFile = parseWrappedDataKey(NodeFS.readFileSync(NodePath.join(target, "data-encryption-key.json"), "utf8"));
-const opened = unwrapDataKey(keyFile, material);
+const keyFile = parseWrappedDataKey(
+  NodeFS.readFileSync(NodePath.join(target, "data-encryption-key.json"), "utf8"),
+);
+const outcome = tryUnwrapDataKey(keyFile, material);
+if (outcome._tag !== "Opened")
+  throw new Error(`the imported key file does not open here: ${outcome.reason}`);
+const opened = outcome.dataKey;
 try {
   for (const [name, value] of Object.entries(values)) {
     const plaintext = openSecret(
@@ -114,11 +115,15 @@ try {
 process.stdout.write("PASS every saved secret opens with this machine's re-sealed key\n");
 
 // A second import is a no-op (idempotent).
-const again = spawnSync(process.execPath, [bin, "secrets", "import", "--secrets-dir", target, "--in", bundle, "--json"], {
-  cwd: serverDir,
-  env: { ...process.env, HBOTS_SECRETS_PASSPHRASE: PASS },
-  encoding: "utf8",
-});
+const again = NodeChildProcess.spawnSync(
+  process.execPath,
+  [bin, "secrets", "import", "--secrets-dir", target, "--in", bundle, "--json"],
+  {
+    cwd: serverDir,
+    env: { ...process.env, HBOTS_SECRETS_PASSPHRASE: PASS },
+    encoding: "utf8",
+  },
+);
 if (again.status !== 0) fail(`second import exited ${String(again.status)}`);
 const summary = JSON.parse((again.stdout ?? "").trim().split("\n").pop() ?? "{}");
 if (summary.imported !== 0 || summary.unchanged !== Object.keys(values).length) {
@@ -128,10 +133,14 @@ process.stdout.write("PASS second import changes nothing\n");
 
 // A wrong passphrase fails with a non-zero exit and no partial store.
 const wrongTarget = temp("secrets-wrong");
-const wrong = spawnSync(
+const wrong = NodeChildProcess.spawnSync(
   process.execPath,
   [bin, "secrets", "import", "--secrets-dir", wrongTarget, "--in", bundle],
-  { cwd: serverDir, env: { ...process.env, HBOTS_SECRETS_PASSPHRASE: "wrong passphrase 0000" }, encoding: "utf8" },
+  {
+    cwd: serverDir,
+    env: { ...process.env, HBOTS_SECRETS_PASSPHRASE: "wrong passphrase 0000" },
+    encoding: "utf8",
+  },
 );
 if (wrong.status === 0) fail("a wrong passphrase was accepted");
 if (NodeFS.readdirSync(wrongTarget).length !== 0) fail("a failed import left files behind");

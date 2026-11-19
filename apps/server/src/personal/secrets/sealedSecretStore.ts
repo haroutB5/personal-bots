@@ -14,6 +14,8 @@
  * the value before the original is discarded; a failure restores it. No value,
  * key name or key material is ever logged.
  */
+import * as NodeCrypto from "node:crypto";
+
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -24,6 +26,7 @@ import * as SecretEncryption from "../../auth/secretEncryption.ts";
 import {
   SecretStoreDecodeError,
   SecretStoreEncodeError,
+  SecretStoreLockedError,
   SecretStoreSecureError,
   ServerSecretStore,
   type SecretStoreError,
@@ -47,18 +50,44 @@ interface StoreFiles {
   readonly path: Path.Path;
 }
 
+export type DataKeyState =
+  | { readonly _tag: "Absent" }
+  | { readonly _tag: "Open"; readonly key: Uint8Array }
+  | {
+      readonly _tag: "Locked";
+      readonly reason: SecretEncryption.DataKeyLockReason;
+      readonly source: SecretEncryption.MachineMaterialSource | null;
+      readonly fileHash: string | null;
+    };
+
+export interface SealedSecretStoreOptions {
+  readonly resolveMachineMaterial?: (
+    required?: SecretEncryption.MachineMaterialSource,
+  ) => SecretEncryption.MachineMaterial | null;
+}
+
+const sha256Hex = (text: string) =>
+  NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+
+const lockedError = (state: Extract<DataKeyState, { _tag: "Locked" }>) =>
+  new SecretStoreLockedError({ reason: state.reason, source: state.source });
+
 /** Builds the sealing layer over a plain store, then seals any legacy file. */
 export const decorateSecretStore = (
   base: ServerSecretStore["Service"],
   files: StoreFiles,
+  options?: SealedSecretStoreOptions,
 ): Effect.Effect<ServerSecretStore["Service"], SecretStoreError> =>
   Effect.gen(function* () {
     const { fileSystem, path } = files;
+    const resolveMaterial =
+      options?.resolveMachineMaterial ?? SecretEncryption.resolveMachineMaterial;
     const directory = base.directory;
     const dataKeyPath =
       directory === undefined ? undefined : path.join(directory, DATA_KEY_FILE_NAME);
     const dataKeyLock = yield* Semaphore.make(1);
     let cachedDataKey: Uint8Array | null = null;
+    let lockedState: Extract<DataKeyState, { _tag: "Locked" }> | null = null;
 
     const secureFailure = (cause: unknown) =>
       new SecretStoreSecureError({ resource: "secret encryption key", cause });
@@ -82,11 +111,74 @@ export const decorateSecretStore = (
         }),
       );
 
-    const unwrap = (raw: string): Effect.Effect<Uint8Array, SecretStoreError> =>
-      Effect.try({
-        try: () => SecretEncryption.unwrapDataKey(SecretEncryption.parseWrappedDataKey(raw)),
-        catch: secureFailure,
-      });
+    const countSealedFiles = Effect.gen(function* () {
+      if (directory === undefined) return 0;
+      const entries = yield* fileSystem
+        .readDirectory(directory)
+        .pipe(
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeed<ReadonlyArray<string>>([])
+              : Effect.fail(secureFailure(cause)),
+          ),
+        );
+      let count = 0;
+      for (const entry of entries) {
+        if (!entry.endsWith(".bin")) continue;
+        if (!isEncryptedSecretName(entry.slice(0, -".bin".length))) continue;
+        const bytes = yield* fileSystem.readFile(path.join(directory, entry)).pipe(
+          Effect.map(Option.some),
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeed(Option.none<Uint8Array>())
+              : Effect.fail(secureFailure(cause)),
+          ),
+        );
+        if (Option.isSome(bytes) && SecretEncryption.isSealedSecret(Uint8Array.from(bytes.value))) {
+          count += 1;
+        }
+      }
+      return count;
+    });
+
+    const openKeyText = (raw: string): DataKeyState => {
+      const fileHash = sha256Hex(raw);
+      if (lockedState !== null && lockedState.fileHash === fileHash) return lockedState;
+      const outcome = SecretEncryption.tryUnwrapDataKeyText(raw, resolveMaterial);
+      if (outcome._tag === "Opened") {
+        lockedState = null;
+        return { _tag: "Open", key: outcome.dataKey };
+      }
+      const locked: Extract<DataKeyState, { _tag: "Locked" }> = {
+        _tag: "Locked",
+        reason: outcome.reason,
+        source: outcome.source,
+        fileHash,
+      };
+      lockedState = outcome.reason === "material-unavailable" ? null : locked;
+      return locked;
+    };
+
+    const readState: Effect.Effect<DataKeyState, SecretStoreError> = Effect.gen(function* () {
+      if (dataKeyPath === undefined) {
+        return yield* Effect.fail(
+          secureFailure(new Error("The secret store has no directory to seal in.")),
+        );
+      }
+      if (cachedDataKey !== null) return { _tag: "Open", key: cachedDataKey } as const;
+      const existing = yield* readDataKeyFile(dataKeyPath);
+      if (Option.isSome(existing)) {
+        const state = openKeyText(existing.value);
+        if (state._tag === "Open") cachedDataKey = state.key;
+        return state;
+      }
+      const sealed = yield* countSealedFiles;
+      if (sealed > 0) {
+        lockedState = null;
+        return { _tag: "Locked", reason: "key-missing", source: null, fileHash: null } as const;
+      }
+      return { _tag: "Absent" } as const;
+    });
 
     /**
      * Created on first use, not at boot, so installs with no saved passwords
@@ -99,17 +191,16 @@ export const decorateSecretStore = (
           secureFailure(new Error("The secret store has no directory to seal in.")),
         );
       }
-      if (cachedDataKey !== null) return cachedDataKey;
-      const existing = yield* readDataKeyFile(dataKeyPath);
-      if (Option.isSome(existing)) {
-        const key = yield* unwrap(existing.value);
-        cachedDataKey = key;
-        return key;
+      const state = yield* readState;
+      if (state._tag === "Open") return state.key;
+      if (state._tag === "Locked") return yield* lockedError(state);
+      const material = resolveMaterial();
+      if (material === null) {
+        return yield* secureFailure(
+          new Error("No machine material is available to protect secrets."),
+        );
       }
-      const created = yield* Effect.try({
-        try: () => SecretEncryption.createWrappedDataKey(),
-        catch: secureFailure,
-      });
+      const created = SecretEncryption.createWrappedDataKey(material);
       const written = yield* writeDataKeyFile(
         dataKeyPath,
         SecretEncryption.serializeWrappedDataKey(created.file),
@@ -122,9 +213,13 @@ export const decorateSecretStore = (
         if (Option.isNone(raced)) {
           return yield* secureFailure(new Error("Secret key file could not be written."));
         }
-        const key = yield* unwrap(raced.value);
-        cachedDataKey = key;
-        return key;
+        const winner = openKeyText(raced.value);
+        if (winner._tag === "Open") {
+          cachedDataKey = winner.key;
+          return winner.key;
+        }
+        if (winner._tag === "Locked") return yield* lockedError(winner);
+        return yield* secureFailure(new Error("Secret key file could not be read."));
       }
       yield* fileSystem.chmod(dataKeyPath, 0o600).pipe(Effect.ignore);
       cachedDataKey = created.dataKey;
@@ -192,7 +287,8 @@ export const decorateSecretStore = (
           Option.match({
             onSome: Effect.succeed,
             onNone: () =>
-              base.getOrCreateRandom(name, bytes).pipe(
+              (isEncryptedSecretName(name) ? dataKey : Effect.void).pipe(
+                Effect.andThen(base.getOrCreateRandom(name, bytes)),
                 Effect.flatMap((generated) =>
                   isEncryptedSecretName(name)
                     ? seal(name, generated).pipe(
@@ -269,6 +365,25 @@ export const decorateSecretStore = (
       ),
     );
 
-    yield* migratePlaintextSecrets;
+    const probeDataKey = Effect.gen(function* () {
+      const state = yield* readState;
+      if (state._tag !== "Locked") return state;
+      const sealed = yield* countSealedFiles.pipe(Effect.orElseSucceed(() => 0));
+      yield* Effect.logError(
+        `Saved secrets are locked: reason=${state.reason} source=${state.source ?? "none"} sealed=${sealed}. ` +
+          "Sealed keys and logins cannot be opened or saved until the key is moved over. " +
+          "Run `secrets status` to inspect, then `secrets rewrap` or `secrets import` to recover.",
+      );
+      return state;
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(`Could not check the saved-secret key at boot (${error._tag}).`).pipe(
+          Effect.as<DataKeyState>({ _tag: "Absent" }),
+        ),
+      ),
+    );
+
+    const bootState = yield* probeDataKey;
+    if (bootState._tag !== "Locked") yield* migratePlaintextSecrets;
     return service;
   });

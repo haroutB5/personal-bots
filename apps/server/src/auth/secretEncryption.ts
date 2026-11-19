@@ -176,32 +176,91 @@ export const createWrappedDataKey = (
   return { dataKey, file: wrapDataKey(dataKey, resolved) };
 };
 
-export const unwrapDataKey = (file: WrappedDataKeyFile, material?: MachineMaterial): Uint8Array => {
-  if (file.v !== 1) throw new Error(`Unsupported secret key file version ${String(file.v)}.`);
-  const resolved = material ?? resolveMachineMaterial(file.source);
-  if (resolved === null) {
-    throw new Error(`Machine material "${file.source}" is not available on this machine.`);
+export type DataKeyLockReason =
+  | "material-mismatch"
+  | "material-unavailable"
+  | "malformed"
+  | "unsupported-version"
+  | "key-missing";
+
+export type DataKeyUnwrapOutcome =
+  | { readonly _tag: "Opened"; readonly dataKey: Uint8Array }
+  | {
+      readonly _tag: "Locked";
+      readonly reason: DataKeyLockReason;
+      readonly source: MachineMaterialSource | null;
+    };
+
+export const tryUnwrapDataKey = (
+  file: WrappedDataKeyFile,
+  material?: MachineMaterial | null,
+): DataKeyUnwrapOutcome => {
+  const source = file.source;
+  if ((file.v as number) !== 1) {
+    return { _tag: "Locked", reason: "unsupported-version", source };
   }
-  const wrappingKey = deriveWrappingKey(resolved.material, fromBase64(file.salt));
-  const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", wrappingKey, fromBase64(file.iv));
-  decipher.setAuthTag(fromBase64(file.tag));
-  return Uint8Array.from(Buffer.concat([decipher.update(fromBase64(file.key)), decipher.final()]));
+  const resolved = material === undefined ? resolveMachineMaterial(source) : material;
+  if (resolved === null) return { _tag: "Locked", reason: "material-unavailable", source };
+  try {
+    const wrappingKey = deriveWrappingKey(resolved.material, fromBase64(file.salt));
+    const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", wrappingKey, fromBase64(file.iv));
+    decipher.setAuthTag(fromBase64(file.tag));
+    const dataKey = Uint8Array.from(
+      Buffer.concat([decipher.update(fromBase64(file.key)), decipher.final()]),
+    );
+    return { _tag: "Opened", dataKey };
+  } catch {
+    return { _tag: "Locked", reason: "material-mismatch", source };
+  }
 };
 
 export const serializeWrappedDataKey = (file: WrappedDataKeyFile): string =>
   `${JSON.stringify(file, null, 2)}\n`;
 
-export const parseWrappedDataKey = (raw: string): WrappedDataKeyFile => {
-  const parsed = JSON.parse(raw) as Partial<WrappedDataKeyFile>;
-  if (
-    parsed.v !== 1 ||
-    typeof parsed.source !== "string" ||
-    typeof parsed.salt !== "string" ||
-    typeof parsed.iv !== "string" ||
-    typeof parsed.tag !== "string" ||
-    typeof parsed.key !== "string"
-  ) {
-    throw new Error("Secret key file is malformed.");
+export type ParsedDataKeyFile =
+  | { readonly _tag: "Parsed"; readonly file: WrappedDataKeyFile }
+  | {
+      readonly _tag: "Locked";
+      readonly reason: "malformed" | "unsupported-version";
+      readonly source: MachineMaterialSource | null;
+    };
+
+const hasWrappedFields = (value: Partial<WrappedDataKeyFile>) =>
+  typeof value.source === "string" &&
+  typeof value.salt === "string" &&
+  typeof value.iv === "string" &&
+  typeof value.tag === "string" &&
+  typeof value.key === "string";
+
+export const tryParseWrappedDataKey = (raw: string): ParsedDataKeyFile => {
+  let parsed: Partial<WrappedDataKeyFile>;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) {
+      return { _tag: "Locked", reason: "malformed", source: null };
+    }
+    parsed = value as Partial<WrappedDataKeyFile>;
+  } catch {
+    return { _tag: "Locked", reason: "malformed", source: null };
   }
-  return parsed as WrappedDataKeyFile;
+  if (!hasWrappedFields(parsed)) return { _tag: "Locked", reason: "malformed", source: null };
+  const source = parsed.source as MachineMaterialSource;
+  if (parsed.v !== 1) return { _tag: "Locked", reason: "unsupported-version", source };
+  return { _tag: "Parsed", file: parsed as WrappedDataKeyFile };
+};
+
+export const parseWrappedDataKey = (raw: string): WrappedDataKeyFile => {
+  const result = tryParseWrappedDataKey(raw);
+  if (result._tag === "Locked") throw new Error("Secret key file is malformed.");
+  return result.file;
+};
+
+export const tryUnwrapDataKeyText = (
+  raw: string,
+  resolve: (required?: MachineMaterialSource) => MachineMaterial | null = resolveMachineMaterial,
+): DataKeyUnwrapOutcome => {
+  const parsed = tryParseWrappedDataKey(raw);
+  return parsed._tag === "Locked"
+    ? { _tag: "Locked", reason: parsed.reason, source: parsed.source }
+    : tryUnwrapDataKey(parsed.file, resolve(parsed.file.source));
 };

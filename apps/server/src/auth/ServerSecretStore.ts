@@ -118,8 +118,33 @@ export class SecretStoreEncodeError extends Schema.TaggedError<SecretStoreEncode
   }
 }
 
+export const SecretStoreLockReason = Schema.Literals([
+  "material-mismatch",
+  "material-unavailable",
+  "malformed",
+  "unsupported-version",
+  "key-missing",
+]);
+
+export const SecretStoreLockSource = Schema.NullOr(
+  Schema.Literals(["win-machine-guid", "machine-id", "host"]),
+);
+
+export class SecretStoreLockedError extends Schema.TaggedError<SecretStoreLockedError>()(
+  "SecretStoreLockedError",
+  {
+    reason: SecretStoreLockReason,
+    source: SecretStoreLockSource,
+  },
+) {
+  override get message(): string {
+    return `The saved-secret key does not open on this machine (${this.reason}).`;
+  }
+}
+
 export const SecretStoreError = Schema.Union([
   SecretStoreSecureError,
+  SecretStoreLockedError,
   SecretStoreReadError,
   SecretStoreTemporaryPathError,
   SecretStorePersistError,
