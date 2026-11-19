@@ -83,12 +83,6 @@ const recipients = (input: DraftSummaryInput) =>
     input.cc !== undefined && input.cc.length > 0 ? ` (cc ${input.cc.join(", ")})` : ""
   }`;
 
-/** What the owner reads on the approval card: every recipient, the subject and the whole body. */
-export const sendSummary = (input: DraftSummaryInput) =>
-  `Send this email from ${input.mailbox} ${recipients(input)}, subject "${input.subject}"${
-    input.replyTo === undefined ? "" : ", as a reply in an existing conversation"
-  }:\n\n${input.body}`;
-
 export const draftSummary = (input: DraftSummaryInput) =>
   `Save a draft in ${input.mailbox} ${recipients(input)}, subject "${input.subject}". Nothing is sent.`;
 

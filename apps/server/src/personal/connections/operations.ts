@@ -14,8 +14,8 @@ import {
   MAIL_QUERY_FIELDS,
   READ_MESSAGE_FIELDS,
   READ_THREAD_FIELDS,
-  sendSummary,
 } from "./email/spec.ts";
+import { COMMONPOST_REVIEWED_SCHEMA } from "./email/thunderbird/pins.ts";
 import {
   isRecipientRef,
   readRecipientRef,
@@ -794,13 +794,8 @@ ${args.text}`,
   targetResources: (args) => [`whatsapp:chat:${describeRecipient(args.recipient).chatId}`],
 });
 
-export const EMAIL_REVIEWED_SCHEMA: Record<EmailVendorId, string> = {
-  gmail: "gmail/v1-messages@2026-11-19",
-  outlook: "outlook/graph-v1.0-mail@2026-11-19",
-};
-
 const emailOperationsFor = (vendorId: EmailVendorId, name: string) => {
-  const reviewedVendorSchema = EMAIL_REVIEWED_SCHEMA[vendorId];
+  const reviewedVendorSchema = COMMONPOST_REVIEWED_SCHEMA;
   const read = (summary: string) => ({
     approvalRequired: false,
     reason: "read_only" as const,
@@ -858,19 +853,6 @@ const emailOperationsFor = (vendorId: EmailVendorId, name: string) => {
         approvalRequired: false,
         reason: "account_write",
         summary: draftSummary(args),
-      }),
-      targetResources: mailboxOf,
-    }),
-    defineOperation({
-      ...common,
-      operationId: `${vendorId}.send`,
-      description: `Send one email from a connected ${name} mailbox. The owner approves every single message and reads the full recipients, subject and body first. No attachments.`,
-      fields: DRAFT_FIELDS,
-      resultFields: ["sentAtIso"],
-      classify: (args) => ({
-        approvalRequired: true,
-        reason: "publication",
-        summary: sendSummary(args),
       }),
       targetResources: mailboxOf,
     }),

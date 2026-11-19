@@ -35,6 +35,8 @@ import * as Adapters from "./adapters.ts";
 import * as VendorAdapters from "./vendors/layer.ts";
 import { connectionDefinition, usesBrowserSession, usesOAuth } from "./catalog.ts";
 import * as CredentialStore from "./credentialStore.ts";
+import * as CommonpostClientLayer from "./email/thunderbird/commonpostClient.ts";
+import * as ThunderbirdProcessLayer from "./email/thunderbird/thunderbirdProcess.ts";
 import * as EmailOAuthClientsLayer from "./email/oauthClients.ts";
 import * as EmailOAuthEndpointsLayer from "./email/oauthEndpoints.ts";
 import * as EmailOAuthHttpLayer from "./email/oauthHttp.ts";
@@ -699,10 +701,15 @@ const EmailServicesLive = Layer.mergeAll(
   EmailOAuthEndpointsLayer.layer,
 ).pipe(Layer.provide(CredentialStore.layer));
 
+const ThunderbirdLive = CommonpostClientLayer.layer().pipe(
+  Layer.provideMerge(ThunderbirdProcessLayer.layerLive),
+);
+
 export const layerLive = layer.pipe(
   Layer.provideMerge(Repository.layer),
   Layer.provideMerge(CredentialStore.layer),
   Layer.provideMerge(VendorAdapters.layer),
+  Layer.provideMerge(ThunderbirdLive),
   Layer.provideMerge(EmailServicesLive),
   Layer.provideMerge(MachineImport.layer),
 );

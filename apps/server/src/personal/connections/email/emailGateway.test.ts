@@ -9,7 +9,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 
 import { PersonalBrowser } from "../../browser/PersonalBrowser.ts";
 import * as PersonalTaskService from "../../tasks/PersonalTaskService.ts";
@@ -19,48 +18,61 @@ import * as ApprovalService from "../approvalService.ts";
 import * as CredentialStore from "../credentialStore.ts";
 import * as Gateway from "../gateway.ts";
 import * as ConnectionService from "../service.ts";
-import type { VendorHttp } from "../vendors/vendorHttp.ts";
 import { makeEmailAdapter } from "./adapter.ts";
-import { makeGmailApi } from "./gmailApi.ts";
-import { makeEndpoints } from "./oauthEndpoints.ts";
-import type { EmailOAuthHttp } from "./oauthHttp.ts";
-import type { EmailTokenBroker } from "./tokenBroker.ts";
+import type { CommonpostClient } from "./thunderbird/commonpostClient.ts";
+import { THUNDERBIRD_CLOSED_LINE } from "./thunderbird/status.ts";
+import { makeThunderbirdMailApi } from "./thunderbird/thunderbirdMailApi.ts";
 
-const ACCESS = "ya29.gateway-access-token";
+const ROOT = "imap://owner%40gmail.com@imap.gmail.com";
 const caller = {
   threadId: ThreadId.make("thread-1"),
   botId: PersonalBotId.make("bot-1"),
   taskId: PersonalTaskId.make("task-1"),
 };
 
-const harness = () => {
+type Tool = Parameters<CommonpostClient["Service"]["call"]>[0];
+
+const harness = (options: { readonly closed?: boolean } = {}) => {
   const approvals = new Map<string, PersonalConnectionApproval>();
-  const requests: Array<{ method: string; url: string }> = [];
-  const http: VendorHttp = (request) =>
-    Effect.sync(() => {
-      requests.push({ method: request.method, url: request.url });
-      if (request.url.endsWith("/profile")) {
-        return { status: 200, body: { emailAddress: "owner@gmail.com" }, headers: {} };
+  const calls: Array<{ tool: Tool; args: Readonly<Record<string, unknown>> }> = [];
+  const reauthed: Array<string> = [];
+  const client: CommonpostClient["Service"] = {
+    call: (tool, args) => {
+      calls.push({ tool, args });
+      if (options.closed === true) {
+        return Effect.fail(
+          new Adapters.ConnectionVendorError({
+            operationId: `thunderbird.${tool}`,
+            detail: THUNDERBIRD_CLOSED_LINE,
+            unavailable: true,
+          }),
+        );
       }
-      if (request.url.endsWith("/drafts")) {
-        return { status: 200, body: { id: "draft-1" }, headers: {} };
+      if (tool === "listAccounts") {
+        return Effect.succeed([
+          {
+            id: "account1",
+            type: "imap",
+            identities: [{ id: "i1", email: "owner@gmail.com", isDefault: true }],
+          },
+        ]);
       }
-      if (request.url.endsWith("/messages/send")) {
-        return { status: 200, body: { id: "sent-1" }, headers: {} };
+      if (tool === "listFolders") {
+        return Effect.succeed([{ name: "INBOX", path: `${ROOT}/INBOX`, accountId: "account1" }]);
       }
-      return {
-        status: 500,
-        body: { error: `unexpected ${request.url} with ${ACCESS}` },
-        headers: {},
-      };
-    });
-  const broker: EmailTokenBroker["Service"] = {
-    accessToken: () => Effect.succeed(Redacted.make(ACCESS)),
-    forget: () => Effect.void,
+      if (tool === "saveDraft") {
+        return Effect.succeed({ messageId: "d1@mail", folderPath: `${ROOT}/Drafts` });
+      }
+      return Effect.succeed({ messages: [] });
+    },
+    status: () => Effect.succeed({ _tag: "closed" }),
   };
 
   const connections = Layer.mock(ConnectionService.PersonalConnectionService)({
-    markNeedsReauth: () => Effect.void,
+    markNeedsReauth: (connectionId) =>
+      Effect.sync(() => {
+        reauthed.push(connectionId);
+      }),
     resolveForOperation: (vendorId, account) =>
       Effect.succeed(
         vendorId === "gmail" && account?.toLowerCase() === "owner@gmail.com"
@@ -86,8 +98,7 @@ const harness = () => {
       create: () => Effect.die("unused"),
       createNext: () => Effect.die("unused"),
       replaceInPlace: () => Effect.die("unused"),
-      read: () =>
-        Effect.succeed(Option.some({ refreshToken: Redacted.make("1//0stored-refresh") })),
+      read: () => Effect.die("a mailbox read through Thunderbird has no stored credential"),
       remove: () => Effect.void,
     }),
   );
@@ -138,17 +149,9 @@ const harness = () => {
 
   const adapters = Layer.effect(
     Adapters.ConnectionVendorAdapters,
-    makeEmailAdapter("gmail", makeGmailApi(http), {
-      vendorHttp: http,
-      broker,
-      clients: {
-        get: () => Effect.succeed(Option.none()),
-        set: () => Effect.void,
-        configured: () => Effect.succeed([]),
-      },
-      oauthHttp: { post: () => Effect.die("unused") } as EmailOAuthHttp["Service"],
-      endpoints: makeEndpoints({}),
-    }).pipe(Effect.map((adapter) => Adapters.makeAdapters([adapter]))),
+    makeEmailAdapter("gmail", makeThunderbirdMailApi(client)).pipe(
+      Effect.map((adapter) => Adapters.makeAdapters([adapter])),
+    ),
   );
 
   const layer = Gateway.layer.pipe(
@@ -169,11 +172,11 @@ const harness = () => {
       ),
     ),
   );
-  return { layer, approvals, requests };
+  return { layer, approvals, calls, reauthed };
 };
 
-const send = {
-  operation: "gmail.send",
+const draft = {
+  operation: "gmail.create_draft",
   arguments: {
     mailbox: "owner@gmail.com",
     to: ["friend@example.com", "boss@example.com"],
@@ -184,93 +187,63 @@ const send = {
   caller,
 } as const;
 
-describe("sending mail through the real Gmail adapter", () => {
-  it.effect("holds a send until the owner answers, shows everything, and runs it once", () => {
+describe("a Gmail mailbox read through Thunderbird", () => {
+  it.effect("saves a draft without an approval and without reading a stored credential", () => {
     const h = harness();
     return Effect.gen(function* () {
       const gateway = yield* Gateway.PersonalConnectionGateway;
-      const approvals = yield* ApprovalService.PersonalConnectionApprovalService;
-
-      const first = yield* gateway.call(send);
-      expect(first._tag).toBe("awaiting_approval");
-      expect(h.requests).toEqual([]);
-      const approvalId = first._tag === "awaiting_approval" ? first.approvalId : "";
-      const summary = h.approvals.get(approvalId)?.summary ?? "";
-      expect(summary).toContain("owner@gmail.com");
-      expect(summary).toContain("friend@example.com, boss@example.com");
-      expect(summary).toContain("cc audit@example.com");
-      expect(summary).toContain("Quarterly numbers");
-      expect(summary).toContain("Line one\nLine two");
-
-      yield* approvals.decide({ approvalId: approvalId as never, decision: "approved" });
-      const second = yield* gateway.call(send);
-      expect(second._tag).toBe("completed");
-      expect(h.requests.filter((request) => request.url.endsWith("/messages/send"))).toHaveLength(
-        1,
-      );
-
-      const third = yield* gateway.call(send);
-      expect(third._tag).toBe("awaiting_approval");
-      expect(h.requests.filter((request) => request.url.endsWith("/messages/send"))).toHaveLength(
-        1,
-      );
-    }).pipe(Effect.provide(h.layer));
-  });
-
-  it.effect("a changed body is a new approval, not the old one reused", () => {
-    const h = harness();
-    return Effect.gen(function* () {
-      const gateway = yield* Gateway.PersonalConnectionGateway;
-      const approvals = yield* ApprovalService.PersonalConnectionApprovalService;
-      const first = yield* gateway.call(send);
-      const approvalId = first._tag === "awaiting_approval" ? first.approvalId : "";
-      yield* approvals.decide({ approvalId: approvalId as never, decision: "approved" });
-      const changed = yield* gateway.call({
-        ...send,
-        arguments: { ...send.arguments, body: "Something else entirely" },
+      const result = yield* gateway.call(draft);
+      expect(result._tag).toBe("completed");
+      expect(result._tag === "completed" ? result.result : null).toMatchObject({
+        draftRef: expect.stringMatching(/^[A-Za-z0-9_\-=+.]+$/),
       });
-      expect(changed._tag).toBe("awaiting_approval");
-      expect(h.requests).toEqual([]);
+      expect(h.calls.map((call) => call.tool)).toEqual([
+        "listAccounts",
+        "listFolders",
+        "saveDraft",
+      ]);
+      expect(h.calls[2]?.args).toMatchObject({ from: "owner@gmail.com", isHtml: false });
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect("a denied send never reaches Gmail", () => {
+  it.effect("has no send operation to ask for", () => {
     const h = harness();
     return Effect.gen(function* () {
       const gateway = yield* Gateway.PersonalConnectionGateway;
-      const approvals = yield* ApprovalService.PersonalConnectionApprovalService;
-      const first = yield* gateway.call(send);
-      const approvalId = first._tag === "awaiting_approval" ? first.approvalId : "";
-      yield* approvals.decide({ approvalId: approvalId as never, decision: "denied" });
-      const again = yield* Effect.exit(gateway.call(send));
-      expect(h.requests).toEqual([]);
-      expect(again._tag === "Success" ? again.value._tag : "failed").not.toBe("completed");
+      const failure = yield* Effect.flip(gateway.call({ ...draft, operation: "gmail.send" }));
+      expect(failure.reason).toContain("gmail.send");
+      expect(h.calls).toEqual([]);
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect("a draft needs no approval and nothing is sent", () => {
-    const h = harness();
-    return Effect.gen(function* () {
-      const gateway = yield* Gateway.PersonalConnectionGateway;
-      const result = yield* gateway.call({ ...send, operation: "gmail.create_draft" });
-      expect(result).toMatchObject({ _tag: "completed", result: { draftRef: "draft-1" } });
-      expect(h.requests.some((request) => request.url.endsWith("/messages/send"))).toBe(false);
-    }).pipe(Effect.provide(h.layer));
-  });
+  it.effect(
+    "tells the bot Thunderbird is not running, leaves the connection alone and says nothing may have happened",
+    () => {
+      const h = harness({ closed: true });
+      return Effect.gen(function* () {
+        const gateway = yield* Gateway.PersonalConnectionGateway;
+        const failure = yield* Effect.flip(gateway.call(draft));
+        expect(failure.reason).toBe(THUNDERBIRD_CLOSED_LINE);
+        expect(failure.ambiguous).toBeUndefined();
+        expect(h.reauthed).toEqual([]);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
-  it.effect("an error the provider returned never carries the access token to the bot", () => {
+  it.effect("reads a mailbox search through the mailbox's folder root", () => {
     const h = harness();
     return Effect.gen(function* () {
       const gateway = yield* Gateway.PersonalConnectionGateway;
-      const failure = yield* Effect.flip(
-        gateway.call({
-          ...send,
-          operation: "gmail.read_message",
-          arguments: { mailbox: "owner@gmail.com", messageRef: "m1" },
-        }),
-      );
-      expect(failure.reason).toContain("[redacted]");
-      expect(failure.reason).not.toContain(ACCESS);
+      const result = yield* gateway.call({
+        ...draft,
+        operation: "gmail.search",
+        arguments: { mailbox: "owner@gmail.com", from: "alice@example.com", limit: 5 },
+      });
+      expect(result).toMatchObject({ _tag: "completed", result: { messages: [] } });
+      expect(h.calls.at(-1)).toEqual({
+        tool: "searchMessages",
+        args: { query: 'from:"alice@example.com"', folderPath: ROOT, maxResults: 5 },
+      });
     }).pipe(Effect.provide(h.layer));
   });
 });

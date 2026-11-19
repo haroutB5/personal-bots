@@ -1,7 +1,8 @@
-import type {
-  EmailVendorId,
-  PersonalConnectionAuthKind,
-  PersonalConnectionVendorId,
+import {
+  isEmailVendorId,
+  type EmailVendorId,
+  type PersonalConnectionAuthKind,
+  type PersonalConnectionVendorId,
 } from "@t3tools/contracts";
 
 /**
@@ -168,6 +169,9 @@ export const connectionDefinition = (vendor: PersonalConnectionVendorId) =>
 /** Nothing is written to the credential store for these; there is no value. */
 export const usesBrowserSession = (vendor: PersonalConnectionVendorId) =>
   connectionDefinition(vendor).authKind === "browser-session";
+
+/** Mail is read through Thunderbird on this machine, so there is no stored credential to read. */
+export const usesLocalApp = (vendor: PersonalConnectionVendorId) => isEmailVendorId(vendor);
 
 export const usesOAuth = (vendor: PersonalConnectionVendorId) =>
   connectionDefinition(vendor).authKind === "oauth";

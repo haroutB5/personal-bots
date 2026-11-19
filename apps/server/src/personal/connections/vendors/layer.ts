@@ -3,12 +3,8 @@ import * as Layer from "effect/Layer";
 
 import { ConnectionVendorAdapters, makeAdapters } from "../adapters.ts";
 import { makeEmailAdapter } from "../email/adapter.ts";
-import { makeGmailApi } from "../email/gmailApi.ts";
-import { makeGraphMailApi } from "../email/graphMailApi.ts";
-import { EmailOAuthClients } from "../email/oauthClients.ts";
-import { EmailOAuthEndpoints } from "../email/oauthEndpoints.ts";
-import { EmailOAuthHttp } from "../email/oauthHttp.ts";
-import { EmailTokenBroker } from "../email/tokenBroker.ts";
+import { CommonpostClient } from "../email/thunderbird/commonpostClient.ts";
+import { makeThunderbirdMailApi } from "../email/thunderbird/thunderbirdMailApi.ts";
 import { makeWhatsAppAdapter } from "../whatsapp/adapter.ts";
 import { WhatsAppSendLog } from "../whatsapp/sendLog.ts";
 import { WhatsAppSession } from "../whatsapp/session.ts";
@@ -35,21 +31,15 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const session = yield* WhatsAppSession;
     const sendLog = yield* WhatsAppSendLog;
-    const email = {
-      vendorHttp: http,
-      broker: yield* EmailTokenBroker,
-      clients: yield* EmailOAuthClients,
-      oauthHttp: yield* EmailOAuthHttp,
-      endpoints: yield* EmailOAuthEndpoints,
-    };
+    const mail = makeThunderbirdMailApi(yield* CommonpostClient);
     return makeAdapters([
       makeGithubAdapter(http),
       makeVercelAdapter(http),
       makeNeonAdapter(http),
       makeUpstashAdapter(http),
       makeWhatsAppAdapter({ session, sendLog }),
-      yield* makeEmailAdapter("gmail", makeGmailApi(http), email),
-      yield* makeEmailAdapter("outlook", makeGraphMailApi(http), email),
+      yield* makeEmailAdapter("gmail", mail),
+      yield* makeEmailAdapter("outlook", mail),
     ]);
   }),
 );

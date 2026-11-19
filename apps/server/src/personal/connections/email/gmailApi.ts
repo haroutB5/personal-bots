@@ -3,13 +3,12 @@ import * as Effect from "effect/Effect";
 import type { VendorHttp } from "../vendors/vendorHttp.ts";
 import {
   MAX_BODY_CHARS_RETURNED,
-  type MailApi,
-  type MailCall,
   type MailDraft,
   type MailMessage,
   type MailQuery,
   type MailSummary,
 } from "./mailApi.ts";
+import type { OAuthMailApi, OAuthMailCall } from "./oauthMailApi.ts";
 import { mailFailure, mailRequest, toEpochSeconds } from "./mailHttp.ts";
 import { buildRfc822, toBase64Url } from "./mime.ts";
 import {
@@ -129,13 +128,13 @@ const metadataUrl = (ref: string) =>
     (name) => `metadataHeaders=${encodeURIComponent(name)}`,
   ).join("&")}`;
 
-export const makeGmailApi = (http: VendorHttp): MailApi => {
-  const get = (call: MailCall, url: string) => mailRequest(http, call, { method: "GET", url });
+export const makeGmailApi = (http: VendorHttp): OAuthMailApi => {
+  const get = (call: OAuthMailCall, url: string) => mailRequest(http, call, { method: "GET", url });
 
   const idsOf = (body: unknown, key: string) =>
     asArray(asRecord(body)[key]).map((entry) => asRecord(entry));
 
-  const search: MailApi["search"] = (call, query) =>
+  const search: OAuthMailApi["search"] = (call, query) =>
     Effect.gen(function* () {
       const q = buildGmailQuery(query);
       const params = new URLSearchParams({ maxResults: String(query.limit) });
@@ -148,7 +147,7 @@ export const makeGmailApi = (http: VendorHttp): MailApi => {
       );
     });
 
-  const listThreads: MailApi["listThreads"] = (call, query) =>
+  const listThreads: OAuthMailApi["listThreads"] = (call, query) =>
     Effect.gen(function* () {
       const params = new URLSearchParams({ maxResults: String(query.limit) });
       if (query.unreadOnly) params.set("q", "is:unread");
@@ -180,16 +179,16 @@ export const makeGmailApi = (http: VendorHttp): MailApi => {
       );
     });
 
-  const readMessage: MailApi["readMessage"] = (call, ref) =>
+  const readMessage: OAuthMailApi["readMessage"] = (call, ref) =>
     get(call, `${API}/messages/${encodeURIComponent(ref)}?format=full`).pipe(Effect.map(messageOf));
 
-  const readThread: MailApi["readThread"] = (call, ref, limit) =>
+  const readThread: OAuthMailApi["readThread"] = (call, ref, limit) =>
     get(call, `${API}/threads/${encodeURIComponent(ref)}?format=full`).pipe(
       Effect.map((thread) => asArray(asRecord(thread)["messages"]).map(messageOf).slice(-limit)),
     );
 
   /** The raw message, threaded under the one it answers when there is one. */
-  const compose = (call: MailCall, draft: MailDraft) =>
+  const compose = (call: OAuthMailCall, draft: MailDraft) =>
     Effect.gen(function* () {
       let threadId: string | null = null;
       let inReplyTo: string | null = null;
@@ -217,7 +216,7 @@ export const makeGmailApi = (http: VendorHttp): MailApi => {
       return { message: { raw, ...(threadId === null ? {} : { threadId }) } };
     });
 
-  const createDraft: MailApi["createDraft"] = (call, draft, update) =>
+  const createDraft: OAuthMailApi["createDraft"] = (call, draft, update) =>
     Effect.gen(function* () {
       const body = yield* compose(call, draft);
       const saved = asRecord(
@@ -235,7 +234,7 @@ export const makeGmailApi = (http: VendorHttp): MailApi => {
       return { draftRef };
     });
 
-  const send: MailApi["send"] = (call, draft) =>
+  const send: OAuthMailApi["send"] = (call, draft) =>
     Effect.gen(function* () {
       const body = yield* compose(call, draft);
       yield* mailRequest(http, call, {

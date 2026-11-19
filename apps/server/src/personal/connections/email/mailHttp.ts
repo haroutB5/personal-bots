@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 
 import { ConnectionVendorError } from "../adapters.ts";
 import { describeFailure, type VendorHttp, type VendorHttpRequest } from "../vendors/vendorHttp.ts";
-import type { MailCall } from "./mailApi.ts";
+import type { OAuthMailCall } from "./oauthMailApi.ts";
 
 /**
  * A 401 is a token the provider refused. A 403 counts only when it says the
@@ -17,7 +17,7 @@ const refusesCredential = (status: number, text: string) =>
 export type MailRequest = Omit<VendorHttpRequest, "operationId" | "bearer">;
 
 /** One authenticated call. A body that is not a success becomes a typed failure carrying the status. */
-export const mailRequest = (http: VendorHttp, call: MailCall, request: MailRequest) =>
+export const mailRequest = (http: VendorHttp, call: OAuthMailCall, request: MailRequest) =>
   http({ ...request, operationId: call.operationId, bearer: call.token }).pipe(
     Effect.flatMap((response) => {
       if (response.status >= 200 && response.status < 300) return Effect.succeed(response.body);
@@ -33,7 +33,7 @@ export const mailRequest = (http: VendorHttp, call: MailCall, request: MailReque
     }),
   );
 
-export const mailFailure = (call: MailCall, detail: string) =>
+export const mailFailure = (call: OAuthMailCall, detail: string) =>
   new ConnectionVendorError({ operationId: call.operationId, detail });
 
 /** Unix seconds for a date or date-time the bot typed, or null when it is not one. */

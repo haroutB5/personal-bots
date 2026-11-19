@@ -17,6 +17,7 @@ import * as Adapters from "./adapters.ts";
 import * as ApprovalRepository from "./approvalRepository.ts";
 import * as ApprovalService from "./approvalService.ts";
 import * as CredentialStore from "./credentialStore.ts";
+import { COMMONPOST_REVIEWED_SCHEMA } from "./email/thunderbird/pins.ts";
 import * as Gateway from "./gateway.ts";
 import * as ConnectionService from "./service.ts";
 
@@ -32,7 +33,7 @@ interface Mailbox {
   readonly status: "connected" | "disabled";
 }
 
-const GMAIL_SCHEMA = "gmail/v1-messages@2026-11-19";
+const GMAIL_SCHEMA = COMMONPOST_REVIEWED_SCHEMA;
 
 const makeHarness = (mailboxes: ReadonlyArray<Mailbox>) => {
   const approvals = new Map<string, PersonalConnectionApproval>();
@@ -201,36 +202,28 @@ describe("PersonalConnectionGateway with several mailboxes", () => {
     }),
   );
 
-  it.effect(
-    "binds an approval to one mailbox, so a send card for one cannot be spent on another",
-    () =>
-      Effect.gen(function* () {
-        const harness = makeHarness(two);
-        yield* Effect.gen(function* () {
-          const gateway = yield* Gateway.PersonalConnectionGateway;
-          const draft = {
-            to: ["x@example.com"],
-            subject: "Hello",
-            body: "Hi there",
-          };
-          const fromA = yield* gateway.call({
-            operation: "gmail.send",
-            arguments: { mailbox: "a@gmail.com", ...draft },
-            caller,
-          });
-          const fromB = yield* gateway.call({
-            operation: "gmail.send",
-            arguments: { mailbox: "b@gmail.com", ...draft },
-            caller,
-          });
-          expect(fromA._tag).toBe("awaiting_approval");
-          expect(fromB._tag).toBe("awaiting_approval");
-          expect(harness.approvals.size).toBe(2);
-          const [one, other] = [...harness.approvals.values()];
-          expect(one?.actionDigest).not.toBe(other?.actionDigest);
-          expect(harness.calls).toEqual([]);
-        }).pipe(Effect.provide(harness.layer));
-      }),
+  it.effect("saves a draft in the mailbox that was named, with no approval card", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(two);
+      yield* Effect.gen(function* () {
+        const gateway = yield* Gateway.PersonalConnectionGateway;
+        const draft = { to: ["x@example.com"], subject: "Hello", body: "Hi there" };
+        const inA = yield* gateway.call({
+          operation: "gmail.create_draft",
+          arguments: { mailbox: "a@gmail.com", ...draft },
+          caller,
+        });
+        const inB = yield* gateway.call({
+          operation: "gmail.create_draft",
+          arguments: { mailbox: "b@gmail.com", ...draft },
+          caller,
+        });
+        expect(inA._tag).toBe("completed");
+        expect(inB._tag).toBe("completed");
+        expect(harness.approvals.size).toBe(0);
+        expect(harness.calls.map((call) => call.connectionId)).toEqual(["conn-a", "conn-b"]);
+      }).pipe(Effect.provide(harness.layer));
+    }),
   );
 
   it.effect("describes a multi-account vendor once, with every connected address", () =>
@@ -254,7 +247,6 @@ describe("PersonalConnectionGateway with several mailboxes", () => {
           "gmail.read_message",
           "gmail.read_thread",
           "gmail.create_draft",
-          "gmail.send",
         ]);
       }).pipe(Effect.provide(harness.layer));
     }),

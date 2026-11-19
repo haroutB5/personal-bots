@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 
 import type { CreateAppPlan, PersonalConnectionApprovalId } from "@t3tools/contracts";
 
-import { connectionDefinition, usesBrowserSession } from "./catalog.ts";
+import { connectionDefinition, usesBrowserSession, usesLocalApp } from "./catalog.ts";
 import { createAppPlanDigest, planCovers } from "./createApp/plan.ts";
 import * as Adapters from "./adapters.ts";
 import * as ApprovalService from "./approvalService.ts";
@@ -393,9 +393,13 @@ export const make = Effect.gen(function* () {
      * nothing to hand the adapter. Whether that session is still good is
      * decided by the adapter looking at the page, and a signed-out one comes
      * back as `unauthorized` exactly like a rejected token.
+     *
+     * A mailbox read through Thunderbird is the same: the add-on holds the
+     * sign-in, and hbots only ever sees the mail it hands back.
      */
-    const browserSession = usesBrowserSession(operation.vendorId);
-    const stored = browserSession
+    const noStoredCredential =
+      usesBrowserSession(operation.vendorId) || usesLocalApp(operation.vendorId);
+    const stored = noStoredCredential
       ? Option.some<Readonly<Record<string, Redacted.Redacted<string>>>>({})
       : yield* credentials
           .read({
@@ -498,6 +502,7 @@ export const make = Effect.gen(function* () {
           Effect.succeed({
             ok: false as const,
             unauthorized: error.unauthorized === true,
+            unavailable: error.unavailable === true,
             secondaryRejected: error.rejectedCredential === "secondary",
             // Only a 4xx is a definite "no": anything else may have acted.
             ambiguous: !(error.status !== undefined && error.status >= 400 && error.status < 500),
@@ -509,6 +514,7 @@ export const make = Effect.gen(function* () {
           Effect.succeed({
             ok: false as const,
             unauthorized: false,
+            unavailable: false,
             secondaryRejected: false,
             ambiguous: true,
             detail: Operations.scrubCredentialValues(cause, secrets),
@@ -528,6 +534,12 @@ export const make = Effect.gen(function* () {
         vendorId: operation.vendorId,
         detail: outcome.detail,
       });
+      if (outcome.unavailable) {
+        // Nothing ran and nothing is wrong with the connection: the app that
+        // serves it is closed. Say so in the vendor's own words and leave the
+        // connection as it was.
+        return yield* refuse(outcome.detail);
+      }
       if (outcome.unauthorized) {
         // Personal access tokens expire on the provider's schedule, so this is
         // an ordinary path. Moving the connection now means the owner sees it

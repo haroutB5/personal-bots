@@ -3,14 +3,13 @@ import * as Effect from "effect/Effect";
 import type { VendorHttp } from "../vendors/vendorHttp.ts";
 import {
   MAX_BODY_CHARS_RETURNED,
-  type MailApi,
-  type MailCall,
   type MailDraft,
   type MailMessage,
   type MailParty,
   type MailQuery,
   type MailSummary,
 } from "./mailApi.ts";
+import type { OAuthMailApi, OAuthMailCall } from "./oauthMailApi.ts";
 import { mailFailure, mailRequest } from "./mailHttp.ts";
 import {
   asArray,
@@ -134,14 +133,14 @@ const draftBody = (draft: MailDraft) => ({
   ccRecipients: recipients(draft.cc),
 });
 
-export const makeGraphMailApi = (http: VendorHttp): MailApi => {
+export const makeGraphMailApi = (http: VendorHttp): OAuthMailApi => {
   const request = mailRequest;
-  const get = (call: MailCall, url: string, headers?: Readonly<Record<string, string>>) =>
+  const get = (call: OAuthMailCall, url: string, headers?: Readonly<Record<string, string>>) =>
     request(http, call, { method: "GET", url, ...(headers === undefined ? {} : { headers }) });
 
   const valuesOf = (body: unknown) => asArray(asRecord(body)["value"]);
 
-  const attachmentsOf = (call: MailCall, ref: string) =>
+  const attachmentsOf = (call: OAuthMailCall, ref: string) =>
     get(call, `${API}/messages/${encodeURIComponent(ref)}/attachments?$select=name,size`).pipe(
       Effect.map((body) =>
         valuesOf(body).map((entry) => ({
@@ -151,7 +150,7 @@ export const makeGraphMailApi = (http: VendorHttp): MailApi => {
       ),
     );
 
-  const search: MailApi["search"] = (call, query) =>
+  const search: OAuthMailApi["search"] = (call, query) =>
     Effect.gen(function* () {
       const built = buildGraphQuery(query);
       const after = isoOrNull(query.afterIso);
@@ -181,7 +180,7 @@ export const makeGraphMailApi = (http: VendorHttp): MailApi => {
         .slice(0, query.limit);
     });
 
-  const listThreads: MailApi["listThreads"] = (call, query) =>
+  const listThreads: OAuthMailApi["listThreads"] = (call, query) =>
     Effect.gen(function* () {
       const filter = query.unreadOnly ? "&$filter=isRead%20eq%20false" : "";
       const body = yield* get(
@@ -204,7 +203,7 @@ export const makeGraphMailApi = (http: VendorHttp): MailApi => {
       }));
     });
 
-  const readMessage: MailApi["readMessage"] = (call, ref) =>
+  const readMessage: OAuthMailApi["readMessage"] = (call, ref) =>
     Effect.gen(function* () {
       const message = yield* get(
         call,
@@ -216,7 +215,7 @@ export const makeGraphMailApi = (http: VendorHttp): MailApi => {
       return messageOf(message, attachments);
     });
 
-  const readThread: MailApi["readThread"] = (call, ref, limit) =>
+  const readThread: OAuthMailApi["readThread"] = (call, ref, limit) =>
     Effect.gen(function* () {
       const body = yield* get(
         call,
@@ -230,7 +229,7 @@ export const makeGraphMailApi = (http: VendorHttp): MailApi => {
     });
 
   /** The draft this call writes to: an existing one, a reply to a message, or a new one. */
-  const draftFor = (call: MailCall, draft: MailDraft, update: string | null) =>
+  const draftFor = (call: OAuthMailCall, draft: MailDraft, update: string | null) =>
     Effect.gen(function* () {
       if (update !== null) {
         yield* request(http, call, {
@@ -266,10 +265,10 @@ export const makeGraphMailApi = (http: VendorHttp): MailApi => {
       return id;
     });
 
-  const createDraft: MailApi["createDraft"] = (call, draft, update) =>
+  const createDraft: OAuthMailApi["createDraft"] = (call, draft, update) =>
     draftFor(call, draft, update).pipe(Effect.map((draftRef) => ({ draftRef })));
 
-  const send: MailApi["send"] = (call, draft) =>
+  const send: OAuthMailApi["send"] = (call, draft) =>
     Effect.gen(function* () {
       if (draft.replyTo === null) {
         yield* request(http, call, {

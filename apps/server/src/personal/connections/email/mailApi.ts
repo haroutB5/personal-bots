@@ -1,5 +1,4 @@
 import type * as Effect from "effect/Effect";
-import type * as Redacted from "effect/Redacted";
 
 import type { ConnectionVendorError } from "../adapters.ts";
 
@@ -65,36 +64,35 @@ export interface MailDraft {
   readonly replyTo: string | null;
 }
 
-/** An access token and the operation it is for, so every failure names what was being done. */
+/** The mailbox address a call is for and the operation, so every failure names what was being done. */
 export interface MailCall {
   readonly operationId: string;
-  readonly token: Redacted.Redacted<string>;
+  readonly mailbox: string;
 }
 
 type Failing<A> = Effect.Effect<A, ConnectionVendorError>;
 
-export interface MailApi {
+export interface MailApi<Call extends { readonly operationId: string } = MailCall> {
   /** The request and reply shape this implementation speaks, compared with the reviewed one by the gateway. */
   readonly vendorSchema: string;
-  readonly search: (call: MailCall, query: MailQuery) => Failing<ReadonlyArray<MailSummary>>;
+  readonly search: (call: Call, query: MailQuery) => Failing<ReadonlyArray<MailSummary>>;
   readonly listThreads: (
-    call: MailCall,
+    call: Call,
     query: { readonly limit: number; readonly unreadOnly: boolean },
   ) => Failing<ReadonlyArray<ThreadSummary>>;
-  readonly readMessage: (call: MailCall, ref: string) => Failing<MailMessage>;
+  readonly readMessage: (call: Call, ref: string) => Failing<MailMessage>;
   /** Oldest first. */
   readonly readThread: (
-    call: MailCall,
+    call: Call,
     ref: string,
     limit: number,
   ) => Failing<ReadonlyArray<MailMessage>>;
   /** With `update`, replaces that draft's content in place instead of adding a second one. */
   readonly createDraft: (
-    call: MailCall,
+    call: Call,
     draft: MailDraft,
     update: string | null,
   ) => Failing<{ readonly draftRef: string }>;
-  readonly send: (call: MailCall, draft: MailDraft) => Failing<void>;
 }
 
 export const MAX_BODY_CHARS_RETURNED = 20_000;
