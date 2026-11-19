@@ -96,6 +96,7 @@ export * from "./personalFollowUp.ts";
 export * from "./personalSecrets.ts";
 export * from "./personalDevices.ts";
 export * from "./personalConnections.ts";
+export * from "./personalEmail.ts";
 export * from "./personalCreateApp.ts";
 export * from "./personalLogins.ts";
 export * from "./personalLoginRequests.ts";

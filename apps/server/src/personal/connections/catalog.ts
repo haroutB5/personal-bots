@@ -1,5 +1,4 @@
 import {
-  isEmailVendorId,
   type EmailVendorId,
   type PersonalConnectionAuthKind,
   type PersonalConnectionVendorId,
@@ -51,7 +50,7 @@ export interface PersonalConnectionDefinition {
   readonly requiredScopes: ReadonlyArray<string>;
   /** True when the owner can connect several accounts of this vendor, one mailbox per row. */
   readonly multiAccount: boolean;
-  /** Present exactly when `authKind` is `oauth`. */
+  /** Parked sign-in settings for the email vendors; nothing reads them while mail goes through Thunderbird. */
   readonly oauth?: PersonalConnectionOAuthDefinition;
 }
 
@@ -118,12 +117,11 @@ export const PERSONAL_CONNECTION_CATALOG = {
     vendorId: "gmail",
     displayName: "Gmail",
     /**
-     * Sign-in at Google, kept as a refresh token. The scopes are the narrowest
-     * pair that lets a bot search and read (readonly) and prepare or send mail
-     * (compose); neither can delete or change a message already in the box.
+     * Read through the owner's Thunderbird on this machine, so there is no
+     * token to keep. The `oauth` block is the parked direct sign-in, unwired.
      */
-    authKind: "oauth",
-    requiredCredentialFields: ["refreshToken"],
+    authKind: "local-app",
+    requiredCredentialFields: [],
     tokenPageUrl: "https://mail.google.com/",
     requiredScopes: [],
     multiAccount: true,
@@ -142,13 +140,12 @@ export const PERSONAL_CONNECTION_CATALOG = {
     vendorId: "outlook",
     displayName: "Outlook",
     /**
-     * Personal Microsoft accounts (live.com, outlook.com) through one public
-     * client and the device-code flow, on the consumers endpoint. There is no
-     * secret to keep, and Microsoft has no per-token revoke for personal
-     * accounts, so disconnect points the owner at the consent page instead.
+     * Read through the owner's Thunderbird on this machine, so there is no
+     * token to keep. The `oauth` block is the parked device-code sign-in,
+     * unwired.
      */
-    authKind: "oauth",
-    requiredCredentialFields: ["refreshToken"],
+    authKind: "local-app",
+    requiredCredentialFields: [],
     tokenPageUrl: "https://outlook.live.com/mail/",
     requiredScopes: [],
     multiAccount: true,
@@ -171,10 +168,8 @@ export const usesBrowserSession = (vendor: PersonalConnectionVendorId) =>
   connectionDefinition(vendor).authKind === "browser-session";
 
 /** Mail is read through Thunderbird on this machine, so there is no stored credential to read. */
-export const usesLocalApp = (vendor: PersonalConnectionVendorId) => isEmailVendorId(vendor);
-
-export const usesOAuth = (vendor: PersonalConnectionVendorId) =>
-  connectionDefinition(vendor).authKind === "oauth";
+export const usesLocalApp = (vendor: PersonalConnectionVendorId) =>
+  connectionDefinition(vendor).authKind === "local-app";
 
 /** The sign-in settings of a vendor that has them; the type says which vendors do. */
 export const oauthDefinitionFor = (vendor: EmailVendorId): PersonalConnectionOAuthDefinition =>

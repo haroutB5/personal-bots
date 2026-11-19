@@ -40,11 +40,15 @@ export const isSingleAccountVendorId = (
  *
  * `oauth` is a sign-in at the provider that ends in a refresh token the server
  * keeps. The owner never sees or pastes a token.
+ *
+ * `local-app` is a mailbox an app on the server's machine already holds the
+ * sign-in for. This feature reads and stores no credential for it.
  */
 export const PersonalConnectionAuthKind = Schema.Literals([
   "token-paste",
   "browser-session",
   "oauth",
+  "local-app",
 ]);
 export type PersonalConnectionAuthKind = typeof PersonalConnectionAuthKind.Type;
 
@@ -130,8 +134,6 @@ export type PersonalEmailOAuthClient = typeof PersonalEmailOAuthClient.Type;
 
 export const PersonalConnectionListResult = Schema.Struct({
   connections: Schema.Array(PersonalConnection),
-  /** Which mail providers the owner has finished the one-time setup for. */
-  oauthClients: Schema.Array(PersonalEmailOAuthClient),
 });
 export type PersonalConnectionListResult = typeof PersonalConnectionListResult.Type;
 

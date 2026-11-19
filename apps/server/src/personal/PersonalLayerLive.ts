@@ -12,8 +12,7 @@ import * as PersonalBotTokenUsage from "./PersonalBotTokenUsageService.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalClaudeCodeReview from "./claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalConnectionApprovalService from "./connections/approvalService.ts";
-import * as EmailPendingDevices from "./connections/email/pendingDevices.ts";
-import * as EmailSignIn from "./connections/email/signIn.ts";
+import * as ThunderbirdSetup from "./connections/email/thunderbird/setup.ts";
 import * as PersonalConnectionService from "./connections/service.ts";
 import * as WhatsAppSendLog from "./connections/whatsapp/sendLog.ts";
 import * as WhatsAppSession from "./connections/whatsapp/session.ts";
@@ -198,13 +197,11 @@ const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
 );
 
 /**
- * The connection service with the email sign-in that consumes it, as ONE step:
- * the chain below is at its 20-step limit. Sign-in reads the unfinished
- * Microsoft sign-ins it owns and the client settings and endpoints the
- * connection layer exposes.
+ * The connection service with the Thunderbird setup that writes its mailbox
+ * rows, as ONE step: the chain below is at its 20-step limit. Setup reaches
+ * the same Thunderbird client and process the gateway uses.
  */
-const PersonalConnectionsWithEmailLive = EmailSignIn.layer.pipe(
-  Layer.provideMerge(EmailPendingDevices.layer),
+const PersonalConnectionsWithEmailLive = ThunderbirdSetup.layer().pipe(
   Layer.provideMerge(PersonalConnectionService.layerLive),
 );
 

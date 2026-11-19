@@ -329,11 +329,11 @@ describe("PersonalConnectionService", () => {
       const pasted = yield* service
         .connect({ vendorId: "gmail", credentials: { refreshToken: Redacted.make("x") } })
         .pipe(Effect.flip);
-      expect(pasted.message).toContain("signing in");
+      expect(pasted.message).toContain("come from Thunderbird");
       const reconnect = yield* service
         .reconnect({ connectionId: ConnectionId.make("mail-a") })
         .pipe(Effect.flip);
-      expect(reconnect.message).toContain("Sign in again");
+      expect(reconnect.message).toContain("cannot reconnect while connected");
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -381,6 +381,40 @@ describe("PersonalConnectionService", () => {
           Option.getOrThrow(yield* service.resolveForOperation("gmail", "harout@gmail.com"))
             .credentialVersion,
         ).toBe(2);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect(
+    "connectLocalMailbox keeps one row per address, stores nothing, and resolves it for the gateway",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const service = yield* Service.PersonalConnectionService;
+        const first = yield* service.connectLocalMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+        });
+        const again = yield* service.connectLocalMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+        });
+        yield* service.connectLocalMailbox({ vendorId: "outlook", address: "a@outlook.com" });
+        expect(again.connectionId).toBe(first.connectionId);
+        expect(first.status).toBe("connected");
+        expect(harness.rows.size).toBe(2);
+        expect(harness.secrets.size).toBe(0);
+        expect(
+          Option.getOrThrow(yield* service.resolveForOperation("gmail", "harout@gmail.com"))
+            .connectionId,
+        ).toBe(first.connectionId);
+        const rotate = yield* service
+          .rotate({
+            connectionId: first.connectionId,
+            credentials: {},
+          })
+          .pipe(Effect.flip);
+        expect(rotate.message).toContain("no token to replace");
       }).pipe(Effect.provide(harness.layer));
     },
   );

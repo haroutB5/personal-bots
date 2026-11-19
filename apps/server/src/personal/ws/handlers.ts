@@ -48,7 +48,7 @@ import * as PersonalPushService from "../push/PersonalPushService.ts";
 import { purgeRevokedPushRecipients } from "../push/pushRecipients.ts";
 import * as PersonalRoutineService from "../routines/PersonalRoutineService.ts";
 import * as PersonalConnectionApprovalService from "../connections/approvalService.ts";
-import * as EmailSignIn from "../connections/email/signIn.ts";
+import * as ThunderbirdSetup from "../connections/email/thunderbird/setup.ts";
 import * as PersonalConnectionService from "../connections/service.ts";
 import * as PersonalLoginRequestService from "../secrets/PersonalLoginRequestService.ts";
 import * as PersonalLoginService from "../secrets/PersonalLoginService.ts";
@@ -115,7 +115,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const personalLogins = yield* PersonalLoginService.PersonalLoginService;
     const loginRequests = yield* PersonalLoginRequestService.PersonalLoginRequestService;
     const personalConnections = yield* PersonalConnectionService.PersonalConnectionService;
-    const emailSignIn = yield* EmailSignIn.EmailSignIn;
+    const thunderbirdSetup = yield* ThunderbirdSetup.ThunderbirdSetup;
     const personalConnectionApprovals =
       yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
     const personalLeadBots = yield* PersonalLeadBots.PersonalLeadBotService;
@@ -667,38 +667,21 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
           "rpc.aggregate": "server",
         }),
       [WS_METHODS.personalConnectionsList]: (_input) =>
-        observeRpcEffect(
-          WS_METHODS.personalConnectionsList,
-          Effect.all({
-            listed: personalConnections.list(),
-            oauthClients: emailSignIn.clients(),
-          }).pipe(Effect.map(({ listed, oauthClients }) => ({ ...listed, oauthClients }))),
-          { "rpc.aggregate": "server" },
-        ),
-      [WS_METHODS.personalConnectionsSetOAuthClient]: (input) =>
-        observeRpcEffect(
-          WS_METHODS.personalConnectionsSetOAuthClient,
-          emailSignIn.saveClient(input),
-          { "rpc.aggregate": "server" },
-        ),
-      [WS_METHODS.personalConnectionsGmailExchangeCode]: (input) =>
-        observeRpcEffect(
-          WS_METHODS.personalConnectionsGmailExchangeCode,
-          emailSignIn.gmailExchangeCode(input),
-          { "rpc.aggregate": "server" },
-        ),
-      [WS_METHODS.personalConnectionsOutlookDeviceStart]: (_input) =>
-        observeRpcEffect(
-          WS_METHODS.personalConnectionsOutlookDeviceStart,
-          emailSignIn.outlookDeviceStart(),
-          { "rpc.aggregate": "server" },
-        ),
-      [WS_METHODS.personalConnectionsOutlookDevicePoll]: (input) =>
-        observeRpcEffect(
-          WS_METHODS.personalConnectionsOutlookDevicePoll,
-          emailSignIn.outlookDevicePoll(input),
-          { "rpc.aggregate": "server" },
-        ),
+        observeRpcEffect(WS_METHODS.personalConnectionsList, personalConnections.list(), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalEmailStatus]: (_input) =>
+        observeRpcEffect(WS_METHODS.personalEmailStatus, thunderbirdSetup.status(), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalEmailUseAccounts]: (input) =>
+        observeRpcEffect(WS_METHODS.personalEmailUseAccounts, thunderbirdSetup.useAccounts(input), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalEmailStartThunderbird]: (_input) =>
+        observeRpcEffect(WS_METHODS.personalEmailStartThunderbird, thunderbirdSetup.start(), {
+          "rpc.aggregate": "server",
+        }),
       [WS_METHODS.personalConnectionsConnect]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalConnectionsConnect,

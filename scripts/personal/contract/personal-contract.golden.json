@@ -11720,206 +11720,6 @@
       }
     },
     {
-      "tag": "personalConnections.gmailExchangeCode",
-      "payload": {
-        "additionalProperties": true,
-        "properties": {
-          "serverAuthCode": {
-            "type": "string"
-          }
-        },
-        "required": ["serverAuthCode"],
-        "type": "object"
-      },
-      "success": {
-        "additionalProperties": true,
-        "properties": {
-          "connection": {
-            "additionalProperties": true,
-            "properties": {
-              "account": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "properties": {
-                      "accountId": {
-                        "type": "string"
-                      },
-                      "accountName": {
-                        "type": "string"
-                      },
-                      "teamId": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      },
-                      "teamName": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      }
-                    },
-                    "required": ["accountId", "accountName", "teamId", "teamName"],
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "connectionId": {
-                "type": "string"
-              },
-              "createdAt": {
-                "type": "string"
-              },
-              "credentialVersion": {
-                "maximum": 9007199254740991,
-                "minimum": 1,
-                "type": "integer"
-              },
-              "lastValidatedAt": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "settings": {
-                "additionalProperties": true,
-                "properties": {
-                  "whatsappDailySendCap": {
-                    "anyOf": [
-                      {
-                        "maximum": 100,
-                        "minimum": 1,
-                        "type": "integer"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": ["whatsappDailySendCap"],
-                "type": "object"
-              },
-              "status": {
-                "enum": ["connecting", "connected", "needs_reauth", "disabled", "error"],
-                "type": "string"
-              },
-              "updatedAt": {
-                "type": "string"
-              },
-              "vendorId": {
-                "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
-                "type": "string"
-              },
-              "verifiedCapabilities": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "connectionId",
-              "vendorId",
-              "status",
-              "account",
-              "verifiedCapabilities",
-              "settings",
-              "credentialVersion",
-              "lastValidatedAt",
-              "createdAt",
-              "updatedAt"
-            ],
-            "type": "object"
-          }
-        },
-        "required": ["connection"],
-        "type": "object"
-      },
-      "error": {
-        "$defs": {
-          "EnvironmentAuthorizationErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["EnvironmentAuthorizationError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              },
-              "requiredPermission": {
-                "type": "string"
-              },
-              "requiredScope": {
-                "enum": [
-                  "orchestration:read",
-                  "orchestration:operate",
-                  "settings:write",
-                  "providers:manage",
-                  "environment:maintain",
-                  "preview:operate",
-                  "diagnostics:read",
-                  "terminal:read",
-                  "terminal:operate",
-                  "filesystem:read",
-                  "filesystem:write",
-                  "review:write",
-                  "source-control:write",
-                  "access:read",
-                  "access:write",
-                  "relay:read",
-                  "relay:write"
-                ],
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message", "requiredScope"],
-            "type": "object"
-          },
-          "PersonalConnectionsErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["PersonalConnectionsError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message"],
-            "type": "object"
-          }
-        },
-        "anyOf": [
-          {
-            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
-          },
-          {
-            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
-          }
-        ]
-      }
-    },
-    {
       "tag": "personalConnections.importAdopt",
       "payload": {
         "additionalProperties": true,
@@ -12383,383 +12183,9 @@
               "type": "object"
             },
             "type": "array"
-          },
-          "oauthClients": {
-            "items": {
-              "additionalProperties": true,
-              "properties": {
-                "clientId": {
-                  "type": "string"
-                },
-                "vendorId": {
-                  "enum": ["gmail", "outlook"],
-                  "type": "string"
-                }
-              },
-              "required": ["vendorId", "clientId"],
-              "type": "object"
-            },
-            "type": "array"
           }
         },
-        "required": ["connections", "oauthClients"],
-        "type": "object"
-      },
-      "error": {
-        "$defs": {
-          "EnvironmentAuthorizationErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["EnvironmentAuthorizationError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              },
-              "requiredPermission": {
-                "type": "string"
-              },
-              "requiredScope": {
-                "enum": [
-                  "orchestration:read",
-                  "orchestration:operate",
-                  "settings:write",
-                  "providers:manage",
-                  "environment:maintain",
-                  "preview:operate",
-                  "diagnostics:read",
-                  "terminal:read",
-                  "terminal:operate",
-                  "filesystem:read",
-                  "filesystem:write",
-                  "review:write",
-                  "source-control:write",
-                  "access:read",
-                  "access:write",
-                  "relay:read",
-                  "relay:write"
-                ],
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message", "requiredScope"],
-            "type": "object"
-          },
-          "PersonalConnectionsErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["PersonalConnectionsError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message"],
-            "type": "object"
-          }
-        },
-        "anyOf": [
-          {
-            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
-          },
-          {
-            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
-          }
-        ]
-      }
-    },
-    {
-      "tag": "personalConnections.outlookDevicePoll",
-      "payload": {
-        "additionalProperties": true,
-        "properties": {
-          "signInId": {
-            "type": "string"
-          }
-        },
-        "required": ["signInId"],
-        "type": "object"
-      },
-      "success": {
-        "anyOf": [
-          {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["pending"],
-                "type": "string"
-              },
-              "intervalSec": {
-                "maximum": 9007199254740991,
-                "minimum": 1,
-                "type": "integer"
-              }
-            },
-            "required": ["_tag", "intervalSec"],
-            "type": "object"
-          },
-          {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["connected"],
-                "type": "string"
-              },
-              "connection": {
-                "additionalProperties": true,
-                "properties": {
-                  "account": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": true,
-                        "properties": {
-                          "accountId": {
-                            "type": "string"
-                          },
-                          "accountName": {
-                            "type": "string"
-                          },
-                          "teamId": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "teamName": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          }
-                        },
-                        "required": ["accountId", "accountName", "teamId", "teamName"],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "connectionId": {
-                    "type": "string"
-                  },
-                  "createdAt": {
-                    "type": "string"
-                  },
-                  "credentialVersion": {
-                    "maximum": 9007199254740991,
-                    "minimum": 1,
-                    "type": "integer"
-                  },
-                  "lastValidatedAt": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "settings": {
-                    "additionalProperties": true,
-                    "properties": {
-                      "whatsappDailySendCap": {
-                        "anyOf": [
-                          {
-                            "maximum": 100,
-                            "minimum": 1,
-                            "type": "integer"
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
-                      }
-                    },
-                    "required": ["whatsappDailySendCap"],
-                    "type": "object"
-                  },
-                  "status": {
-                    "enum": ["connecting", "connected", "needs_reauth", "disabled", "error"],
-                    "type": "string"
-                  },
-                  "updatedAt": {
-                    "type": "string"
-                  },
-                  "vendorId": {
-                    "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
-                    "type": "string"
-                  },
-                  "verifiedCapabilities": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "connectionId",
-                  "vendorId",
-                  "status",
-                  "account",
-                  "verifiedCapabilities",
-                  "settings",
-                  "credentialVersion",
-                  "lastValidatedAt",
-                  "createdAt",
-                  "updatedAt"
-                ],
-                "type": "object"
-              }
-            },
-            "required": ["_tag", "connection"],
-            "type": "object"
-          },
-          {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["expired"],
-                "type": "string"
-              }
-            },
-            "required": ["_tag"],
-            "type": "object"
-          },
-          {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["declined"],
-                "type": "string"
-              }
-            },
-            "required": ["_tag"],
-            "type": "object"
-          },
-          {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["failed"],
-                "type": "string"
-              },
-              "problem": {
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "problem"],
-            "type": "object"
-          }
-        ]
-      },
-      "error": {
-        "$defs": {
-          "EnvironmentAuthorizationErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["EnvironmentAuthorizationError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              },
-              "requiredPermission": {
-                "type": "string"
-              },
-              "requiredScope": {
-                "enum": [
-                  "orchestration:read",
-                  "orchestration:operate",
-                  "settings:write",
-                  "providers:manage",
-                  "environment:maintain",
-                  "preview:operate",
-                  "diagnostics:read",
-                  "terminal:read",
-                  "terminal:operate",
-                  "filesystem:read",
-                  "filesystem:write",
-                  "review:write",
-                  "source-control:write",
-                  "access:read",
-                  "access:write",
-                  "relay:read",
-                  "relay:write"
-                ],
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message", "requiredScope"],
-            "type": "object"
-          },
-          "PersonalConnectionsErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["PersonalConnectionsError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message"],
-            "type": "object"
-          }
-        },
-        "anyOf": [
-          {
-            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
-          },
-          {
-            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
-          }
-        ]
-      }
-    },
-    {
-      "tag": "personalConnections.outlookDeviceStart",
-      "payload": {
-        "not": {
-          "type": "null"
-        }
-      },
-      "success": {
-        "additionalProperties": true,
-        "properties": {
-          "expiresAt": {
-            "type": "string"
-          },
-          "intervalSec": {
-            "maximum": 9007199254740991,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "signInId": {
-            "type": "string"
-          },
-          "userCode": {
-            "type": "string"
-          },
-          "verificationUri": {
-            "type": "string"
-          }
-        },
-        "required": ["signInId", "userCode", "verificationUri", "expiresAt", "intervalSec"],
+        "required": ["connections"],
         "type": "object"
       },
       "error": {
@@ -13152,133 +12578,6 @@
           "createdAt",
           "updatedAt"
         ],
-        "type": "object"
-      },
-      "error": {
-        "$defs": {
-          "EnvironmentAuthorizationErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["EnvironmentAuthorizationError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              },
-              "requiredPermission": {
-                "type": "string"
-              },
-              "requiredScope": {
-                "enum": [
-                  "orchestration:read",
-                  "orchestration:operate",
-                  "settings:write",
-                  "providers:manage",
-                  "environment:maintain",
-                  "preview:operate",
-                  "diagnostics:read",
-                  "terminal:read",
-                  "terminal:operate",
-                  "filesystem:read",
-                  "filesystem:write",
-                  "review:write",
-                  "source-control:write",
-                  "access:read",
-                  "access:write",
-                  "relay:read",
-                  "relay:write"
-                ],
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message", "requiredScope"],
-            "type": "object"
-          },
-          "PersonalConnectionsErrorEncoded": {
-            "additionalProperties": true,
-            "properties": {
-              "_tag": {
-                "enum": ["PersonalConnectionsError"],
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": ["_tag", "message"],
-            "type": "object"
-          }
-        },
-        "anyOf": [
-          {
-            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
-          },
-          {
-            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
-          }
-        ]
-      }
-    },
-    {
-      "tag": "personalConnections.setOAuthClient",
-      "payload": {
-        "anyOf": [
-          {
-            "additionalProperties": true,
-            "properties": {
-              "clientId": {
-                "type": "string"
-              },
-              "clientSecret": {
-                "type": "string"
-              },
-              "vendorId": {
-                "enum": ["gmail"],
-                "type": "string"
-              }
-            },
-            "required": ["vendorId", "clientId", "clientSecret"],
-            "type": "object"
-          },
-          {
-            "additionalProperties": true,
-            "properties": {
-              "clientId": {
-                "type": "string"
-              },
-              "vendorId": {
-                "enum": ["outlook"],
-                "type": "string"
-              }
-            },
-            "required": ["vendorId", "clientId"],
-            "type": "object"
-          }
-        ]
-      },
-      "success": {
-        "additionalProperties": true,
-        "properties": {
-          "problem": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "saved": {
-            "type": "boolean"
-          },
-          "vendorId": {
-            "enum": ["gmail", "outlook"],
-            "type": "string"
-          }
-        },
-        "required": ["vendorId", "saved", "problem"],
         "type": "object"
       },
       "error": {
@@ -14283,6 +13582,372 @@
         "anyOf": [
           {
             "$ref": "#/$defs/PersonalDevicesErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalEmail.startThunderbird",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started": {
+            "type": "boolean"
+          }
+        },
+        "required": ["started", "problem"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalConnectionsErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalConnectionsError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalEmail.status",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "accountsConfirmed": {
+            "type": "boolean"
+          },
+          "profileSizeBytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thunderbird": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["ready"],
+                    "type": "string"
+                  },
+                  "accounts": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "accountId": {
+                          "type": "string"
+                        },
+                        "address": {
+                          "type": "string"
+                        },
+                        "serverType": {
+                          "enum": ["imap", "ews", "graph", "pop3"],
+                          "type": "string"
+                        },
+                        "vendor": {
+                          "enum": ["gmail", "outlook"],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["accountId", "address", "vendor", "serverType"],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": ["_tag", "accounts"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["closed"],
+                    "type": "string"
+                  }
+                },
+                "required": ["_tag"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["addon-missing"],
+                    "type": "string"
+                  }
+                },
+                "required": ["_tag"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["unsupported"],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": ["_tag", "reason"],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": ["thunderbird", "accountsConfirmed", "profileSizeBytes"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalConnectionsErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalConnectionsError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalEmail.useAccounts",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "accountIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": ["accountIds"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["changed", "problem"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalConnectionsErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalConnectionsError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
           },
           {
             "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"

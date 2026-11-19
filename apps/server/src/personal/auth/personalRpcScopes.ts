@@ -113,15 +113,14 @@ export const PERSONAL_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.personalConnectionsDisconnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionsRotate]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionsBrowserConnect]: AuthOrchestrationOperateScope,
-  [WS_METHODS.personalConnectionsSetOAuthClient]: AuthOrchestrationOperateScope,
-  [WS_METHODS.personalConnectionsGmailExchangeCode]: AuthOrchestrationOperateScope,
-  [WS_METHODS.personalConnectionsOutlookDeviceStart]: AuthOrchestrationOperateScope,
-  [WS_METHODS.personalConnectionsOutlookDevicePoll]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionsSetSettings]: AuthOrchestrationOperateScope,
   // Reading this machine's own CLI credentials is an owner action, not a read:
   // it touches the filesystem and the reply names the owner's accounts.
   [WS_METHODS.personalConnectionsImportProbe]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionsImportAdopt]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalEmailStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalEmailUseAccounts]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalEmailStartThunderbird]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionApprovalsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalConnectionApprovalsDecide]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionApprovalsCancel]: AuthOrchestrationOperateScope,

@@ -73,29 +73,6 @@ export function createPersonalConnectionsClient<R, ER, P>(
     onSuccess: refreshConnections,
   });
 
-  const personalConnectionSetOAuthClient = createEnvironmentRpcCommand(runtime, {
-    label: "personal-connections:set-oauth-client",
-    tag: WS_METHODS.personalConnectionsSetOAuthClient,
-    onSuccess: refreshConnections,
-  });
-
-  const personalConnectionGmailExchangeCode = createEnvironmentRpcCommand(runtime, {
-    label: "personal-connections:gmail-exchange-code",
-    tag: WS_METHODS.personalConnectionsGmailExchangeCode,
-    onSuccess: refreshConnections,
-  });
-
-  const personalConnectionOutlookDeviceStart = createEnvironmentRpcCommand(runtime, {
-    label: "personal-connections:outlook-device-start",
-    tag: WS_METHODS.personalConnectionsOutlookDeviceStart,
-  });
-
-  const personalConnectionOutlookDevicePoll = createEnvironmentRpcCommand(runtime, {
-    label: "personal-connections:outlook-device-poll",
-    tag: WS_METHODS.personalConnectionsOutlookDevicePoll,
-    onSuccess: refreshConnections,
-  });
-
   const personalConnectionSetSettings = createEnvironmentRpcCommand(runtime, {
     label: "personal-connections:set-settings",
     tag: WS_METHODS.personalConnectionsSetSettings,
@@ -112,6 +89,42 @@ export function createPersonalConnectionsClient<R, ER, P>(
     tag: WS_METHODS.personalConnectionsImportAdopt,
     onSuccess: refreshConnections,
   });
+
+  const personalEmailStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-email:status",
+    tag: WS_METHODS.personalEmailStatus,
+    staleTimeMs: 2_000,
+    idleTtlMs: 60_000,
+  });
+
+  const refreshEmailStatus = (
+    target: { readonly environmentId: EnvironmentId },
+    registry: { refresh: (atom: ReturnType<typeof personalEmailStatus>) => void },
+  ) =>
+    Effect.sync(() =>
+      registry.refresh(personalEmailStatus({ environmentId: target.environmentId, input: {} })),
+    );
+
+  const personalEmailUseAccounts = createEnvironmentRpcCommand(runtime, {
+    label: "personal-email:use-accounts",
+    tag: WS_METHODS.personalEmailUseAccounts,
+    onSuccess: (target, registry) =>
+      Effect.andThen(refreshEmailStatus(target, registry), refreshConnections(target, registry)),
+  });
+
+  const personalEmailStartThunderbird = createEnvironmentRpcCommand(runtime, {
+    label: "personal-email:start-thunderbird",
+    tag: WS_METHODS.personalEmailStartThunderbird,
+    onSuccess: refreshEmailStatus,
+  });
+
+  function usePersonalEmailStatus(environmentId: EnvironmentId | null) {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalEmailStatus({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
 
   function usePersonalConnections(environmentId: EnvironmentId | null) {
     const atom = useMemo(
@@ -130,13 +143,13 @@ export function createPersonalConnectionsClient<R, ER, P>(
     personalConnectionDisconnect,
     personalConnectionRotate,
     personalConnectionBrowserConnect,
-    personalConnectionSetOAuthClient,
-    personalConnectionGmailExchangeCode,
-    personalConnectionOutlookDeviceStart,
-    personalConnectionOutlookDevicePoll,
     personalConnectionSetSettings,
     personalConnectionImportProbe,
     personalConnectionImportAdopt,
+    personalEmailStatus,
+    personalEmailUseAccounts,
+    personalEmailStartThunderbird,
+    usePersonalEmailStatus,
     usePersonalConnections,
   };
 }

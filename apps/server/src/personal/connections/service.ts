@@ -33,14 +33,10 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as Adapters from "./adapters.ts";
 import * as VendorAdapters from "./vendors/layer.ts";
-import { connectionDefinition, usesBrowserSession, usesOAuth } from "./catalog.ts";
+import { connectionDefinition, usesBrowserSession, usesLocalApp } from "./catalog.ts";
 import * as CredentialStore from "./credentialStore.ts";
 import * as CommonpostClientLayer from "./email/thunderbird/commonpostClient.ts";
 import * as ThunderbirdProcessLayer from "./email/thunderbird/thunderbirdProcess.ts";
-import * as EmailOAuthClientsLayer from "./email/oauthClients.ts";
-import * as EmailOAuthEndpointsLayer from "./email/oauthEndpoints.ts";
-import * as EmailOAuthHttpLayer from "./email/oauthHttp.ts";
-import * as EmailTokenBrokerLayer from "./email/tokenBroker.ts";
 import * as MachineImport from "./machineImport.ts";
 import { scrubCredentialValues } from "./operations.ts";
 import * as Repository from "./repository.ts";
@@ -66,13 +62,16 @@ export interface ConnectMailboxInput {
   readonly refreshToken: Redacted.Redacted<string>;
 }
 
+export interface ConnectLocalMailboxInput {
+  readonly vendorId: EmailVendorId;
+  /** Lower-case, as Thunderbird reports it. */
+  readonly address: string;
+}
+
 export class PersonalConnectionService extends Context.Service<
   PersonalConnectionService,
   {
-    readonly list: () => Effect.Effect<
-      Omit<PersonalConnectionListResult, "oauthClients">,
-      PersonalConnectionsError
-    >;
+    readonly list: () => Effect.Effect<PersonalConnectionListResult, PersonalConnectionsError>;
     readonly connect: (
       input: PersonalConnectionConnectInput,
     ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
@@ -84,6 +83,14 @@ export class PersonalConnectionService extends Context.Service<
      */
     readonly connectMailbox: (
       input: ConnectMailboxInput,
+    ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
+    /**
+     * Records a mailbox Thunderbird holds the sign-in for. One row per
+     * (vendor, address); asking again for an address that has a row keeps the
+     * row and its settings. Nothing is written to the credential store.
+     */
+    readonly connectLocalMailbox: (
+      input: ConnectLocalMailboxInput,
     ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
     /**
      * The browser-session way in: the server opens the vendor's site in the
@@ -294,7 +301,7 @@ export const make = Effect.gen(function* () {
   ) {
     if (isEmailVendorId(input.vendorId)) {
       return yield* fail(
-        `${connectionDefinition(input.vendorId).displayName} is connected by signing in, not by pasting a token.`,
+        `${connectionDefinition(input.vendorId).displayName} mailboxes come from Thunderbird. Set them up under Settings, Integrations, Email.`,
       );
     }
     if (Option.isSome(yield* db("lookup", repository.getByVendor(input.vendorId)))) {
@@ -401,6 +408,45 @@ export const make = Effect.gen(function* () {
     return Repository.presentConnection(row);
   });
 
+  const connectLocalMailboxUnlocked = Effect.fn("PersonalConnectionService.connectLocalMailbox")(
+    function* (input: ConnectLocalMailboxInput) {
+      const existing = yield* db("lookup", repository.getByAccount(input.vendorId, input.address));
+      const now = yield* DateTime.now;
+      const account = {
+        accountId: input.address,
+        accountName: input.address,
+        teamId: null,
+        teamName: null,
+      };
+      if (Option.isSome(existing)) {
+        return Repository.presentConnection(
+          yield* write({
+            ...existing.value,
+            status: "connected",
+            account,
+            lastValidatedAt: now,
+            updatedAt: now,
+          }),
+        );
+      }
+      const row: Repository.StoredPersonalConnection = {
+        connectionId: ConnectionId.make(NodeCrypto.randomUUID()),
+        vendorId: input.vendorId,
+        status: "connected",
+        account,
+        verifiedCapabilities: [],
+        settings: defaultSettingsFor(input.vendorId),
+        credentialRef: `local-app-${NodeCrypto.randomUUID()}`,
+        credentialVersion: 1,
+        lastValidatedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      yield* db("create", repository.create(row));
+      return Repository.presentConnection(row);
+    },
+  );
+
   const validateUnlocked = Effect.fn("PersonalConnectionService.validate")(function* (
     input: PersonalConnectionValidateInput,
   ) {
@@ -413,6 +459,13 @@ export const make = Effect.gen(function* () {
       previous.status !== "needs_reauth"
     ) {
       return yield* fail(`A ${previous.status} connection must be reconnected before validation.`);
+    }
+    if (usesLocalApp(previous.vendorId)) {
+      return {
+        connection: Repository.presentConnection(previous),
+        missingScopes: [],
+        problem: "Mailboxes come from Thunderbird. Check them under Settings, Integrations, Email.",
+      };
     }
     // A browser session has nothing stored to read, and its "credential" is
     // whether the page is still signed in - which is exactly what the adapter
@@ -478,8 +531,10 @@ export const make = Effect.gen(function* () {
     input: PersonalConnectionIdInput,
   ) {
     const previous = yield* requireConnection(input.connectionId);
-    if (usesOAuth(previous.vendorId) && previous.status !== "disabled") {
-      return yield* fail("Sign in again from the Connections screen to reconnect this account.");
+    if (usesLocalApp(previous.vendorId) && previous.status === "disabled") {
+      return Repository.presentConnection(
+        yield* write({ ...previous, status: "connected", updatedAt: yield* DateTime.now }),
+      );
     }
     if (
       previous.status !== "disabled" &&
@@ -501,7 +556,7 @@ export const make = Effect.gen(function* () {
     // credential on disk. A browser session has no value to delete, and
     // removing the connection deliberately does not sign the owner out of the
     // site: that is theirs to do, and the screen says so.
-    if (!usesBrowserSession(previous.vendorId)) {
+    if (!usesBrowserSession(previous.vendorId) && !usesLocalApp(previous.vendorId)) {
       yield* secret(
         credentials.remove({
           credentialRef: previous.credentialRef,
@@ -518,9 +573,9 @@ export const make = Effect.gen(function* () {
     input: PersonalConnectionRotateInput,
   ) {
     const previous = yield* requireConnection(input.connectionId);
-    if (usesBrowserSession(previous.vendorId) || usesOAuth(previous.vendorId)) {
+    if (usesBrowserSession(previous.vendorId) || usesLocalApp(previous.vendorId)) {
       return yield* fail(
-        `${connectionDefinition(previous.vendorId).displayName} has no token to replace. Sign in again from the Connections screen instead.`,
+        `${connectionDefinition(previous.vendorId).displayName} has no token to replace. Choose accounts under Settings, Integrations, Email instead.`,
       );
     }
     const values = yield* validateCredentials(previous.vendorId, input.credentials);
@@ -673,6 +728,7 @@ export const make = Effect.gen(function* () {
     list,
     connect: (input) => mutationLock.withPermit(connectUnlocked(input)),
     connectMailbox: (input) => mutationLock.withPermit(connectMailboxUnlocked(input)),
+    connectLocalMailbox: (input) => mutationLock.withPermit(connectLocalMailboxUnlocked(input)),
     browserConnect: (input, viewerSessionId) =>
       mutationLock.withPermit(browserConnectUnlocked(input, viewerSessionId)),
     setSettings: (input) => mutationLock.withPermit(setSettingsUnlocked(input)),
@@ -690,19 +746,8 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(PersonalConnectionService, make);
-/**
- * What the mail adapters need from the owner's sign-in: the client settings, the
- * provider's endpoints and the access-token cache. They are also what the
- * sign-in service reads, so this step exposes them rather than hiding them.
- */
-const EmailServicesLive = Layer.mergeAll(
-  EmailTokenBrokerLayer.layer.pipe(Layer.provideMerge(EmailOAuthClientsLayer.layer)),
-  EmailOAuthHttpLayer.layerFetch,
-  EmailOAuthEndpointsLayer.layer,
-).pipe(Layer.provide(CredentialStore.layer));
-
 const ThunderbirdLive = CommonpostClientLayer.layer().pipe(
-  Layer.provideMerge(ThunderbirdProcessLayer.layerLive),
+  Layer.provideMerge(ThunderbirdProcessLayer.layerLive()),
 );
 
 export const layerLive = layer.pipe(
@@ -710,6 +755,5 @@ export const layerLive = layer.pipe(
   Layer.provideMerge(CredentialStore.layer),
   Layer.provideMerge(VendorAdapters.layer),
   Layer.provideMerge(ThunderbirdLive),
-  Layer.provideMerge(EmailServicesLive),
   Layer.provideMerge(MachineImport.layer),
 );

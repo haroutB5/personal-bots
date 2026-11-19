@@ -56,8 +56,8 @@ describe("personal connection catalog", () => {
       gmail: {
         vendorId: "gmail",
         displayName: "Gmail",
-        authKind: "oauth",
-        requiredCredentialFields: ["refreshToken"],
+        authKind: "local-app",
+        requiredCredentialFields: [],
         tokenPageUrl: "https://mail.google.com/",
         requiredScopes: [],
         multiAccount: true,
@@ -75,8 +75,8 @@ describe("personal connection catalog", () => {
       outlook: {
         vendorId: "outlook",
         displayName: "Outlook",
-        authKind: "oauth",
-        requiredCredentialFields: ["refreshToken"],
+        authKind: "local-app",
+        requiredCredentialFields: [],
         tokenPageUrl: "https://outlook.live.com/mail/",
         requiredScopes: [],
         multiAccount: true,

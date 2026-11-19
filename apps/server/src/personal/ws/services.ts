@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
 import * as PersonalConnectionApprovalService from "../connections/approvalService.ts";
-import * as EmailSignIn from "../connections/email/signIn.ts";
+import * as ThunderbirdSetup from "../connections/email/thunderbird/setup.ts";
 import * as PersonalConnectionService from "../connections/service.ts";
 import { PersonalProvidersV2Live } from "../engine/PersonalProvidersV2Live.ts";
 import { layer as PersonalPrewarmSessionLayer } from "../engine/PersonalPrewarmSession.ts";
@@ -30,7 +30,7 @@ export const makePersonalWsServices = () =>
     const secrets = yield* PersonalSecretService.PersonalSecretService;
     const logins = yield* PersonalLoginService.PersonalLoginService;
     const connections = yield* PersonalConnectionService.PersonalConnectionService;
-    const emailSignIn = yield* EmailSignIn.EmailSignIn;
+    const thunderbirdSetup = yield* ThunderbirdSetup.ThunderbirdSetup;
     const connectionApprovals =
       yield* PersonalConnectionApprovalService.PersonalConnectionApprovalService;
     const leadBots = yield* PersonalLeadBots.PersonalLeadBotService;
@@ -43,7 +43,7 @@ export const makePersonalWsServices = () =>
       secrets,
       logins,
       connections,
-      emailSignIn,
+      thunderbirdSetup,
       connectionApprovals,
       leadBots,
       routines,
@@ -72,7 +72,7 @@ export const personalWsProvisionLayer = (services: PersonalWsServices) =>
     Layer.succeed(PersonalSecretService.PersonalSecretService, services.secrets),
     Layer.succeed(PersonalLoginService.PersonalLoginService, services.logins),
     Layer.succeed(PersonalConnectionService.PersonalConnectionService, services.connections),
-    Layer.succeed(EmailSignIn.EmailSignIn, services.emailSignIn),
+    Layer.succeed(ThunderbirdSetup.ThunderbirdSetup, services.thunderbirdSetup),
     Layer.succeed(
       PersonalConnectionApprovalService.PersonalConnectionApprovalService,
       services.connectionApprovals,

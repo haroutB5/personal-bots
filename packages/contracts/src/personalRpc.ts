@@ -146,15 +146,14 @@ import {
   PersonalConnectionValidationResult,
   PersonalConnectionBrowserConnectInput,
   PersonalConnectionBrowserConnectResult,
-  PersonalEmailOAuthClientInput,
-  PersonalEmailOAuthClientResult,
-  PersonalGmailExchangeCodeInput,
-  PersonalGmailExchangeCodeResult,
-  PersonalOutlookDevicePollInput,
-  PersonalOutlookDevicePollResult,
-  PersonalOutlookDeviceStartResult,
   PersonalConnectionSettingsInput,
 } from "./personalConnections.ts";
+import {
+  PersonalEmailStartResult,
+  PersonalEmailStatus,
+  PersonalEmailUseAccountsInput,
+  PersonalEmailUseAccountsResult,
+} from "./personalEmail.ts";
 import {
   PersonalLoginsError,
   PersonalLogin,
@@ -716,40 +715,22 @@ const WsPersonalConnectionsBrowserConnectRpc = Rpc.make(
     error: PersonalConnectionsRpcError,
   },
 );
-/** Owner-only. Saves the sign-in application the owner made at Google or Microsoft, after checking it. */
-const WsPersonalConnectionsSetOAuthClientRpc = Rpc.make(
-  WS_METHODS.personalConnectionsSetOAuthClient,
-  {
-    payload: PersonalEmailOAuthClientInput,
-    success: PersonalEmailOAuthClientResult,
-    error: PersonalConnectionsRpcError,
-  },
-);
-/** The phone's Google sheet gave it a one-time code; the server swaps it for a lasting sign-in. */
-const WsPersonalConnectionsGmailExchangeCodeRpc = Rpc.make(
-  WS_METHODS.personalConnectionsGmailExchangeCode,
-  {
-    payload: PersonalGmailExchangeCodeInput,
-    success: PersonalGmailExchangeCodeResult,
-    error: PersonalConnectionsRpcError,
-  },
-);
-const WsPersonalConnectionsOutlookDeviceStartRpc = Rpc.make(
-  WS_METHODS.personalConnectionsOutlookDeviceStart,
-  {
-    payload: Schema.Struct({}),
-    success: PersonalOutlookDeviceStartResult,
-    error: PersonalConnectionsRpcError,
-  },
-);
-const WsPersonalConnectionsOutlookDevicePollRpc = Rpc.make(
-  WS_METHODS.personalConnectionsOutlookDevicePoll,
-  {
-    payload: PersonalOutlookDevicePollInput,
-    success: PersonalOutlookDevicePollResult,
-    error: PersonalConnectionsRpcError,
-  },
-);
+const WsPersonalEmailStatusRpc = Rpc.make(WS_METHODS.personalEmailStatus, {
+  payload: Schema.Struct({}),
+  success: PersonalEmailStatus,
+  error: PersonalConnectionsRpcError,
+});
+/** Owner-only. Writes the account allowlist and restarts Thunderbird to apply it. */
+const WsPersonalEmailUseAccountsRpc = Rpc.make(WS_METHODS.personalEmailUseAccounts, {
+  payload: PersonalEmailUseAccountsInput,
+  success: PersonalEmailUseAccountsResult,
+  error: PersonalConnectionsRpcError,
+});
+const WsPersonalEmailStartThunderbirdRpc = Rpc.make(WS_METHODS.personalEmailStartThunderbird, {
+  payload: Schema.Struct({}),
+  success: PersonalEmailStartResult,
+  error: PersonalConnectionsRpcError,
+});
 /** Owner-only. No bot-facing tool may change what the owner set here. */
 const WsPersonalConnectionsSetSettingsRpc = Rpc.make(WS_METHODS.personalConnectionsSetSettings, {
   payload: PersonalConnectionSettingsInput,
@@ -1225,13 +1206,12 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalConnectionsDisconnectRpc,
   WsPersonalConnectionsRotateRpc,
   WsPersonalConnectionsBrowserConnectRpc,
-  WsPersonalConnectionsSetOAuthClientRpc,
-  WsPersonalConnectionsGmailExchangeCodeRpc,
-  WsPersonalConnectionsOutlookDeviceStartRpc,
-  WsPersonalConnectionsOutlookDevicePollRpc,
   WsPersonalConnectionsSetSettingsRpc,
   WsPersonalConnectionsImportProbeRpc,
   WsPersonalConnectionsImportAdoptRpc,
+  WsPersonalEmailStatusRpc,
+  WsPersonalEmailUseAccountsRpc,
+  WsPersonalEmailStartThunderbirdRpc,
   WsPersonalConnectionApprovalsListRpc,
   WsPersonalConnectionApprovalsDecideRpc,
   WsPersonalConnectionApprovalsCancelRpc,
