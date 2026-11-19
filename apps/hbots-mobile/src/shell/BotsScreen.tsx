@@ -45,7 +45,6 @@ import {
 } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { pressChat } from "../personal/chatPress";
 import { reportPerf } from "../crash/crashReporter";
 import { noteStartMark, takeStartReport } from "../personal/startPerf";
 import { useBotShells } from "../personal/useBotShells";
@@ -734,7 +733,7 @@ export function BotsScreen({
     closeAllSwipeRows();
     const tap = botTapTarget(newestThreadId);
     if (tap.kind === "chat") {
-      pressChat(tap.threadId, () => onOpenChat(target.botId, tap.threadId));
+      onOpenChat(target.botId, tap.threadId);
     } else setNewChatBot(target);
   };
 
