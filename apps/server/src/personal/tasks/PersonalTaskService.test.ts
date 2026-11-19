@@ -4897,6 +4897,33 @@ describe("work record (1.60.41)", () => {
     },
   );
 
+  it.effect(
+    "a long chat whose session still runs background work resumes on reopen, and goes fresh once it ends",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        yield* seedBots;
+        const service = yield* PersonalTaskService.PersonalTaskService;
+        const reopenWith = (key: string, liveTaskIds: ReadonlyArray<string>) =>
+          Effect.gen(function* () {
+            const { root, thread } = yield* finishedRoot(harness, key, "Half done.");
+            yield* service.updateWorkRecord({ taskId: root.taskId, patch: { nextStep: "go on" } });
+            yield* reportContextTokens(harness, thread, 150_000);
+            harness.background.set(thread, new Set(liveTaskIds));
+            yield* service.steer({ taskId: root.taskId, fromName: "CTO", message: "Go on." });
+            yield* service.drain;
+            return startsOn(harness, thread).at(-1)!;
+          });
+        const running = yield* reopenWith("wr-bg-live", ["bg-build"]);
+        expect(running.message.text).not.toContain("Work record");
+        expect(markerOf(running).fresh).toBeUndefined();
+        const ended = yield* reopenWith("wr-bg-done", []);
+        expect(ended.message.text).toContain("Work record");
+        expect(markerOf(ended).fresh).toBe(true);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    },
+  );
+
   it.effect("a short chat, a task with no record, or the kill switch resumes as before", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
