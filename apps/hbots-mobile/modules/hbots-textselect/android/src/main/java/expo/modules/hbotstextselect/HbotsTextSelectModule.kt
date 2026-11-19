@@ -7,6 +7,9 @@ import android.text.Selection
 import android.text.Spannable
 import android.text.SpanWatcher
 import android.view.InputDevice
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -25,8 +28,7 @@ import expo.modules.kotlin.functions.Queues
  */
 class HbotsTextSelectModule : Module() {
   private val main = Handler(Looper.getMainLooper())
-  private val collapsedAt = java.util.WeakHashMap<TextView, Long>()
-  private val watchers = java.util.WeakHashMap<TextView, SelectionWatcher>()
+  private val trackers = java.util.WeakHashMap<TextView, Tracker>()
 
   override fun definition() = ModuleDefinition {
     Name("HbotsTextSelect")
@@ -84,33 +86,38 @@ class HbotsTextSelectModule : Module() {
   }
 
   /**
-   * Drops the reader's selection, handles and toolbar. True when there was a selection, or one
-   * collapsed an instant ago: Back closes the toolbar on key down, before the sheet sees it.
+   * Drops the reader's selection, handles and toolbar. True when there was a selection, or the
+   * system dismissed one: Back closes the toolbar before the sheet sees it.
    */
   private fun clearSelection(view: TextView): Boolean {
-    if (!hasSelection(view)) {
-      val collapsed = collapsedAt.remove(view) ?: return false
-      return SystemClock.uptimeMillis() - collapsed < COLLAPSE_WINDOW_MS
-    }
+    val tracker = trackers[view]
+    if (!hasSelection(view)) return tracker?.dismissal?.consume(SystemClock.uptimeMillis()) ?: false
+    tracker?.dismissal?.during(Cause.Cleared)
     (view.text as? Spannable)?.let { Selection.removeSelection(it) }
     view.clearFocus()
     view.setTextIsSelectable(false)
     view.setTextIsSelectable(true)
-    collapsedAt.remove(view)
+    tracker?.dismissal?.during(null)
     return true
   }
 
   private fun watch(view: TextView) {
-    val text = view.text as? Spannable ?: return
-    if (watchers[view]?.text === text) return
-    val watcher = SelectionWatcher(view, text)
-    watchers[view] = watcher
-    text.setSpan(watcher, 0, text.length, Spannable.SPAN_INCLUSIVE_INCLUSIVE)
+    val tracker = trackers.getOrPut(view) { Tracker(view) }
+    tracker.attach()
   }
 
-  /** Notes the moment a selection collapses to nothing. */
-  private inner class SelectionWatcher(private val view: TextView, val text: Spannable) : SpanWatcher {
-    private var active = false
+  private inner class Tracker(private val view: TextView) :
+    SpanWatcher, View.OnTouchListener, ActionMode.Callback {
+    val dismissal = Dismissal()
+
+    fun attach() {
+      val text = view.text as? Spannable ?: return
+      if (text.getSpans(0, text.length, Tracker::class.java).none { it === this }) {
+        text.setSpan(this, 0, text.length, Spannable.SPAN_INCLUSIVE_INCLUSIVE)
+      }
+      view.setOnTouchListener(this)
+      view.customSelectionActionModeCallback = this
+    }
 
     override fun onSpanAdded(text: Spannable, what: Any, start: Int, end: Int) = check(what)
 
@@ -121,11 +128,30 @@ class HbotsTextSelectModule : Module() {
     ) = check(what)
 
     private fun check(what: Any) {
-      if (what !== Selection.SELECTION_START && what !== Selection.SELECTION_END) return
-      val now = hasSelection(view)
-      if (active && !now) collapsedAt[view] = SystemClock.uptimeMillis()
-      active = now
+      if (what === Selection.SELECTION_START || what === Selection.SELECTION_END) {
+        dismissal.selectionChanged(hasSelection(view), SystemClock.uptimeMillis())
+      }
     }
+
+    override fun onTouch(v: View, event: MotionEvent): Boolean {
+      when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> dismissal.during(Cause.Touch)
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> main.post { dismissal.during(null) }
+      }
+      return false
+    }
+
+    override fun onCreateActionMode(mode: ActionMode, menu: Menu) = true
+
+    override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = true
+
+    override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+      dismissal.during(Cause.Item)
+      main.post { dismissal.during(null) }
+      return false
+    }
+
+    override fun onDestroyActionMode(mode: ActionMode) = Unit
   }
 
   private fun hasSelection(view: TextView): Boolean {
@@ -185,7 +211,6 @@ class HbotsTextSelectModule : Module() {
 
   private companion object {
     const val SETTLE_MS = 250L
-    const val COLLAPSE_WINDOW_MS = 1500L
     const val LONG_PRESS_MARGIN_MS = 80L
   }
 }
