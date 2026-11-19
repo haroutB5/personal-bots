@@ -35,6 +35,10 @@ import * as Adapters from "./adapters.ts";
 import * as VendorAdapters from "./vendors/layer.ts";
 import { connectionDefinition, usesBrowserSession, usesOAuth } from "./catalog.ts";
 import * as CredentialStore from "./credentialStore.ts";
+import * as EmailOAuthClientsLayer from "./email/oauthClients.ts";
+import * as EmailOAuthEndpointsLayer from "./email/oauthEndpoints.ts";
+import * as EmailOAuthHttpLayer from "./email/oauthHttp.ts";
+import * as EmailTokenBrokerLayer from "./email/tokenBroker.ts";
 import * as MachineImport from "./machineImport.ts";
 import { scrubCredentialValues } from "./operations.ts";
 import * as Repository from "./repository.ts";
@@ -684,9 +688,21 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(PersonalConnectionService, make);
+/**
+ * What the mail adapters need from the owner's sign-in: the client settings, the
+ * provider's endpoints and the access-token cache. They are also what the
+ * sign-in service reads, so this step exposes them rather than hiding them.
+ */
+const EmailServicesLive = Layer.mergeAll(
+  EmailTokenBrokerLayer.layer.pipe(Layer.provideMerge(EmailOAuthClientsLayer.layer)),
+  EmailOAuthHttpLayer.layerFetch,
+  EmailOAuthEndpointsLayer.layer,
+).pipe(Layer.provide(CredentialStore.layer));
+
 export const layerLive = layer.pipe(
   Layer.provideMerge(Repository.layer),
   Layer.provideMerge(CredentialStore.layer),
   Layer.provideMerge(VendorAdapters.layer),
+  Layer.provideMerge(EmailServicesLive),
   Layer.provideMerge(MachineImport.layer),
 );

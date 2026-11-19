@@ -12,9 +12,6 @@ import * as PersonalBotTokenUsage from "./PersonalBotTokenUsageService.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalClaudeCodeReview from "./claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalConnectionApprovalService from "./connections/approvalService.ts";
-import * as EmailOAuthClients from "./connections/email/oauthClients.ts";
-import * as EmailOAuthEndpoints from "./connections/email/oauthEndpoints.ts";
-import * as EmailOAuthHttp from "./connections/email/oauthHttp.ts";
 import * as EmailPendingDevices from "./connections/email/pendingDevices.ts";
 import * as EmailSignIn from "./connections/email/signIn.ts";
 import * as PersonalConnectionService from "./connections/service.ts";
@@ -202,19 +199,12 @@ const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
 
 /**
  * The connection service with the email sign-in that consumes it, as ONE step:
- * the chain below is at its 20-step limit. Sign-in reads the client settings,
- * the unfinished Microsoft sign-ins and the provider's endpoints, and the
- * client settings sit in the credential store the connection layer provides.
+ * the chain below is at its 20-step limit. Sign-in reads the unfinished
+ * Microsoft sign-ins it owns and the client settings and endpoints the
+ * connection layer exposes.
  */
 const PersonalConnectionsWithEmailLive = EmailSignIn.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      EmailOAuthClients.layer,
-      EmailPendingDevices.layer,
-      EmailOAuthHttp.layerFetch,
-      EmailOAuthEndpoints.layer,
-    ),
-  ),
+  Layer.provideMerge(EmailPendingDevices.layer),
   Layer.provideMerge(PersonalConnectionService.layerLive),
 );
 
