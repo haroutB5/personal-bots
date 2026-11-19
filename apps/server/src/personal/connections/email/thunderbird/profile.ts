@@ -100,3 +100,29 @@ export const serverKeyOf = (prefsJs: string, accountId: string): string | null =
   }
   return null;
 };
+
+const ALLOWED_LINE = /^user_pref\("extensions\.commonpost-mcp\.allowedAccounts", (".*")\);$/m;
+const OFFLINE_LINE = /^user_pref\("mail\.server\.([A-Za-z0-9_]+)\.offline_download", true\);$/gm;
+
+/**
+ * The owner's choices already written in a `user.js`, so a reinstall puts the
+ * same ones back instead of asking again.
+ */
+export const keptSettings = (userJs: string): UserJsOptions => {
+  const allowed = ALLOWED_LINE.exec(userJs)?.[1];
+  let allowedAccounts: ReadonlyArray<string> | undefined;
+  if (allowed !== undefined) {
+    try {
+      const inner: unknown = JSON.parse(JSON.parse(allowed) as string);
+      if (Array.isArray(inner) && inner.every((id) => typeof id === "string")) {
+        allowedAccounts = inner as ReadonlyArray<string>;
+      }
+    } catch {
+      allowedAccounts = undefined;
+    }
+  }
+  const offlineServers = [...userJs.matchAll(OFFLINE_LINE)].flatMap((match) =>
+    match[1] === undefined ? [] : [match[1]],
+  );
+  return { allowedAccounts, offlineServers };
+};

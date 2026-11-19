@@ -94,3 +94,22 @@ describe("serverKeyOf", () => {
     expect(serverKeyOf(prefs, "account2")).toBeNull();
   });
 });
+
+describe("keptSettings", () => {
+  it("reads back exactly what renderUserJs wrote", () => {
+    const options = { allowedAccounts: ["account1", "account3"], offlineServers: ["server1"] };
+    expect(keptSettings(renderUserJs(options))).toEqual(options);
+  });
+
+  it("finds nothing in the base file", () => {
+    expect(keptSettings(renderUserJs())).toEqual({
+      allowedAccounts: undefined,
+      offlineServers: [],
+    });
+  });
+
+  it("ignores an allowlist that is not a list of ids", () => {
+    const text = 'user_pref("extensions.commonpost-mcp.allowedAccounts", "{\\"a\\":1}");\n';
+    expect(keptSettings(text).allowedAccounts).toBeUndefined();
+  });
+});
