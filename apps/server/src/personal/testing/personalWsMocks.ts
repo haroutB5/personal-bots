@@ -12,6 +12,7 @@ import * as PersonalBotShellStream from "../PersonalBotShellStream.ts";
 import * as PersonalBotTokenUsage from "../PersonalBotTokenUsageService.ts";
 import * as PersonalBrowser from "../browser/PersonalBrowser.ts";
 import * as PersonalConnectionApprovalService from "../connections/approvalService.ts";
+import * as EmailSignIn from "../connections/email/signIn.ts";
 import * as PersonalConnectionService from "../connections/service.ts";
 import * as PersonalDesktop from "../desktop/PersonalDesktop.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
@@ -41,6 +42,7 @@ export const layerUnusedPersonalWsServices = Layer.mergeAll(
   Layer.mock(PersonalBrowser.PersonalBrowser)({}),
   Layer.mock(PersonalConnectionApprovalService.PersonalConnectionApprovalService)({}),
   Layer.mock(PersonalConnectionService.PersonalConnectionService)({}),
+  Layer.mock(EmailSignIn.EmailSignIn)({}),
   Layer.mock(PersonalDesktop.PersonalDesktop)({ available: false }),
   Layer.mock(PersonalEngine.PersonalEngine)({}),
   Layer.mock(PersonalGroupService.PersonalGroupService)({}),

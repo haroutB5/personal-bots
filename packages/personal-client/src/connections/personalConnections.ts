@@ -73,6 +73,29 @@ export function createPersonalConnectionsClient<R, ER, P>(
     onSuccess: refreshConnections,
   });
 
+  const personalConnectionSetOAuthClient = createEnvironmentRpcCommand(runtime, {
+    label: "personal-connections:set-oauth-client",
+    tag: WS_METHODS.personalConnectionsSetOAuthClient,
+    onSuccess: refreshConnections,
+  });
+
+  const personalConnectionGmailExchangeCode = createEnvironmentRpcCommand(runtime, {
+    label: "personal-connections:gmail-exchange-code",
+    tag: WS_METHODS.personalConnectionsGmailExchangeCode,
+    onSuccess: refreshConnections,
+  });
+
+  const personalConnectionOutlookDeviceStart = createEnvironmentRpcCommand(runtime, {
+    label: "personal-connections:outlook-device-start",
+    tag: WS_METHODS.personalConnectionsOutlookDeviceStart,
+  });
+
+  const personalConnectionOutlookDevicePoll = createEnvironmentRpcCommand(runtime, {
+    label: "personal-connections:outlook-device-poll",
+    tag: WS_METHODS.personalConnectionsOutlookDevicePoll,
+    onSuccess: refreshConnections,
+  });
+
   const personalConnectionSetSettings = createEnvironmentRpcCommand(runtime, {
     label: "personal-connections:set-settings",
     tag: WS_METHODS.personalConnectionsSetSettings,
@@ -107,6 +130,10 @@ export function createPersonalConnectionsClient<R, ER, P>(
     personalConnectionDisconnect,
     personalConnectionRotate,
     personalConnectionBrowserConnect,
+    personalConnectionSetOAuthClient,
+    personalConnectionGmailExchangeCode,
+    personalConnectionOutlookDeviceStart,
+    personalConnectionOutlookDevicePoll,
     personalConnectionSetSettings,
     personalConnectionImportProbe,
     personalConnectionImportAdopt,

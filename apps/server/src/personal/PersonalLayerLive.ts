@@ -12,6 +12,11 @@ import * as PersonalBotTokenUsage from "./PersonalBotTokenUsageService.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalClaudeCodeReview from "./claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalConnectionApprovalService from "./connections/approvalService.ts";
+import * as EmailOAuthClients from "./connections/email/oauthClients.ts";
+import * as EmailOAuthEndpoints from "./connections/email/oauthEndpoints.ts";
+import * as EmailOAuthHttp from "./connections/email/oauthHttp.ts";
+import * as EmailPendingDevices from "./connections/email/pendingDevices.ts";
+import * as EmailSignIn from "./connections/email/signIn.ts";
 import * as PersonalConnectionService from "./connections/service.ts";
 import * as WhatsAppSendLog from "./connections/whatsapp/sendLog.ts";
 import * as WhatsAppSession from "./connections/whatsapp/session.ts";
@@ -196,6 +201,24 @@ const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
 );
 
 /**
+ * The connection service with the email sign-in that consumes it, as ONE step:
+ * the chain below is at its 20-step limit. Sign-in reads the client settings,
+ * the unfinished Microsoft sign-ins and the provider's endpoints, and the
+ * client settings sit in the credential store the connection layer provides.
+ */
+const PersonalConnectionsWithEmailLive = EmailSignIn.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      EmailOAuthClients.layer,
+      EmailPendingDevices.layer,
+      EmailOAuthHttp.layerFetch,
+      EmailOAuthEndpoints.layer,
+    ),
+  ),
+  Layer.provideMerge(PersonalConnectionService.layerLive),
+);
+
+/**
  * Every personal service the running server provides, as one step. Consumers
  * sit before their dependencies because a later provideMerge step feeds the
  * requirements opened by an earlier one. The shared server supplies the
@@ -204,7 +227,7 @@ const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
 export const PersonalRuntimeLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PersonalLoginRequestService.layerLive),
   Layer.provideMerge(PersonalConnectionApprovalService.layerLive),
-  Layer.provideMerge(PersonalConnectionService.layerLive),
+  Layer.provideMerge(PersonalConnectionsWithEmailLive),
   Layer.provideMerge(Layer.mergeAll(WhatsAppSession.layer, WhatsAppSendLog.layer)),
   Layer.provideMerge(
     Layer.mergeAll(PersonalLoginService.layerLive, PersonalVoiceCallService.layerLive),

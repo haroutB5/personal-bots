@@ -336,4 +336,68 @@ describe("PersonalConnectionService", () => {
       expect(reconnect.message).toContain("Sign in again");
     }).pipe(Effect.provide(harness.layer));
   });
+
+  it.effect(
+    "connectMailbox adds a row per address and keeps its row when the owner signs in again",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const service = yield* Service.PersonalConnectionService;
+        const first = yield* service.connectMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+          displayName: "harout@gmail.com",
+          refreshToken: Redacted.make("1//0first"),
+        });
+        expect(first.status).toBe("connected");
+        expect(first.credentialVersion).toBe(1);
+        expect(first.account?.accountId).toBe("harout@gmail.com");
+        expect(JSON.stringify(first)).not.toContain("1//0first");
+
+        const other = yield* service.connectMailbox({
+          vendorId: "gmail",
+          address: "second@gmail.com",
+          displayName: "second@gmail.com",
+          refreshToken: Redacted.make("1//0second"),
+        });
+        expect(other.connectionId).not.toBe(first.connectionId);
+
+        const again = yield* service.connectMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+          displayName: "Harout",
+          refreshToken: Redacted.make("1//0replacement"),
+        });
+        expect(again.connectionId).toBe(first.connectionId);
+        expect(again.credentialVersion).toBe(2);
+        expect(again.account?.accountName).toBe("Harout");
+        expect(harness.rows.size).toBe(2);
+        // The retired login is gone and the new one is what resolves.
+        const stored = [...harness.secrets.values()].map((values) =>
+          Redacted.value(values["refreshToken"] ?? Redacted.make("")),
+        );
+        expect(stored.sort()).toEqual(["1//0replacement", "1//0second"]);
+        expect(
+          Option.getOrThrow(yield* service.resolveForOperation("gmail", "harout@gmail.com"))
+            .credentialVersion,
+        ).toBe(2);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect("connectMailbox removes the stored login when the row cannot be written", () => {
+    const harness = makeHarness({ failCreate: true });
+    return Effect.gen(function* () {
+      const service = yield* Service.PersonalConnectionService;
+      yield* service
+        .connectMailbox({
+          vendorId: "outlook",
+          address: "a@outlook.com",
+          displayName: "A",
+          refreshToken: Redacted.make("M.C-refresh"),
+        })
+        .pipe(Effect.flip);
+      expect(harness.secrets.size).toBe(0);
+    }).pipe(Effect.provide(harness.layer));
+  });
 });

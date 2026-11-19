@@ -117,8 +117,21 @@ export const PersonalConnectionCredentials = Schema.Record(
 );
 export type PersonalConnectionCredentials = typeof PersonalConnectionCredentials.Type;
 
+/**
+ * The public half of an owner's own sign-in application at a provider. The
+ * client id is not secret and the phone needs Google's to open its sign-in
+ * sheet; the secret itself never leaves the server.
+ */
+export const PersonalEmailOAuthClient = Schema.Struct({
+  vendorId: EmailVendorId,
+  clientId: TrimmedNonEmptyString,
+});
+export type PersonalEmailOAuthClient = typeof PersonalEmailOAuthClient.Type;
+
 export const PersonalConnectionListResult = Schema.Struct({
   connections: Schema.Array(PersonalConnection),
+  /** Which mail providers the owner has finished the one-time setup for. */
+  oauthClients: Schema.Array(PersonalEmailOAuthClient),
 });
 export type PersonalConnectionListResult = typeof PersonalConnectionListResult.Type;
 
@@ -171,6 +184,69 @@ export const PersonalConnectionBrowserConnectResult = Schema.Struct({
 });
 export type PersonalConnectionBrowserConnectResult =
   typeof PersonalConnectionBrowserConnectResult.Type;
+
+/**
+ * The one-time setup values, pasted once. Google's web client has a secret;
+ * Microsoft's public client has none, and the union makes that the only shape
+ * each can take.
+ */
+export const PersonalEmailOAuthClientInput = Schema.Union([
+  Schema.Struct({
+    vendorId: Schema.Literal("gmail"),
+    clientId: TrimmedNonEmptyString,
+    clientSecret: Schema.Redacted(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    vendorId: Schema.Literal("outlook"),
+    clientId: TrimmedNonEmptyString,
+  }),
+]);
+export type PersonalEmailOAuthClientInput = typeof PersonalEmailOAuthClientInput.Type;
+
+/**
+ * `problem` is set when the values were refused, in the owner's words, so the
+ * setup step can say what to fix. A refusal is an answer, not a failed call.
+ */
+export const PersonalEmailOAuthClientResult = Schema.Struct({
+  vendorId: EmailVendorId,
+  saved: Schema.Boolean,
+  problem: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PersonalEmailOAuthClientResult = typeof PersonalEmailOAuthClientResult.Type;
+
+/** The one-time code Google's sign-in sheet gave the phone. It is single use and short lived. */
+export const PersonalGmailExchangeCodeInput = Schema.Struct({
+  serverAuthCode: Schema.Redacted(TrimmedNonEmptyString),
+});
+export type PersonalGmailExchangeCodeInput = typeof PersonalGmailExchangeCodeInput.Type;
+
+export const PersonalGmailExchangeCodeResult = Schema.Struct({ connection: PersonalConnection });
+export type PersonalGmailExchangeCodeResult = typeof PersonalGmailExchangeCodeResult.Type;
+
+export const PersonalOutlookDeviceStartResult = Schema.Struct({
+  /** Opaque. The phone hands it back to poll; it is not the device code. */
+  signInId: TrimmedNonEmptyString,
+  userCode: TrimmedNonEmptyString,
+  verificationUri: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtcFromString,
+  intervalSec: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export type PersonalOutlookDeviceStartResult = typeof PersonalOutlookDeviceStartResult.Type;
+
+export const PersonalOutlookDevicePollInput = Schema.Struct({ signInId: TrimmedNonEmptyString });
+export type PersonalOutlookDevicePollInput = typeof PersonalOutlookDevicePollInput.Type;
+
+export const PersonalOutlookDevicePollResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("pending"),
+    intervalSec: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  }),
+  Schema.Struct({ _tag: Schema.Literal("connected"), connection: PersonalConnection }),
+  Schema.Struct({ _tag: Schema.Literal("expired") }),
+  Schema.Struct({ _tag: Schema.Literal("declined") }),
+  Schema.Struct({ _tag: Schema.Literal("failed"), problem: TrimmedNonEmptyString }),
+]);
+export type PersonalOutlookDevicePollResult = typeof PersonalOutlookDevicePollResult.Type;
 
 export const PersonalConnectionSettingsInput = Schema.Struct({
   connectionId: ConnectionId,

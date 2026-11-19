@@ -19,6 +19,7 @@ import {
   type PersonalConnectionSettingsInput,
   type PersonalConnectionValidateInput,
   type PersonalConnectionValidationResult,
+  type EmailVendorId,
   type PersonalConnectionVendorId,
   isEmailVendorId,
 } from "@t3tools/contracts";
@@ -50,12 +51,33 @@ export interface ResolvedPersonalConnection {
   readonly settings: PersonalConnectionSettings;
 }
 
+/** A mailbox the owner has just signed in at the provider. The refresh token is the only secret. */
+export interface ConnectMailboxInput {
+  readonly vendorId: EmailVendorId;
+  /** Lower-case, as the provider reported it. One row per (vendor, address). */
+  readonly address: string;
+  readonly displayName: string;
+  readonly refreshToken: Redacted.Redacted<string>;
+}
+
 export class PersonalConnectionService extends Context.Service<
   PersonalConnectionService,
   {
-    readonly list: () => Effect.Effect<PersonalConnectionListResult, PersonalConnectionsError>;
+    readonly list: () => Effect.Effect<
+      Omit<PersonalConnectionListResult, "oauthClients">,
+      PersonalConnectionsError
+    >;
     readonly connect: (
       input: PersonalConnectionConnectInput,
+    ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
+    /**
+     * Records a mailbox the provider just confirmed. Signing in again as an
+     * address that already has a row replaces its saved login and keeps the row,
+     * so approvals and settings tied to it carry over and the old login is
+     * retired only after the new one is stored.
+     */
+    readonly connectMailbox: (
+      input: ConnectMailboxInput,
     ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
     /**
      * The browser-session way in: the server opens the vendor's site in the
@@ -311,6 +333,66 @@ export const make = Effect.gen(function* () {
       ),
     );
     return Repository.presentConnection(stored);
+  });
+
+  const connectMailboxUnlocked = Effect.fn("PersonalConnectionService.connectMailbox")(function* (
+    input: ConnectMailboxInput,
+  ) {
+    const values = { refreshToken: input.refreshToken };
+    const existing = yield* db("lookup", repository.getByAccount(input.vendorId, input.address));
+    const now = yield* DateTime.now;
+    const account = {
+      accountId: input.address,
+      accountName: input.displayName,
+      teamId: null,
+      teamName: null,
+    };
+    if (Option.isSome(existing)) {
+      const previous = existing.value;
+      const previousHandle = {
+        credentialRef: previous.credentialRef,
+        version: previous.credentialVersion,
+      };
+      const nextHandle = yield* secret(credentials.createNext(previousHandle, values));
+      const next: Repository.StoredPersonalConnection = {
+        ...previous,
+        status: "connected",
+        account,
+        lastValidatedAt: now,
+        credentialRef: nextHandle.credentialRef,
+        credentialVersion: nextHandle.version,
+        updatedAt: now,
+      };
+      yield* write(next).pipe(
+        Effect.tapError(() => credentials.remove(nextHandle).pipe(Effect.ignore)),
+      );
+      yield* credentials
+        .remove(previousHandle)
+        .pipe(
+          Effect.catch(() =>
+            Effect.logWarning("Could not remove a retired connection credential."),
+          ),
+        );
+      return Repository.presentConnection(next);
+    }
+    const stored = yield* secret(credentials.create(values));
+    const row: Repository.StoredPersonalConnection = {
+      connectionId: ConnectionId.make(NodeCrypto.randomUUID()),
+      vendorId: input.vendorId,
+      status: "connected",
+      account,
+      verifiedCapabilities: [],
+      settings: defaultSettingsFor(input.vendorId),
+      credentialRef: stored.credentialRef,
+      credentialVersion: stored.version,
+      lastValidatedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* db("create", repository.create(row)).pipe(
+      Effect.tapError(() => credentials.remove(stored).pipe(Effect.ignore)),
+    );
+    return Repository.presentConnection(row);
   });
 
   const validateUnlocked = Effect.fn("PersonalConnectionService.validate")(function* (
@@ -584,6 +666,7 @@ export const make = Effect.gen(function* () {
   return PersonalConnectionService.of({
     list,
     connect: (input) => mutationLock.withPermit(connectUnlocked(input)),
+    connectMailbox: (input) => mutationLock.withPermit(connectMailboxUnlocked(input)),
     browserConnect: (input, viewerSessionId) =>
       mutationLock.withPermit(browserConnectUnlocked(input, viewerSessionId)),
     setSettings: (input) => mutationLock.withPermit(setSettingsUnlocked(input)),

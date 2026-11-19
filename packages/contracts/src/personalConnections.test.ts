@@ -8,6 +8,9 @@ import {
   PersonalConnection,
   PersonalConnectionConnectInput,
   PersonalConnectionListResult,
+  PersonalEmailOAuthClientInput,
+  PersonalGmailExchangeCodeInput,
+  PersonalOutlookDevicePollResult,
 } from "./personalConnections.ts";
 
 const TOKEN = "fake-connection-token-that-must-not-leak";
@@ -59,10 +62,45 @@ describe("personal connection contracts", () => {
     });
     const encoded = Schema.encodeSync(Schema.fromJsonString(PersonalConnectionListResult))({
       connections: [connection],
+      oauthClients: [{ vendorId: "outlook", clientId: "11111111-2222-3333-4444-555555555555" }],
     });
 
     expect(encoded).not.toContain("credentialRef");
     expect(encoded).not.toContain("credentials");
     expect(encoded).not.toContain(TOKEN);
+  });
+
+  it("decodes the Google client secret and one-time code as redacted values", () => {
+    const client = Schema.decodeSync(Schema.toCodecJson(PersonalEmailOAuthClientInput))({
+      vendorId: "gmail",
+      clientId: "123456789012-abc.apps.googleusercontent.com",
+      clientSecret: TOKEN,
+    });
+    expect(client.vendorId).toBe("gmail");
+    if (client.vendorId === "gmail") {
+      expect(Redacted.isRedacted(client.clientSecret)).toBe(true);
+      expect(String(client.clientSecret)).not.toContain(TOKEN);
+    }
+    const exchange = Schema.decodeSync(Schema.toCodecJson(PersonalGmailExchangeCodeInput))({
+      serverAuthCode: TOKEN,
+    });
+    expect(Redacted.value(exchange.serverAuthCode)).toBe(TOKEN);
+  });
+
+  it("gives Microsoft's public client no secret to send", () => {
+    const decode = Schema.decodeUnknownSync(Schema.toCodecJson(PersonalEmailOAuthClientInput));
+    expect(
+      decode({ vendorId: "outlook", clientId: "11111111-2222-3333-4444-555555555555" }),
+    ).toEqual({ vendorId: "outlook", clientId: "11111111-2222-3333-4444-555555555555" });
+    expect(() => decode({ vendorId: "gmail", clientId: "x" })).toThrow();
+  });
+
+  it("names every state a device sign-in poll can be in", () => {
+    const decode = Schema.decodeUnknownSync(PersonalOutlookDevicePollResult);
+    expect(decode({ _tag: "pending", intervalSec: 5 })._tag).toBe("pending");
+    expect(decode({ _tag: "expired" })._tag).toBe("expired");
+    expect(decode({ _tag: "declined" })._tag).toBe("declined");
+    expect(decode({ _tag: "failed", problem: "x" })._tag).toBe("failed");
+    expect(() => decode({ _tag: "maybe" })).toThrow();
   });
 });
