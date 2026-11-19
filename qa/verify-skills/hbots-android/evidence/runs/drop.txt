@@ -1,0 +1,83 @@
+heavy-job: waiting (4 slots busy or under 6 GB free); holders:
+pid=1311846 started=2026-11-19T10:18:25+00:00 label=verify2 reopen tsc cwd=/home/harout/Claude/AI/_wt/verify2-reopen-bg/apps/server slot=1.lock
+pid=1271590 started=2026-11-19T10:04:54+00:00 label=rainhb-android-emulator cwd=/home/harout/Claude/AI/rainhb-android slot=2.lock
+pid=1305905 started=2026-11-19T10:16:36+00:00 label=pom-tsc03-server cwd=/home/harout/Claude/AI/_wt/perf-open-measure/apps/server slot=3.lock
+pid=1306683 started=2026-11-19T10:18:04+00:00 label=rainhb-widget-gates cwd=/home/harout/Claude/AI/rainhb-android slot=4.lock
+gate: heavy-job: waiting (4 slots busy or under 6 GB free); holders:
+pid=1311846 started=2026-11-19T10:18:25+00:00 label=verify2 reopen tsc cwd=/home/harout/Claude/AI/_wt/verify2-reopen-bg/apps/server slot=1.lock
+pid=1271590 started=2026-11-19T10:04:54+00:00 label=rainhb-android-emulator cwd=/home/harout/Claude/AI/rainhb-android slot=2.lock
+pid=1305905 started=2026-11-19T10:16:36+00:00 label=pom-tsc03-server cwd=/home/harout/Claude/AI/_wt/perf-open-measure/apps/server slot=3.lock
+pid=1306683 started=2026-11-19T10:18:04+00:00 label=rainhb-widget-gates cwd=/home/harout/Claude/AI/rainhb-android slot=4.lock
+gate: heavy-job: waiting (4 slots busy or under 6 GB free); holders:
+pid=1311846 started=2026-11-19T10:18:25+00:00 label=verify2 reopen tsc cwd=/home/harout/Claude/AI/_wt/verify2-reopen-bg/apps/server slot=1.lock
+pid=1271590 started=2026-11-19T10:04:54+00:00 label=rainhb-android-emulator cwd=/home/harout/Claude/AI/rainhb-android slot=2.lock
+pid=1305905 started=2026-11-19T10:16:36+00:00 label=pom-tsc03-server cwd=/home/harout/Claude/AI/_wt/perf-open-measure/apps/server slot=3.lock
+pid=1306683 started=2026-11-19T10:18:04+00:00 label=rainhb-widget-gates cwd=/home/harout/Claude/AI/rainhb-android slot=4.lock
+gate: heavy-job: waiting (4 slots busy or under 6 GB free); holders:
+pid=1311846 started=2026-11-19T10:18:25+00:00 label=verify2 reopen tsc cwd=/home/harout/Claude/AI/_wt/verify2-reopen-bg/apps/server slot=1.lock
+pid=1271590 started=2026-11-19T10:04:54+00:00 label=rainhb-android-emulator cwd=/home/harout/Claude/AI/rainhb-android slot=2.lock
+pid=1305905 started=2026-11-19T10:16:36+00:00 label=pom-tsc03-server cwd=/home/harout/Claude/AI/_wt/perf-open-measure/apps/server slot=3.lock
+pid=1306683 started=2026-11-19T10:18:04+00:00 label=rainhb-widget-gates cwd=/home/harout/Claude/AI/rainhb-android slot=4.lock
+gate: heavy-job: waiting (4 slots busy or under 6 GB free); holders:
+pid=1311846 started=2026-11-19T10:18:25+00:00 label=verify2 reopen tsc cwd=/home/harout/Claude/AI/_wt/verify2-reopen-bg/apps/server slot=1.lock
+pid=1271590 started=2026-11-19T10:04:54+00:00 label=rainhb-android-emulator cwd=/home/harout/Claude/AI/rainhb-android slot=2.lock
+pid=1305905 started=2026-11-19T10:16:36+00:00 label=pom-tsc03-server cwd=/home/harout/Claude/AI/_wt/perf-open-measure/apps/server slot=3.lock
+pid=1314848 started=2026-11-19T10:19:29+00:00 label=rainhb-widget-gates cwd=/home/harout/Claude/AI/rainhb-android slot=4.lock
+gate: heavy-job: waiting (4 slots busy or under 6 GB free); holders:
+pid=1311846 started=2026-11-19T10:18:25+00:00 label=verify2 reopen tsc cwd=/home/harout/Claude/AI/_wt/verify2-reopen-bg/apps/server slot=1.lock
+pid=1271590 started=2026-11-19T10:04:54+00:00 label=rainhb-android-emulator cwd=/home/harout/Claude/AI/rainhb-android slot=2.lock
+pid=1305905 started=2026-11-19T10:16:36+00:00 label=pom-tsc03-server cwd=/home/harout/Claude/AI/_wt/perf-open-measure/apps/server slot=3.lock
+pid=1314848 started=2026-11-19T10:19:29+00:00 label=rainhb-widget-gates cwd=/home/harout/Claude/AI/rainhb-android slot=4.lock
+gate: heavy-job: waiting (4 slots busy or under 6 GB free); holders:
+pid=1311846 started=2026-11-19T10:18:25+00:00 label=verify2 reopen tsc cwd=/home/harout/Claude/AI/_wt/verify2-reopen-bg/apps/server slot=1.lock
+pid=1271590 started=2026-11-19T10:04:54+00:00 label=rainhb-android-emulator cwd=/home/harout/Claude/AI/rainhb-android slot=2.lock
+pid=1305905 started=2026-11-19T10:16:36+00:00 label=pom-tsc03-server cwd=/home/harout/Claude/AI/_wt/perf-open-measure/apps/server slot=3.lock
+pid=1314848 started=2026-11-19T10:19:29+00:00 label=rainhb-widget-gates cwd=/home/harout/Claude/AI/rainhb-android slot=4.lock
+gate: heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android f91e7a04afa4 2026-11-19T10:20:17Z label drop, run r20261119T101832-1312718, queue wait 105s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: ok   server binary 6e7bc80a84ea (read only)
+doctor: info checkout version 1.67.37 at f91e7a04afa4
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 102 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+{"up":true,"pid":1322676,"port":34671,"release":"6e7bc80a84ea"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T101832-1312718.service; invocation ID: ac722a1dc4304a978de572d8753ea3e5
+tunnel: up, answered http 200 from outside after 9 s
+10:22:28 apk app.apk sha256 4158c6fcd4db3751
+10:24:04 paired, app shows v1.67.37, setup 96 s
+10:24:46 flow 1 chat-send-reply PASS (31 s): sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify
+10:25:16 flow 7 swipe-quote PASS (21 s): reply bar quotes the reply excerpt (299 chars, a prefix of the full 1009)
+10:26:08 flow 9 long-press-reply PASS (44 s): long press on the sent 'LPRESS' and on the bot reply opened the menu, Reply showed the right name and text in the composer, the bot received the quote
+10:26:18 LINK LOST: link to the throwaway server lost at flow 3 (camera-entry-once): the tunnel unit pstack-hbots-verify-tunnel-r20261119T101832-1312718 is not running. Rig or tunnel connection dropped, not an app verdict. Flows 3,2,5,4,6,8 not judged. Rerun.
+10:26:19 SETUP FAILED (exit 2): link to the throwaway server lost at flow 3 (camera-entry-once): the tunnel unit pstack-hbots-verify-tunnel-r20261119T101832-1312718 is not running. Rig or tunnel connection dropped, not an app verdict. Flows 3,2,5,4,6,8 not judged. Rerun.
+stopped 1322676
+tunnel: pstack-hbots-verify-tunnel-r20261119T101832-1312718 inactive
+device: emulator pid 1317289 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): none
+heavy slot held during the run: omarchy-heavy-4.lock by pid 1312751 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-4.lock used by pid 1312751, now released, none of this run's processes holds it
+RESULT SETUP-FAIL (link to the throwaway server lost at flow 3 (camera-entry-once): the tunnel unit pstack-hbots-verify-tunnel-r20261119T101832-1312718 is not running. Rig or tunnel connection dropped, not an app verdic) in 467s total, 105s waiting for a heavy-job slot, 362s of work (emulator boot 102s, setup+drive 231s, flows 134s), device laptop, evidence /home/harout/Claude/AI/_wt/verify-hbots-android-r2/apps/hbots-mobile/.claude/skills/verify-hbots-android/.scratch/evidence/drop-20261119T102017Z

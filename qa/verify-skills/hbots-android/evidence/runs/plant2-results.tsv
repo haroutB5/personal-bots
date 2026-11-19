@@ -1,0 +1,9 @@
+1	chat-send-reply	PASS	26	sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify
+7	swipe-quote	PASS	24	reply bar quotes the reply excerpt (299 chars, a prefix of the full 1009)
+9	long-press-reply	FAIL	25	reply bar on the sent message does not name 'PlantedBreak' (shows ['You', 'LPRESS'])
+3	camera-entry-once	PASS	13	composer row holds only ['Add photos', 'Attach files', 'Message Developer…', 'Send'], plus sheet shows 'Camera' once
+2	pick-three-photos	PASS	26	tray showed 3 photos, the sent message shows 3 images, the bot got the 3 distinct picked files
+5	in-app-on-tasks-tab	PASS	22	Tasks tab showed Developer 'Working · …', then 'No bot is working right now.'; server logged path in-app and nothing else
+4	work-card-unread-only	PASS	39	1 card with Planner's unread question, none for the read Researcher question, none for Developer reports
+6	background-goes-push	PASS	27	server logged path push only with the app in the background; back in the app the Researcher row shows 'Slow job finished.'
+8	open-and-back-logcat-clean	PASS	30	Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid 3840 alive, FATAL 0, JS errors 0

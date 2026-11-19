@@ -1,0 +1,55 @@
+heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android f91e7a04afa4 2026-11-19T10:49:47Z label plant2, run r20261119T104947-1397256, queue wait 0s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: ok   server binary 6e7bc80a84ea (read only)
+doctor: info checkout version 1.67.37 at f91e7a04afa4
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 79 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+{"up":true,"pid":1401338,"port":34671,"release":"6e7bc80a84ea"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T104947-1397256.service; invocation ID: e6099f67d7cf4473a25906300ab160ee
+tunnel: up, answered http 200 from outside after 3 s
+10:51:25 apk app.apk sha256 4158c6fcd4db3751
+10:53:51 paired, app shows v1.67.37, setup 147 s
+10:54:23 flow 1 chat-send-reply PASS (26 s): sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify
+10:54:56 flow 7 swipe-quote PASS (24 s): reply bar quotes the reply excerpt (299 chars, a prefix of the full 1009)
+10:55:36 flow 9 long-press-reply FAIL (25 s): reply bar on the sent message does not name 'PlantedBreak' (shows ['You', 'LPRESS'])
+10:55:48 reset: closed reply bar
+10:56:01 flow 3 camera-entry-once PASS (13 s): composer row holds only ['Add photos', 'Attach files', 'Message Developer…', 'Send'], plus sheet shows 'Camera' once
+10:56:12 reset: closed menu or sheet
+10:56:38 flow 2 pick-three-photos PASS (26 s): tray showed 3 photos, the sent message shows 3 images, the bot got the 3 distinct picked files
+10:57:51 flow 5 in-app-on-tasks-tab PASS (22 s): Tasks tab showed Developer 'Working · …', then 'No bot is working right now.'; server logged path in-app and nothing else
+10:58:00 flow 4 work-card-unread-only PASS (39 s): 1 card with Planner's unread question, none for the read Researcher question, none for Developer reports
+10:58:32 flow 6 background-goes-push PASS (27 s): server logged path push only with the app in the background; back in the app the Researcher row shows 'Slow job finished.'
+10:59:07 flow 8 open-and-back-logcat-clean PASS (30 s): Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid 3840 alive, FATAL 0, JS errors 0
+10:59:07 DONE 8 PASS, 1 FAIL, flows 316 s
+stopped 1401338
+tunnel: pstack-hbots-verify-tunnel-r20261119T104947-1397256 inactive
+device: emulator pid 1397550 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): pstack-hbots-verify-tunnel-r20261119T105603-1413185.service
+heavy slot held during the run: omarchy-heavy-1.lock by pid 1397284 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-1.lock used by pid 1397284, now released, none of this run's processes holds it
+RESULT FAIL in 560s total, 0s waiting for a heavy-job slot, 560s of work (emulator boot 80s, setup+drive 463s, flows 316s), device laptop, evidence /home/harout/Claude/AI/_wt/verify-hbots-android-r2/apps/hbots-mobile/.claude/skills/verify-hbots-android/.scratch/evidence/plant2-20261119T104947Z

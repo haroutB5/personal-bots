@@ -1,0 +1,68 @@
+heavy-job: nice 10, ionice idle, MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G :: hbots verify android
+verify-hbots-android f91e7a04afa4 2026-11-19T10:26:44Z label plant, run r20261119T102644-1335379, queue wait 0s
+doctor: ok   no release armed
+doctor: ok   server port 34671 is not the live 38472
+doctor: ok   port 34671 free
+doctor: ok   checkout folder is not inside ~/.personal-bots/dev
+doctor: ok   skill folder is not inside ~/.personal-bots/dev
+doctor: ok   evidence folder is not inside ~/.personal-bots/dev
+doctor: ok   temp folder is not inside ~/.personal-bots/dev
+doctor: ok   run folder is not inside ~/.personal-bots/dev
+doctor: ok   server binary 6e7bc80a84ea (read only)
+doctor: info checkout version 1.67.37 at f91e7a04afa4
+doctor: ok   fake claude has LATEQ
+doctor: ok   AVD FindX9Pro-QA exists
+doctor: ok   adb
+doctor: ok   emulator
+doctor: ok   python3
+doctor: ok   node
+doctor: ok   no .env in the checkout
+doctor: ok   apk has x86_64 libs (x86_64)
+doctor: ok   apk is signed by a throwaway key, not the release key
+doctor: ok   port 5171 free
+doctor: ok   port 5672 free
+doctor: ok   port 5673 free
+doctor: ok   no standalone device left behind
+device: mode=laptop (default device)
+avd: FindX9Pro-QA exists
+* daemon not running; starting now at tcp:5171
+* daemon started successfully
+device: booted in 112 s, 36 sdk, Physical size: 1080x2355, Physical density: 480
+{"up":true,"pid":1340188,"port":34671,"release":"6e7bc80a84ea"}
+Running as unit: pstack-hbots-verify-tunnel-r20261119T102644-1335379.service; invocation ID: 991220eabdf744ccbc35682fe946d1ea
+tunnel: up, answered http 200 from outside after 0 s
+10:28:56 apk app.apk sha256 4158c6fcd4db3751
+10:30:15 paired, app shows v1.67.37, setup 79 s
+10:31:04 flow 1 chat-send-reply PASS (42 s): sent text and reply 'Got it.' visible, status Idle, no Stop button, bot got prompt hello_verify
+10:32:10 opening Developer failed on try 1: no Developer row on the Chats tab
+10:33:15 opening Developer failed on try 2: no Developer row on the Chats tab
+10:33:22 flow 7 swipe-quote FAIL (91 s): AssertionError: no Developer row on the Chats tab
+10:34:25 opening Developer failed on try 1: no Developer row on the Chats tab
+10:35:32 opening Developer failed on try 2: no Developer row on the Chats tab
+10:35:39 flow 9 long-press-reply FAIL (93 s): AssertionError: no Developer row on the Chats tab
+10:36:41 opening Developer failed on try 1: no Developer row on the Chats tab
+10:37:46 opening Developer failed on try 2: no Developer row on the Chats tab
+10:37:52 flow 3 camera-entry-once FAIL (91 s): AssertionError: no Developer row on the Chats tab
+10:38:54 opening Developer failed on try 1: no Developer row on the Chats tab
+10:40:01 opening Developer failed on try 2: no Developer row on the Chats tab
+10:40:07 flow 2 pick-three-photos FAIL (94 s): AssertionError: no Developer row on the Chats tab
+10:41:10 opening Planner failed on try 1: no Planner row on the Chats tab
+10:42:18 opening Planner failed on try 2: no Planner row on the Chats tab
+10:42:21 seed for flow 4 failed: AssertionError: no Planner row on the Chats tab
+10:43:24 opening Developer failed on try 1: no Developer row on the Chats tab
+10:44:31 opening Developer failed on try 2: no Developer row on the Chats tab
+10:44:37 flow 5 in-app-on-tasks-tab FAIL (94 s): AssertionError: no Developer row on the Chats tab
+10:45:35 flow 4 work-card-unread-only FAIL (109 s): no Work card shows Planner's unread question as visible text
+10:46:37 opening Researcher failed on try 1: no Researcher row on the Chats tab
+10:47:42 opening Researcher failed on try 2: no Researcher row on the Chats tab
+10:47:49 flow 6 background-goes-push FAIL (91 s): AssertionError: no Researcher row on the Chats tab
+10:49:18 flow 8 open-and-back-logcat-clean FAIL (45 s): steps failed: chats-no-row,tasks-no-card,computer-tab,files-tab; pid=4064 FATAL=0 JS-errors=0
+10:49:18 DONE 1 PASS, 8 FAIL, flows 1143 s
+stopped 1340188
+tunnel: pstack-hbots-verify-tunnel-r20261119T102644-1335379 inactive
+device: emulator pid 1335679 stopped, adb server 5171 stopped
+listeners on 34671, 5171, 5672: 0
+tunnel units of any run still active (other runs' are left alone): none
+heavy slot held during the run: omarchy-heavy-3.lock by pid 1335407 (this run), freed when it exits
+heavy slot after the run: omarchy-heavy-3.lock used by pid 1335407, now released, none of this run's processes holds it
+RESULT FAIL in 1354s total, 0s waiting for a heavy-job slot, 1354s of work (emulator boot 112s, setup+drive 1222s, flows 1143s), device laptop, evidence /home/harout/Claude/AI/_wt/verify-hbots-android-r2/apps/hbots-mobile/.claude/skills/verify-hbots-android/.scratch/evidence/plant-20261119T102644Z
