@@ -47,6 +47,12 @@ export class ConnectionVendorError extends Schema.TaggedError<ConnectionVendorEr
      * vendor may or may not have acted.
      */
     status: Schema.optionalKey(Schema.Number),
+    /**
+     * The app on this machine that serves the vendor is not answering, so
+     * nothing ran and no credential is at fault. `detail` is then the whole
+     * sentence for the model.
+     */
+    unavailable: Schema.optionalKey(Schema.Boolean),
   },
 ) {}
 
