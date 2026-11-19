@@ -138,7 +138,7 @@ export async function connectNativeSession(
     ),
     subscribeServerConfig: (input) => client[WS_METHODS.subscribeServerConfig](input ?? {}),
     ready: Effect.void,
-    probe: client[WS_METHODS.serverGetConfig]({}).pipe(
+    probe: client[WS_METHODS.serverProbe]({}).pipe(
       Effect.mapError(
         (cause) =>
           new ConnectionTransientError({ reason: "remote-unavailable", detail: String(cause) }),

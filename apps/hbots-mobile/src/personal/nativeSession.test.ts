@@ -9,11 +9,18 @@ vi.mock("../pairing", () => ({
   openSocketUrl: async () => "wss://hbots.example.test/ws?wsTicket=ticket",
 }));
 
-type Listener = (event: { readonly code?: number; readonly reason?: string }) => void;
+interface SocketEvent {
+  readonly code?: number;
+  readonly reason?: string;
+  readonly data?: string;
+}
+
+type Listener = (event: SocketEvent) => void;
 
 class FakeWebSocket {
   static instances: Array<FakeWebSocket> = [];
   readyState = 0;
+  readonly sent: Array<string> = [];
   binaryType = "arraybuffer";
   private readonly listeners = new Map<string, Set<Listener>>();
 
@@ -32,13 +39,15 @@ class FakeWebSocket {
     this.listeners.get(type)?.delete(listener);
   }
 
-  send() {}
+  send(data: string) {
+    this.sent.push(data);
+  }
 
   close() {
     this.readyState = 3;
   }
 
-  emit(type: string, event: { readonly code?: number; readonly reason?: string }) {
+  emit(type: string, event: SocketEvent) {
     if (type === "open") this.readyState = 1;
     if (type === "close") this.readyState = 3;
     for (const listener of this.listeners.get(type) ?? []) listener(event);
@@ -88,5 +97,50 @@ describe("connectNativeSession close handling", () => {
   it("keeps any other close an outage the app retries", async () => {
     const error = await closeWith(1006, "");
     expect(classifyFailure(error)).toEqual({ kind: "unreachable" });
+  });
+});
+
+interface SentRequest {
+  readonly _tag: "Request";
+  readonly id: string;
+  readonly tag: string;
+}
+
+const sentRequests = (socket: FakeWebSocket): ReadonlyArray<SentRequest> =>
+  socket.sent
+    .map((frame): unknown => JSON.parse(frame))
+    .filter((frame): frame is SentRequest => (frame as { _tag?: unknown })._tag === "Request");
+
+describe("connectNativeSession liveness probe", () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends server.probe and never fetches the server config", async () => {
+    const native = await connectNativeSession(stored, "1.67.6");
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error("no socket was opened");
+    await vi.waitFor(() => expect(socket.readyState).toBe(1));
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- @effect/vitest is not a dependency of this package, and probe is the Effect the watchdog awaits.
+    const probed = Effect.runPromise(native.session.probe);
+    await vi.waitFor(() => expect(sentRequests(socket)).toHaveLength(1));
+    const [request] = sentRequests(socket);
+    expect(request?.tag).toBe("server.probe");
+    socket.emit("message", {
+      data: JSON.stringify({
+        _tag: "Exit",
+        requestId: request?.id,
+        exit: { _tag: "Success", value: {} },
+      }),
+    });
+    await expect(probed).resolves.toBeUndefined();
+    expect(sentRequests(socket).map((sent) => sent.tag)).not.toContain("server.getConfig");
+    await native.dispose();
   });
 });
