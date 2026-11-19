@@ -36,3 +36,22 @@ None. Max migration is 160 in `Migrations.ts` on trunk and on the head, and `app
 ## Rollback
 
 Binary rollback to `0130b5adf7b1` (1.67.39). No data change, so no data restore.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=d93181fb33aa78efeeb340ec1819ed2a9771bf14 release=d93181fb33aa json-sha256=7c2a3b8ba841960a1b4b26f3d90e345ea30a7ef1dd51a1d639ccb7706030610d result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/scripts/secrets-roundtrip.ts, apps/server/src/auth/ServerSecretStore.test.ts, apps/server/src/auth/ServerSecretStore.ts, apps/server/src/auth/secretEncryption.ts, ...; selected 261 test files
+- server-tsc: PASS, exit 0
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: PASS, selected: e2e inputs changed: apps/server/scripts/secrets-roundtrip.ts, apps/server/src/auth/ServerSecretStore.test.ts, apps/server/src/auth/ServerSecretStore.ts, apps/server/src/auth/secretEncryption.ts, ...; selected 12 journeys
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/hbots-release/lib/gateScope.mjs; selected 15 test files
+- not run by any gate: apps/server/src/auth/ServerSecretStore.test.ts
+- not run by any gate: scripts/personal/testing/fake-claude/cli.test.mjs
+
+<!-- gate-evidence:end -->
