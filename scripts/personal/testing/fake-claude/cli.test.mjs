@@ -25,6 +25,7 @@ let calls = [];
 let pidDir;
 let cli;
 let pending = null;
+const taskFrames = [];
 
 NodeTest.before(async () => {
   server = NodeHttp.createServer((req, res) => {
@@ -67,6 +68,7 @@ NodeTest.before(async () => {
   const texts = [];
   NodeReadline.createInterface({ input: cli.stdout }).on("line", (line) => {
     const msg = JSON.parse(line);
+    if (msg.type === "system" && msg.subtype?.startsWith("task_")) taskFrames.push(msg);
     if (msg.type === "assistant")
       texts.push(msg.message.content.map((part) => part.text ?? "").join(""));
     if (msg.type === "result" && pending) {
@@ -252,4 +254,19 @@ NodeTest.test("answers sdk_mcp_set_servers with an errors map the SDK can read",
   });
   child.stdin.end();
   child.kill();
+});
+
+NodeTest.test("BGSTART leaves a background task running and BGEND ends it", async () => {
+  taskFrames.length = 0;
+  NodeAssert.match(await prompt("BGSTART"), /^BGSTART running bg-fake/);
+  NodeAssert.deepEqual(
+    taskFrames.map((frame) => [frame.subtype, frame.task_id, frame.is_backgrounded]),
+    [["task_started", "bg-fake", true]],
+  );
+  taskFrames.length = 0;
+  NodeAssert.match(await prompt("BGEND"), /^BGEND ended bg-fake/);
+  NodeAssert.deepEqual(
+    taskFrames.map((frame) => [frame.subtype, frame.task_id, frame.status]),
+    [["task_notification", "bg-fake", "completed"]],
+  );
 });

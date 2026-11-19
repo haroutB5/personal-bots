@@ -348,6 +348,21 @@ export const makeTaskDispatch = (
       return null;
     }
     if (used < threshold) return null;
+    // A fresh session would end the background work this one still runs, and the
+    // orchestrator refuses that, which would fail the task. Keep the session.
+    const liveTasks = yield* engine.liveTaskIds(attempt.providerThreadId);
+    if (liveTasks.length > 0) {
+      yield* Effect.logInfo(
+        "personal task reopened and resumed: its session still runs background work",
+        {
+          taskId: task.taskId,
+          threadId: attempt.providerThreadId,
+          contextTokens: used,
+          liveTasks: liveTasks.length,
+        },
+      );
+      return null;
+    }
     const text = renderWorkRecord(record);
     yield* Effect.logInfo("personal task reopened on a fresh session", {
       taskId: task.taskId,
