@@ -114,7 +114,9 @@ line_release() {
   fi
   if [[ ${status:-} == waiting_for_idle && -n ${f:-} ]]; then
     local blocker
-    blocker=$(/home/harout/.local/share/mise/installs/node/24.22.1/bin/node -e '
+    # Any Node works for this JSON read; a hard-coded version path broke when the pin moved (19 Nov).
+    local node_bin=${HBOTS_NODE:-$(command -v node || ls -d /home/harout/.local/share/mise/installs/node/*/bin/node 2>/dev/null | sort -V | tail -1)}
+    blocker=$("$node_bin" -e '
       try {
         const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
         const b = (r.blockers || []).find(x => !x.ignored);
