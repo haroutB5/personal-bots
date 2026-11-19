@@ -114,6 +114,7 @@ const make = Effect.gen(function* () {
           connections: described.map((entry) => ({
             vendor: entry.vendorId,
             displayName: entry.displayName,
+            accounts: entry.accounts,
             operations: entry.operations,
           })),
         };

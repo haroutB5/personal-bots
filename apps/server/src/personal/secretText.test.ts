@@ -168,6 +168,35 @@ describe("the long-token rule", () => {
   });
 });
 
+describe("mail sign-in tokens", () => {
+  // Made-up values in the real shapes; none is a working token.
+  const SHAPES = {
+    "a Google access token": "ya29.A0Fake-access_token-value-0123456789abcdef",
+    "a Google refresh token": "1//0gFake-refresh_token-value-0123456789abcdef",
+    "a Microsoft access token": `EwB${"Ab1+/=".repeat(12)}`,
+    "a Microsoft refresh token": "M.C543_BAY.0.U.-Fake!refresh*token$value0123456789",
+  } as const;
+
+  for (const [name, token] of Object.entries(SHAPES)) {
+    it(`reads ${name} as a secret and redacts it whole`, () => {
+      expect(looksLikeSecret(`sent with ${token} yesterday`)).toBe(true);
+      expect(looksLikeSecret(`sent with ${token} yesterday`, { lenient: true })).toBe(true);
+      expect(redactSecrets(`sent with ${token} yesterday`)).not.toContain(token.slice(6, 30));
+    });
+  }
+
+  it("leaves ordinary text that only resembles a prefix alone", () => {
+    for (const text of [
+      "Meet in room 1//0 at noon",
+      "ya29 is a vintage",
+      "EwB is a short word",
+      "M.C is a cricket club",
+    ]) {
+      expect(looksLikeSecret(text)).toBe(false);
+    }
+  });
+});
+
 describe("a key the owner saved", () => {
   afterEach(() => secretRedactor.clear());
 
