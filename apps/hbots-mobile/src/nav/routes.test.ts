@@ -99,6 +99,18 @@ describe("the SPEC back table", () => {
     expect(back(nav)).toEqual(stack(bots, { kind: "team" }));
   });
 
+  it("returns the Email screen to Integrations, and Integrations to Settings", () => {
+    const nav = stack(
+      bots,
+      { kind: "settings" },
+      { kind: "connections" },
+      { kind: "connectionsEmail" },
+    );
+    const once = back(nav);
+    expect(once).toEqual(stack(bots, { kind: "settings" }, { kind: "connections" }));
+    expect(once === null ? null : back(once)).toEqual(stack(bots, { kind: "settings" }));
+  });
+
   it("returns settings sub-screens to Settings", () => {
     const nav = stack(bots, { kind: "settings" }, { kind: "thisPhone" });
     expect(back(nav)).toEqual(stack(bots, { kind: "settings" }));
@@ -161,6 +173,12 @@ describe("deep links", () => {
   it("opens This phone under Settings", () => {
     expect(parseDeepLink("hbots://settings/this-phone")).toEqual(
       stack(bots, { kind: "settings" }, { kind: "thisPhone" }),
+    );
+    expect(parseDeepLink("hbots://settings/connections")).toEqual(
+      stack(bots, { kind: "settings" }, { kind: "connections" }),
+    );
+    expect(parseDeepLink("hbots://settings/connections/email")).toEqual(
+      stack(bots, { kind: "settings" }, { kind: "connections" }, { kind: "connectionsEmail" }),
     );
   });
 

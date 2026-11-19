@@ -68,12 +68,15 @@ export function Row({
   right,
   disabled = false,
   accessibilityLabel,
+  badge,
   last = false,
 }: {
   readonly title: string;
   readonly hint?: string | undefined;
   readonly value?: string | undefined;
   readonly onPress?: (() => void) | undefined;
+  /** One letter in a round badge before the title, for a row that stands for an account. */
+  readonly badge?: string | undefined;
   readonly right?: ReactNode;
   readonly disabled?: boolean;
   readonly accessibilityLabel?: string;
@@ -81,6 +84,11 @@ export function Row({
 }) {
   const body = (
     <>
+      {badge === undefined ? null : (
+        <View style={styles.rowBadge}>
+          <Text style={styles.rowBadgeText}>{badge}</Text>
+        </View>
+      )}
       <View style={styles.rowText}>
         <Text style={styles.rowTitle} maxFontSizeMultiplier={1.4}>
           {title}
@@ -380,6 +388,15 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 2 },
   rowTitle: { color: tokens.text, fontSize: 16, fontWeight: "500" },
   rowHint: { color: tokens.textSecondary, fontSize: 13, lineHeight: 18 },
+  rowBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: tokens.fillMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowBadgeText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "600" },
   rowValue: { color: tokens.textSecondary, fontSize: 14, maxWidth: 140, textAlign: "right" },
   field: { padding: 16, gap: 6 },
   fieldLabel: { color: tokens.textSecondary, fontSize: 13, fontWeight: "500" },

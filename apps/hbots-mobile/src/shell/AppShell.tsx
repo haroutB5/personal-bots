@@ -59,6 +59,7 @@ import { MemoryScreen } from "../settings/MemoryScreen";
 import { PasswordsScreen } from "../settings/PasswordsScreen";
 import { ApiKeysScreen } from "../settings/ApiKeysScreen";
 import { ConnectionsScreen } from "../settings/ConnectionsScreen";
+import { EmailScreen } from "../settings/EmailScreen";
 import { RoutineDetailScreen } from "../tasks/RoutineDetailScreen";
 import { RoutineFormScreen } from "../tasks/RoutineFormScreen";
 import { TaskDetailScreen } from "../tasks/TaskDetailScreen";
@@ -104,6 +105,7 @@ export type RootStackParamList = {
   Passwords: undefined;
   ApiKeys: undefined;
   Connections: undefined;
+  ConnectionsEmail: undefined;
   Stop: undefined;
 };
 
@@ -224,6 +226,8 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "ApiKeys" };
     case "connections":
       return { name: "Connections" };
+    case "connectionsEmail":
+      return { name: "ConnectionsEmail" };
     case "stop":
       return { name: "Stop" };
   }
@@ -625,7 +629,16 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           </Stack.Screen>
           <Stack.Screen name="Connections">
             {({ navigation }) => (
-              <ConnectionsScreen native={props.native} onBack={() => navigation.goBack()} />
+              <ConnectionsScreen
+                native={props.native}
+                onBack={() => navigation.goBack()}
+                onOpenEmail={() => navigation.navigate("ConnectionsEmail")}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="ConnectionsEmail">
+            {({ navigation }) => (
+              <EmailScreen native={props.native} onBack={() => navigation.goBack()} />
             )}
           </Stack.Screen>
           <Stack.Screen name="ThisPhone">
