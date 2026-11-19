@@ -47,12 +47,12 @@ test('hard caps default to 6G RAM and 4G swap and take per-job overrides',()=>{
  const pick=(argv,key)=>{const out=[];for(let i=0;i<argv.length-1;i++)if(argv[i]==='-p'&&argv[i+1].startsWith(`${key}=`))out.push(argv[i+1]);return out};
  const defaults=caps();
  assert.equal(defaults.r.status,0,defaults.r.stderr);
- assert.deepEqual(pick(defaults.argv,'MemoryHigh'),['MemoryHigh=5G']);
- assert.deepEqual(pick(defaults.argv,'MemoryMax'),['MemoryMax=6G']);
- assert.deepEqual(pick(defaults.argv,'MemorySwapMax'),['MemorySwapMax=4G']);
+ assert.deepEqual(pick(defaults.argv,'MemoryHigh'),['MemoryHigh=7G']);
+ assert.deepEqual(pick(defaults.argv,'MemoryMax'),['MemoryMax=8G']);
+ assert.deepEqual(pick(defaults.argv,'MemorySwapMax'),['MemorySwapMax=8G']);
  assert.deepEqual(pick(defaults.argv,'CPUWeight'),['CPUWeight=20']);
  assert.equal(defaults.argv.at(-1),'echo job-ran');
- assert.match(defaults.r.stderr,/MemoryHigh 5G, MemoryMax 6G, MemorySwapMax 4G/);
+ assert.match(defaults.r.stderr,/MemoryHigh 7G, MemoryMax 8G, MemorySwapMax 8G/);
  const custom=caps({HEAVY_JOB_MEMORY_HIGH:'4G',HEAVY_JOB_MEMORY_MAX:'8G',HEAVY_JOB_SWAP_MAX:'6G'});
  assert.equal(custom.r.status,0,custom.r.stderr);
  assert.deepEqual(pick(custom.argv,'MemoryHigh'),['MemoryHigh=4G']);
@@ -60,7 +60,7 @@ test('hard caps default to 6G RAM and 4G swap and take per-job overrides',()=>{
  assert.deepEqual(pick(custom.argv,'MemorySwapMax'),['MemorySwapMax=6G']);
  const off=caps({HEAVY_JOB_MEMORY_MAX:'off',HEAVY_JOB_SWAP_MAX:'off'});
  assert.equal(off.r.status,0,off.r.stderr);
- assert.deepEqual(pick(off.argv,'MemoryHigh'),['MemoryHigh=5G']);
+ assert.deepEqual(pick(off.argv,'MemoryHigh'),['MemoryHigh=7G']);
  assert.deepEqual(pick(off.argv,'MemoryMax'),[]);
  assert.deepEqual(pick(off.argv,'MemorySwapMax'),[]);
  assert.match(off.r.stderr,/MemoryMax off, MemorySwapMax off/);
@@ -78,6 +78,22 @@ test('contending lock reports holder and times out',async()=>{
  const r=run('bash',[path.join(here,'heavy-job.sh'),'--label','contender','--wait-seconds','0','--','true'],{env});
  assert.equal(r.status,75);assert.match(r.stderr,/fixture-holder/);
  await new Promise(resolve=>p.once('exit',resolve));
+});
+test('four slots by default: four jobs run at once and a fifth waits',async()=>{
+ const base=lockBase();
+ const env={...jobEnv(base,{HEAVY_JOB_MIN_FREE_GB:'0'})};delete env.HEAVY_JOB_SLOTS;
+ const started=(label)=>new Promise((resolve)=>{
+   const p=spawn('bash',[path.join(here,'heavy-job.sh'),'--label',label,'--','sleep','3'],{stdio:['ignore','ignore','pipe'],env});
+   p.stderr.on('data',(d)=>{if(/nice 10/.test(String(d)))resolve(p);});
+   p.once('exit',()=>resolve(p));
+ });
+ const jobs=[];for(const l of ['s1','s2','s3','s4'])jobs.push(await started(l));
+ for(let i=1;i<=4;i++)assert.match(fs.readFileSync(`${base}-${i}.lock`,'utf8'),/label=s[1-4]/);
+ const fifth=run('bash',[path.join(here,'heavy-job.sh'),'--label','fifth','--wait-seconds','0','--','true'],{env});
+ assert.equal(fifth.status,75);
+ await Promise.all(jobs.map(p=>p.exitCode!==null?null:new Promise(r=>p.once('exit',r))));
+ const bad=run('bash',[path.join(here,'heavy-job.sh'),'--label','bad','--','true'],{env:{...env,HEAVY_JOB_SLOTS:'9'}});
+ assert.equal(bad.status,2);assert.match(bad.stderr,/1 to 8/);
 });
 test('two jobs run at once, a third waits, and both hold the shared release gate',async()=>{
  const base=lockBase();
