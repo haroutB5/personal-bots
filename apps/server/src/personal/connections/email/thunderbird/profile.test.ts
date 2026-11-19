@@ -5,7 +5,13 @@ import * as NodeURL from "node:url";
 
 import { describe, expect, it } from "@effect/vitest";
 
-import { allowlistWritten, renderUserJs, resolveProfileDir, serverKeyOf } from "./profile.ts";
+import {
+  allowlistWritten,
+  keptSettings,
+  renderUserJs,
+  resolveProfileDir,
+  serverKeyOf,
+} from "./profile.ts";
 
 const FIXTURES = NodePath.join(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -17,7 +23,7 @@ const tempHome = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-
 describe("renderUserJs", () => {
   it("reproduces, byte for byte, the file measured on the laptop", () => {
     expect(renderUserJs()).toBe(
-      NodeFS.readFileSync(NodePath.join(FIXTURES, "user.base.js"), "utf8"),
+      NodeFS.readFileSync(NodePath.join(FIXTURES, "user.base.txt"), "utf8"),
     );
   });
 
