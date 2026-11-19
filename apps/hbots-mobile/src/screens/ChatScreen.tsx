@@ -978,6 +978,7 @@ export function ChatScreen({
             {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
             <RiseIn enabled={enteredVia === "chip"} style={styles.riseHost}>
               <MessageList
+                threadId={threadId}
                 native={native}
                 chat={chat}
                 cardContext={cards.context}

@@ -22,7 +22,17 @@ interface CacheWrite {
   readonly bytes: number;
 }
 
+interface ListCommit {
+  /** When the list's layout effect ran. */
+  readonly at: number;
+  /** From the top of the list's render to that layout effect. */
+  readonly ms: number;
+  readonly rows: number;
+}
+
 const reads = new Map<string, CacheRead>();
+/** The first list commit with rows per chat, kept until an open takes it. */
+const listCommits = new Map<string, ListCommit>();
 interface RequestMark {
   readonly at: number;
   /** The request left at the tap, before the screen mounted. */
@@ -39,6 +49,11 @@ let writeCount = 0;
 export function noteCacheRead(threadId: string, read: CacheRead): string {
   reads.set(threadId, read);
   return `[perf] cache-read-ms ${Math.round(read.ms)} bytes ${read.bytes} decode-ms ${Math.round(read.decodeMs)} ${read.hit ? "hit" : "miss"}`;
+}
+
+/** The list committed rows. The first one stays until a report takes it. */
+export function noteListCommit(threadId: string, commit: ListCommit): void {
+  if (!listCommits.has(threadId)) listCommits.set(threadId, commit);
 }
 
 export function noteRequestStart(threadId: string, at: number, prefetched = false): void {
@@ -84,8 +99,11 @@ export function takeChatOpenReport(
   const ownRead = read !== undefined && read.at >= openedAt ? read : undefined;
   const ownMark = requests.get(threadId)?.find((mark) => mark.at >= startedAt);
   const ownRequest = ownMark?.at;
+  const listCommit = listCommits.get(threadId);
+  const ownList = listCommit !== undefined && listCommit.at >= openedAt ? listCommit : undefined;
   reads.delete(threadId);
   requests.delete(threadId);
+  listCommits.delete(threadId);
   // A copy that arrived after the request left was too late: the deadline had passed it over.
   const store: ChatOpenStore =
     ownRead?.hit === true && (ownRequest === undefined || ownRead.at <= ownRequest)
@@ -115,6 +133,10 @@ export function takeChatOpenReport(
     body.readMs = Math.round(ownRead.ms);
     body.readBytes = ownRead.bytes;
   }
+  if (ownList !== undefined) {
+    body.listMs = Math.round(ownList.ms);
+    body.rows = ownList.rows;
+  }
   if (write !== null) {
     body.writeMs = Math.round(write.ms);
     body.writeBytes = write.bytes;
@@ -123,7 +145,7 @@ export function takeChatOpenReport(
   return {
     line: `[perf] chat-open-ms ${ms} ${store} request-at-ms ${requestAtMs ?? "-"}${
       tapAt === undefined ? "" : ` from-tap-ms ${body.fromTapMs}`
-    }`,
+    }${ownList === undefined ? "" : ` list-ms ${body.listMs}`}`,
     body,
   };
 }

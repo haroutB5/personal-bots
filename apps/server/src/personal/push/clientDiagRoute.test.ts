@@ -286,6 +286,35 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "perf", journey: "a-chat-open", ms: 9 });
   });
 
+  it("keeps the list commit fields of an a-chat-open beacon and drops bad ones", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 207,
+          store: "memory",
+          listMs: 96,
+          rows: 31,
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 207,
+      store: "memory",
+      listMs: 96,
+      rows: 31,
+    });
+    for (const listMs of ["96", -1, 9.5, null, { a: 1 }]) {
+      expect(
+        sanitizeClientDiag(
+          JSON.stringify({ event: "perf", journey: "a-chat-open", ms: 5, listMs }),
+        ),
+      ).toEqual({ event: "perf", journey: "a-chat-open", ms: 5 });
+    }
+  });
+
   it("keeps the cold-start marks of an a-start beacon and drops bad ones", () => {
     expect(
       sanitizeClientDiag(

@@ -96,6 +96,7 @@ import { LiveWorkRow } from "./LiveWorkRow";
 import type { PendingSend } from "./composerSendModel";
 import { JUMP_SETTLE_MS, jumpVisible } from "./jumpToLatest";
 import { useNow } from "./useNow";
+import { noteListCommit } from "../personal/chatOpenPerf";
 import { useStreamCommitPerf } from "./useStreamCommitPerf";
 import {
 
@@ -1343,6 +1344,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
 }, sameRowProps);
 
 export function MessageList({
+  threadId,
   native,
   chat,
   cardContext,
@@ -1370,6 +1372,8 @@ export function MessageList({
   keyboardInset = 0,
   onHeightChange,
 }: {
+  /** The chat this list shows, for the open timing. */
+  readonly threadId: string;
   readonly native: NativePersonal;
   readonly chat: ChatEnvironment;
   readonly cardContext?: CardContext;
@@ -1428,6 +1432,17 @@ export function MessageList({
     [arrivedIds, items, pending, queued, work],
   );
   useStreamCommitPerf(renderStartedAt, items, rows.length);
+  const listCommitNoted = useRef(false);
+  useLayoutEffect(() => {
+    if (listCommitNoted.current || rows.length === 0) return;
+    listCommitNoted.current = true;
+    const committedAt = performance.now();
+    noteListCommit(threadId, {
+      at: committedAt,
+      ms: committedAt - renderStartedAt,
+      rows: rows.length,
+    });
+  });
   const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
   const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
   const [reverseRows] = useState(createRowReverser<Row>);

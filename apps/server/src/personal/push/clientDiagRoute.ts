@@ -179,7 +179,9 @@ const FIELDS: Record<string, Read> = {
   // perf a-chat-open (hbots-mobile chatOpenPerf.ts): when the snapshot request left after
   // the open, the saved-copy read, and the slowest saved-copy write since the last line.
   // fromTapMs is the open measured from the tap, responseMs and decodeMs split the request,
-  // prefetched says the request started at the tap. A phone without them sends none.
+  // prefetched says the request started at the tap. listMs is the list's first commit with rows
+  // in this open (top of its render to its layout effect), rows is that commit's row count.
+  // A phone without them sends none.
   requestAtMs: count,
   fromTapMs: count,
   responseMs: count,
@@ -190,6 +192,7 @@ const FIELDS: Record<string, Read> = {
   writeMs: count,
   writeBytes: count,
   writes: count,
+  listMs: count,
   // perf a-start (hbots-mobile startPerf.ts): when the JS bundle began to run, the saved session
   // was read, and the chat list first painted from its saved copy and from live data, on the
   // phone's JS clock. cold says the process was started in front of the user. A phone that
