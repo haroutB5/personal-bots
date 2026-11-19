@@ -79,6 +79,19 @@ test('contending lock reports holder and times out',async()=>{
  assert.equal(r.status,75);assert.match(r.stderr,/fixture-holder/);
  await new Promise(resolve=>p.once('exit',resolve));
 });
+test('no new job starts while an hbots release is armed',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-rel-')),bin=path.join(dir,'bin');fs.mkdirSync(bin);
+ const stub=(out)=>fs.writeFileSync(path.join(bin,'systemctl'),`#!/usr/bin/env bash\nprintf '%s' '${out}'\n`,{mode:0o755});
+ const env=(extra={})=>jobEnv(lockBase(),{HEAVY_JOB_RELEASE_CHECK:'1',PATH:`${bin}:${process.env.PATH}`,...extra});
+ stub('hbots-release-run-9.9.9.service loaded active running x');
+ const held=run('bash',[path.join(here,'heavy-job.sh'),'--label','during-release','--wait-seconds','0','--','true'],{env:env()});
+ assert.equal(held.status,75);assert.match(held.stderr,/release is armed/);
+ const bypass=run('bash',[path.join(here,'heavy-job.sh'),'--label','bypass','--wait-seconds','0','--','true'],{env:env({HEAVY_JOB_IGNORE_RELEASE:'1'})});
+ assert.equal(bypass.status,0,bypass.stderr);
+ stub('');
+ const free=run('bash',[path.join(here,'heavy-job.sh'),'--label','after-release','--wait-seconds','0','--','true'],{env:env()});
+ assert.equal(free.status,0,free.stderr);
+});
 test('four slots by default: four jobs run at once and a fifth waits',async()=>{
  const base=lockBase();
  const env={...jobEnv(base,{HEAVY_JOB_MIN_FREE_GB:'0'})};delete env.HEAVY_JOB_SLOTS;

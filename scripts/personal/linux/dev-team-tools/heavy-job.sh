@@ -72,6 +72,21 @@ if [[ ${HBOTS_HEAVY_JOB_HELD:-} == 1 && -e /proc/$$/fd/9 ]] &&
 fi
 umask 077
 deadline=$((SECONDS + wait_seconds))
+# 0. An armed release waits for idle. With 4 slots new jobs could keep it waiting
+#    for ever, so no new job starts while an hbots-release-run unit is active
+#    (Poteto, 19 Nov). Running jobs finish normally. Only the live lock base is
+#    checked, so tests with their own HEAVY_JOB_BASE are not affected.
+release_armed() {
+  [[ ( "$base" == /home/harout/.personal-bots/run/omarchy-heavy || ${HEAVY_JOB_RELEASE_CHECK:-} == 1 ) && ${HEAVY_JOB_IGNORE_RELEASE:-} != 1 ]] || return 1
+  [[ -n $(systemctl --user list-units --state=active --plain --no-legend 'hbots-release-run-*.service' 2>/dev/null) ]]
+}
+while release_armed; do
+  echo 'heavy-job: an hbots release is armed and waiting for idle; new jobs wait until it lands.' >&2
+  ((SECONDS < deadline)) || exit 75
+  remaining=$((deadline - SECONDS))
+  ((remaining > 30)) && remaining=30
+  sleep "$remaining"
+done
 # 1. A slot first: a job that cannot get one holds nothing, so it cannot keep a
 #    release from starting.
 until try_slots; do
