@@ -23,11 +23,12 @@ CHAT_TABS = ("Chats", "Tasks", "Computer", "Files")
 SEND_DESC = r"Send(?:,.*)?"  # online "Send", offline "Send, waits here until your laptop reconnects"
 PAIR_ATTEMPTS = 3
 PAIR_WAIT = 40
-# What the app shows when the link to the laptop is gone. These strings come from packages/personal-client/src/bots/offlineBanner.ts
+# What the app shows when the link to the laptop is gone. The Chats and Tasks screens show the banner from packages/personal-client/src/bots/offlineBanner.ts
 # (offlineBannerText: "Laptop offline", "Laptop offline · last contact 5m ago", "Reconnecting to your laptop…"; offlineBannerHint: the line under it).
-# The composer's own offline line is NOT matched: its copy changes ("Offline. Messages you send now go out when the laptop is back.").
+# A chat screen shows only the composer's own line, which starts "Offline." (its copy changes: "Offline. Messages you send now go out when the laptop is back."),
+# so that line is matched by its stable "Offline." start and never by its full text.
 OFFLINE_TEXT = (r"Laptop offline.*|Reconnecting to your laptop.*|Messages you send will go out when it reconnects\.|"
-                r"\d+ messages? (?:is|are) waiting to send\..*")
+                r"\d+ messages? (?:is|are) waiting to send\..*|Offline\. .*")
 # cloudflared lines that mean the tunnel itself dropped, at any log level: "ERR Serve tunnel error ... no recent network activity" and the
 # "INF Retrying connection in up to 2s" that follows it. A flow that fails while one of these is new is a lost link, not an app verdict.
 TUNNEL_LOG_DOWN = re.compile(r"(Serve tunnel error|no recent network activity|Retrying connection|Lost connection|connection with the edge|Unable to establish)", re.I)

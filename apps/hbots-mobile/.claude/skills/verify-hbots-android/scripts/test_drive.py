@@ -41,8 +41,12 @@ class OfflineText(unittest.TestCase):
                   "1 message is waiting to send. It goes out when it reconnects.", "3 messages are waiting to send. They go out when it reconnects."):
             self.assertTrue(re.fullmatch(drive.OFFLINE_TEXT, t), t)
 
-    def test_composer_line_is_not_matched_either_copy(self):
+    def test_composer_line_matches_by_its_start_for_either_copy(self):
         for t in ("Offline. Your draft is saved and sends when the laptop is back.", "Offline. Messages you send now go out when the laptop is back."):
+            self.assertTrue(re.fullmatch(drive.OFFLINE_TEXT, t), t)
+
+    def test_online_texts_are_not_offline(self):
+        for t in ("Chats", "Idle · Sonnet 5.5", "Not sent", "Message Developer…", "Laptop", "Offline mode off"):
             self.assertFalse(re.fullmatch(drive.OFFLINE_TEXT, t), t)
 
     def test_send_desc(self):
@@ -82,6 +86,13 @@ class LinkProblem(unittest.TestCase):
     def test_not_sent_with_offline_banner(self):
         why = self.run_with([], screen(("Not sent", "", False), ("Laptop offline", "", False)))
         self.assertIn("Not sent", why)
+
+    def test_not_sent_with_the_composer_offline_line_in_a_chat(self):
+        why = self.run_with([], screen(("Not sent", "", False), ("Offline. Messages you send now go out when the laptop is back.", "", False)))
+        self.assertIn("Not sent", why)
+
+    def test_not_sent_alone_is_a_failure(self):
+        self.assertIsNone(self.run_with([], screen(("Not sent", "", False))))
 
     def test_real_failure_with_a_quiet_link_stays_a_failure(self):
         self.assertIsNone(self.run_with(["2026 INF Registered tunnel connection"], screen(("Chats", "", False))))
