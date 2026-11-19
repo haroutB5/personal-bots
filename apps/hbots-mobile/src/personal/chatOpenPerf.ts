@@ -93,6 +93,7 @@ export function takeChatOpenReport(
   openedAt: number,
   paintedAt: number,
   tapAt?: number,
+  processStartAt?: number,
 ): ChatOpenReport {
   const startedAt = tapAt === undefined ? openedAt : Math.min(tapAt, openedAt);
   const read = reads.get(threadId);
@@ -133,6 +134,7 @@ export function takeChatOpenReport(
     body.readMs = Math.round(ownRead.ms);
     body.readBytes = ownRead.bytes;
   }
+  if (processStartAt !== undefined) body.processToOpenMs = Math.round(startedAt - processStartAt);
   if (ownList !== undefined) {
     body.listMs = Math.round(ownList.ms);
     body.rows = ownList.rows;
@@ -145,7 +147,9 @@ export function takeChatOpenReport(
   return {
     line: `[perf] chat-open-ms ${ms} ${store} request-at-ms ${requestAtMs ?? "-"}${
       tapAt === undefined ? "" : ` from-tap-ms ${body.fromTapMs}`
-    }${ownList === undefined ? "" : ` list-ms ${body.listMs}`}`,
+    }${ownList === undefined ? "" : ` list-ms ${body.listMs}`}${
+      processStartAt === undefined ? "" : ` process-ms ${body.processToOpenMs}`
+    }`,
     body,
   };
 }

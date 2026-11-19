@@ -315,6 +315,68 @@ describe("client diagnostics route", () => {
     }
   });
 
+  it("keeps processToOpenMs and processStartMs as integers and drops bad ones", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 207,
+          store: "network",
+          processToOpenMs: 5_000,
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 207,
+      store: "network",
+      processToOpenMs: 5_000,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-start",
+          jsMainMs: 900,
+          processStartMs: 612,
+          cold: true,
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-start",
+      jsMainMs: 900,
+      processStartMs: 612,
+      cold: true,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 5,
+          processToOpenMs: -3,
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-chat-open", ms: 5 });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-start",
+          jsMainMs: 900,
+          processStartMs: "612",
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-start", jsMainMs: 900 });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "perf", journey: "a-start", jsMainMs: 900, processStartMs: -1 }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-start", jsMainMs: 900 });
+  });
+
   it("keeps the cold-start marks of an a-start beacon and drops bad ones", () => {
     expect(
       sanitizeClientDiag(

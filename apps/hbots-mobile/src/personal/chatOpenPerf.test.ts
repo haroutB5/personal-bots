@@ -204,4 +204,42 @@ describe("chat open timings", () => {
       "[perf] chat-open-ms 200 memory request-at-ms - from-tap-ms 300 list-ms 41",
     );
   });
+
+  it("counts processToOpenMs from the press when one is known", () => {
+    const report = takeChatOpenReport("t-proc-tap", 9_300, 9_500, 9_200, 4_200);
+
+    expect(report.body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 200,
+      fromTapMs: 300,
+      store: "memory",
+      processToOpenMs: 5_000,
+    });
+    expect(report.line).toBe(
+      "[perf] chat-open-ms 200 memory request-at-ms - from-tap-ms 300 process-ms 5000",
+    );
+  });
+
+  it("counts processToOpenMs from the mount when no press is known", () => {
+    const report = takeChatOpenReport("t-proc-mount", 8_000, 8_150, undefined, 2_999.6);
+
+    expect(report.body.processToOpenMs).toBe(5_000);
+    expect(report.line).toBe("[perf] chat-open-ms 150 memory request-at-ms - process-ms 5000");
+  });
+
+  it("leaves out processToOpenMs and process-ms without a process start", () => {
+    const report = takeChatOpenReport("t-proc-none", 8_000, 8_150, 7_900);
+
+    expect(report.body).not.toHaveProperty("processToOpenMs");
+    expect(report.line).not.toContain("process-ms");
+  });
+
+  it("puts process-ms after list-ms on the line", () => {
+    noteListCommit("t-proc-list", { at: 6_100, ms: 50, rows: 9 });
+
+    expect(takeChatOpenReport("t-proc-list", 6_000, 6_200, undefined, 1_000).line).toBe(
+      "[perf] chat-open-ms 200 memory request-at-ms - list-ms 50 process-ms 5000",
+    );
+  });
 });

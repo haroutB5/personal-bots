@@ -90,6 +90,8 @@ export interface HbotsLauncherModule {
   setWidgetFeed(bots: readonly WidgetEntry[]): void;
   /** The whole feed as one JSON string. Missing on an APK older than the widget set. */
   setWidgetFeedJson?(json: string): void;
+  /** Process start in ms on the uptime clock, as `performance.now()` reads it. Missing on an older APK. */
+  processStartUptimeMs?(): number;
   wipe(): void;
 }
 

@@ -26,6 +26,13 @@ class HbotsLauncherModule : Module() {
       WidgetFeedCodec.fromJs(json, System.currentTimeMillis())?.let { publish(it) }
     }
 
+    /**
+     * When this process started, in ms on the uptime clock (CLOCK_MONOTONIC), the same base as the
+     * JS `performance.now()`. Reads one long and never touches `appContext`, so a widget that
+     * shares this module is not at risk.
+     */
+    Function("processStartUptimeMs") { android.os.Process.getStartUptimeMillis().toDouble() }
+
     /** Sign-out: removes the shortcuts and returns every widget to "Open hbots". */
     Function("wipe") {
       val context = appContext.reactContext?.applicationContext

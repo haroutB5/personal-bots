@@ -21,8 +21,11 @@ export interface StartPerf {
   readonly mark: (mark: StartMark, at: number) => void;
   /** True when the process was started in front of the user (a tap), not by a background wake. */
   readonly setCold: (cold: boolean) => void;
-  /** The beacon body, once per process: null when already taken or nothing was marked. */
-  readonly take: () => StartPerfBody | null;
+  /**
+   * The beacon body, once per process: null when already taken or nothing was marked.
+   * `processStartAt` is the process start on the same clock, when the caller has it.
+   */
+  readonly take: (processStartAt?: number) => StartPerfBody | null;
 }
 
 export function createStartPerf(): StartPerf {
@@ -36,7 +39,7 @@ export function createStartPerf(): StartPerf {
     setCold: (value) => {
       cold = value;
     },
-    take: () => {
+    take: (processStartAt) => {
       if (taken || marks.size === 0) return null;
       taken = true;
       const body: StartPerfBody = { event: "perf", journey: "a-start" };
@@ -45,6 +48,7 @@ export function createStartPerf(): StartPerf {
         if (at !== undefined) body[MARK_FIELDS[mark]] = Math.round(at);
       }
       body.cold = cold;
+      if (processStartAt !== undefined) body.processStartMs = Math.round(processStartAt);
       return body;
     },
   };
@@ -60,6 +64,6 @@ export function noteStartCold(cold: boolean): void {
   processStart.setCold(cold);
 }
 
-export function takeStartReport(): StartPerfBody | null {
-  return processStart.take();
+export function takeStartReport(processStartAt?: number): StartPerfBody | null {
+  return processStart.take(processStartAt);
 }

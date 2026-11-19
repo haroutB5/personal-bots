@@ -46,6 +46,7 @@ import {
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { reportPerf } from "../crash/crashReporter";
+import { processStartAt } from "../personal/processStart";
 import { noteStartMark, takeStartReport } from "../personal/startPerf";
 import { useBotShells } from "../personal/useBotShells";
 import { mergePersonalGroups } from "@hbots/personal-client/groups/personalGroups";
@@ -77,7 +78,7 @@ const SKELETON_ROWS = 4;
 const START_REPORT_WAIT_MS = 15_000;
 
 function sendStartReport(): void {
-  const body = takeStartReport();
+  const body = takeStartReport(processStartAt());
   if (body !== null) reportPerf(body);
 }
 
