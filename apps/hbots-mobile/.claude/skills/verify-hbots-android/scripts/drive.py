@@ -215,18 +215,42 @@ class Run:
         return next((n for n in s.find(desc=rf"{bot}, .*") if n.clickable), None)
 
     def open_bot(self, bot):
+        """Open the bot's chat. Two tries: a failed first try saves a dump and logcat (open-<bot>-<n>-*), resets the screen and goes again."""
+        for attempt in (1, 2):
+            try:
+                return self.open_bot_once(bot)
+            except AssertionError as e:
+                self.note(f"opening {bot} failed on try {attempt}: {e}")
+                self.save_diag(f"open-{bot}-{attempt}")
+                if attempt == 2:
+                    raise
+                self.reset()
+
+    def open_bot_once(self, bot):
         self.to_chats()
         s, row = self.d.wait(lambda s: self.bot_row(s, bot), 10)
         if not row:
             raise AssertionError(f"no {bot} row on the Chats tab")
         self.d.tap(row)
         time.sleep(1.0)
-        s, n = self.d.wait(lambda s: s.first(desc=r"Message .*…") or s.first(text="Start chat"), 10)
-        if n and n.text == "Start chat":
+        # A bot with no chat shows "Start chat". That can open the "New chat with <bot>" sheet, whose own "Start chat" button is a second tap.
+        # The sheet's name field has autofocus, so a stray character in it (seen once, an "M") is cleared first.
+        for _ in range(3):
+            s, n = self.d.wait(lambda s: s.first(desc=r"Message .*…") or s.first(text="Start chat"), 10)
+            if not (n and n.text == "Start chat"):
+                break
+            field = next((x for x in s.nodes if x.cls.endswith("EditText") and s.drawn(x)), None)
+            if s.first(text=r"New chat with .*") and field and field.text.strip() and field.desc != field.text and field.text != "Name (optional)":
+                self.note(f"the New chat sheet name field held {field.text[:12]!r}, cleared")
+                self.d.tap(field)
+                self.d.sh("input keycombination KEYCODE_CTRL_LEFT KEYCODE_A")
+                self.d.key(67)
+                time.sleep(0.3)
             self.d.tap(n)
-            time.sleep(1.0)
+            time.sleep(1.2)
+        else:
             s, n = self.d.wait(lambda s: s.first(desc=r"Message .*…"), 10)
-        if not n:
+        if not n or n.text == "Start chat":
             raise AssertionError(f"{bot} chat did not open (no composer)")
         self.learn(s)
         return s
@@ -240,9 +264,18 @@ class Run:
         time.sleep(0.4)
         self.d.tap_xy(*self.h["send"])
         if expect:
-            for _ in range(30):
+            retried = False
+            for i in range(30):
                 if any(expect in l for l in self.fake_lines()[before:]):
                     return
+                if i == 10 and not retried:
+                    # 3 s on and the bot has nothing: if the text is still sitting in the composer the Send tap did not fire (seen once in
+                    # 9 runs, the tap landing while the keyboard was still closing). Tap once more and say so in the log.
+                    field = self.composer_field(self.d.dump())
+                    if field and text in field.text:
+                        retried = True
+                        self.note(f"send tap did not fire for {text!r}, tapping Send again")
+                        self.d.tap_xy(*self.h["send"])
                 time.sleep(0.3)
             raise AssertionError(f"the bot never received {expect!r}")
 
@@ -761,7 +794,11 @@ class Run:
         pid = self.d.sh(f"pidof {PKG}").strip()
         log = self.d.run("logcat", "-d", timeout=60)
         open(f"{self.ev}/logcat.txt", "w").write(log)
-        fatal = log.count("FATAL EXCEPTION")
+        # Only a crash of the app counts. The UiAutomation dump tool can die on its own ("FATAL EXCEPTION: UiAutomation", seen once), which is not the app.
+        fatal = len(re.findall(rf"FATAL EXCEPTION[^\n]*\n[^\n]*Process: {re.escape(PKG)}", log))
+        tool_fatal = log.count("FATAL EXCEPTION") - fatal
+        if tool_fatal:
+            self.note(f"logcat has {tool_fatal} FATAL EXCEPTION line(s) that are not the app (uiautomator dump tool), not counted")
         js = len(re.findall(r"JavascriptException|E ReactNativeJS|ReactNativeJS: .*(TypeError|ReferenceError|Unhandled|Invariant Violation)", log))
         self.shot("f8-end")
         if bad or not pid or fatal or js:
@@ -803,6 +840,7 @@ class Run:
             if verdict == "FAIL":
                 try:
                     self.shot(f"f{flow}-fail")
+                    self.save_diag(f"f{flow}-fail")
                 except Exception:
                     pass
                 prob = self.link_problem(full=True)
