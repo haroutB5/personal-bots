@@ -67,6 +67,7 @@ const run = (input: {
             {
               vendorId: "github",
               displayName: "GitHub",
+              accounts: [],
               operations: [
                 {
                   operation: "github.list_repositories",

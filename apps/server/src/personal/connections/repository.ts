@@ -5,6 +5,8 @@ import {
   type PersonalConnectionSettings,
   PersonalConnectionStatus,
   PersonalConnectionVendorId,
+  type EmailVendorId,
+  type SingleAccountVendorId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -99,7 +101,11 @@ export class PersonalConnectionRepository extends Context.Service<
       connectionId: ConnectionId,
     ) => Effect.Effect<Option.Option<StoredPersonalConnection>, PersonalConnectionRepositoryError>;
     readonly getByVendor: (
-      vendor: PersonalConnectionVendorId,
+      vendor: SingleAccountVendorId,
+    ) => Effect.Effect<Option.Option<StoredPersonalConnection>, PersonalConnectionRepositoryError>;
+    readonly getByAccount: (
+      vendor: EmailVendorId,
+      accountId: string,
     ) => Effect.Effect<Option.Option<StoredPersonalConnection>, PersonalConnectionRepositoryError>;
     readonly create: (
       connection: StoredPersonalConnection,
@@ -169,7 +175,7 @@ export const make = Effect.gen(function* () {
   const list: PersonalConnectionRepository["Service"]["list"] = () =>
     query(
       "list",
-      sql`SELECT ${sql.literal(COLUMNS)} FROM personal_connections ORDER BY vendor_id ASC`,
+      sql`SELECT ${sql.literal(COLUMNS)} FROM personal_connections ORDER BY vendor_id ASC, created_at ASC`,
     ).pipe(Effect.flatMap((rows) => decode("list", rows)));
 
   const get: PersonalConnectionRepository["Service"]["get"] = (connectionId) =>
@@ -183,6 +189,15 @@ export const make = Effect.gen(function* () {
       "getByVendor",
       sql`SELECT ${sql.literal(COLUMNS)} FROM personal_connections WHERE vendor_id = ${vendor}`,
     ).pipe(Effect.flatMap((rows) => one("getByVendor", rows)));
+
+  const getByAccount: PersonalConnectionRepository["Service"]["getByAccount"] = (
+    vendor,
+    accountId,
+  ) =>
+    query(
+      "getByAccount",
+      sql`SELECT ${sql.literal(COLUMNS)} FROM personal_connections WHERE vendor_id = ${vendor} AND account_id = ${accountId.toLowerCase()}`,
+    ).pipe(Effect.flatMap((rows) => one("getByAccount", rows)));
 
   const create: PersonalConnectionRepository["Service"]["create"] = (connection) =>
     query(
@@ -232,7 +247,15 @@ export const make = Effect.gen(function* () {
       sql`DELETE FROM personal_connections WHERE connection_id = ${connectionId} RETURNING connection_id`,
     ).pipe(Effect.map((rows) => rows.length > 0));
 
-  return PersonalConnectionRepository.of({ list, get, getByVendor, create, update, remove });
+  return PersonalConnectionRepository.of({
+    list,
+    get,
+    getByVendor,
+    getByAccount,
+    create,
+    update,
+    remove,
+  });
 });
 
 export const layer = Layer.effect(PersonalConnectionRepository, make);

@@ -315,4 +315,68 @@ describe("vercel provisioning operations", () => {
       ).toEqual({ project: "hbots-demo", target: "production", keys: ["DATABASE_URL"] });
     }),
   );
+
+  it.effect(
+    "reads are free, a draft is a write, and every send needs a card with the full text",
+    () =>
+      Effect.gen(function* () {
+        for (const vendor of ["gmail", "outlook"] as const) {
+          const read = yield* prepare(`${vendor}.search`, {
+            mailbox: "me@example.com",
+            text: "invoice",
+          });
+          expect(read.risk).toMatchObject({ approvalRequired: false, reason: "read_only" });
+          expect(read.account).toBe("me@example.com");
+          expect(read.targetResources).toEqual([`email:${vendor}:me@example.com`]);
+
+          const draft = yield* prepare(`${vendor}.create_draft`, {
+            mailbox: "me@example.com",
+            to: ["a@example.com"],
+            subject: "Hello",
+            body: "Hi",
+          });
+          expect(draft.risk).toMatchObject({ approvalRequired: false, reason: "account_write" });
+          expect(draft.risk.summary).toContain("Nothing is sent");
+
+          const send = yield* prepare(`${vendor}.send`, {
+            mailbox: "me@example.com",
+            to: ["a@example.com", "b@example.com"],
+            cc: ["c@example.com"],
+            subject: "Quarterly numbers",
+            body: "Line one.\nLine two.",
+          });
+          expect(send.risk).toMatchObject({ approvalRequired: true, reason: "publication" });
+          expect(send.risk.summary).toBe(
+            'Send this email from me@example.com to a@example.com, b@example.com (cc c@example.com), subject "Quarterly numbers":\n\nLine one.\nLine two.',
+          );
+        }
+      }),
+  );
+
+  it.effect("refuses a recipient that could carry a second address or a header", () =>
+    Effect.gen(function* () {
+      for (const to of [
+        "a@example.com, b@example.com",
+        "Name <a@example.com>",
+        "a@example.com\r\nBcc: x@example.com",
+        "no-at-sign",
+      ]) {
+        const error = yield* Effect.flip(
+          prepare("gmail.send", { mailbox: "me@example.com", to: [to], subject: "s", body: "b" }),
+        );
+        expect(error._tag).toBe("ConnectionOperationArgumentError");
+      }
+      const header = yield* Effect.flip(
+        prepare("gmail.send", {
+          mailbox: "me@example.com",
+          to: ["a@example.com"],
+          subject: "s\r\nBcc: x@example.com",
+          body: "b",
+        }),
+      );
+      expect(header._tag).toBe("ConnectionOperationArgumentError");
+      const noMailbox = yield* Effect.flip(prepare("outlook.search", { text: "x" }));
+      expect(noMailbox._tag).toBe("ConnectionOperationArgumentError");
+    }),
+  );
 });

@@ -64,6 +64,15 @@ const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
       Effect.succeed(
         Option.fromNullishOr([...rows.values()].find((row) => row.vendorId === vendorId)),
       ),
+    getByAccount: (vendorId, accountId) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          [...rows.values()].find(
+            (row) =>
+              row.vendorId === vendorId && row.account?.accountId === accountId.toLowerCase(),
+          ),
+        ),
+      ),
     create: (row) =>
       options?.failCreate
         ? Effect.fail(new PersistenceSqlError({ operation: "test.create" }))
@@ -168,13 +177,13 @@ describe("PersonalConnectionService", () => {
       expect(connected.status).toBe("connected");
       expect(connected.lastValidatedAt).not.toBeNull();
       expect(
-        Option.getOrThrow(yield* service.resolveForOperation("github")).credentialVersion,
+        Option.getOrThrow(yield* service.resolveForOperation("github", null)).credentialVersion,
       ).toBe(1);
 
       expect((yield* service.disable({ connectionId: created.connectionId })).status).toBe(
         "disabled",
       );
-      expect(Option.isNone(yield* service.resolveForOperation("github"))).toBe(true);
+      expect(Option.isNone(yield* service.resolveForOperation("github", null))).toBe(true);
 
       expect((yield* service.reconnect({ connectionId: created.connectionId })).status).toBe(
         "connecting",
@@ -194,7 +203,7 @@ describe("PersonalConnectionService", () => {
       expect(rotated.credentialVersion).toBe(2);
 
       expect(
-        Option.getOrThrow(yield* service.resolveForOperation("github")).credentialVersion,
+        Option.getOrThrow(yield* service.resolveForOperation("github", null)).credentialVersion,
       ).toBe(2);
 
       const disconnected = yield* service.disconnect({
@@ -278,6 +287,48 @@ describe("PersonalConnectionService", () => {
       const error = yield* service.reconnect({ connectionId }).pipe(Effect.flip);
       expect(error.message).toContain("cannot reconnect while connected");
       expect(harness.rows.get(connectionId)?.status).toBe("connected");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("resolves a mailbox vendor by address and refuses the token-paste path for it", () => {
+    const harness = makeHarness();
+    const mailbox = (id: string, address: string, status: "connected" | "disabled") => {
+      const connectionId = ConnectionId.make(id);
+      harness.rows.set(connectionId, {
+        connectionId,
+        vendorId: "gmail",
+        status,
+        account: { accountId: address, accountName: address, teamId: null, teamName: null },
+        verifiedCapabilities: [],
+        settings: { whatsappDailySendCap: null },
+        credentialRef: `opaque-${id}`,
+        credentialVersion: 1,
+        lastValidatedAt: at,
+        createdAt: at,
+        updatedAt: at,
+      });
+    };
+    mailbox("mail-a", "a@gmail.com", "connected");
+    mailbox("mail-b", "b@gmail.com", "disabled");
+    return Effect.gen(function* () {
+      const service = yield* Service.PersonalConnectionService;
+      expect(
+        Option.getOrThrow(yield* service.resolveForOperation("gmail", "A@gmail.com")).connectionId,
+      ).toBe("mail-a");
+      expect(Option.isNone(yield* service.resolveForOperation("gmail", "b@gmail.com"))).toBe(true);
+      expect(Option.isNone(yield* service.resolveForOperation("gmail", "nobody@gmail.com"))).toBe(
+        true,
+      );
+      expect(Option.isNone(yield* service.resolveForOperation("gmail", null))).toBe(true);
+
+      const pasted = yield* service
+        .connect({ vendorId: "gmail", credentials: { refreshToken: Redacted.make("x") } })
+        .pipe(Effect.flip);
+      expect(pasted.message).toContain("signing in");
+      const reconnect = yield* service
+        .reconnect({ connectionId: ConnectionId.make("mail-a") })
+        .pipe(Effect.flip);
+      expect(reconnect.message).toContain("Sign in again");
     }).pipe(Effect.provide(harness.layer));
   });
 });

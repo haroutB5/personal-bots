@@ -20,6 +20,7 @@ import {
   type PersonalConnectionValidateInput,
   type PersonalConnectionValidationResult,
   type PersonalConnectionVendorId,
+  isEmailVendorId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,7 +32,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as Adapters from "./adapters.ts";
 import * as VendorAdapters from "./vendors/layer.ts";
-import { connectionDefinition, usesBrowserSession } from "./catalog.ts";
+import { connectionDefinition, usesBrowserSession, usesOAuth } from "./catalog.ts";
 import * as CredentialStore from "./credentialStore.ts";
 import * as MachineImport from "./machineImport.ts";
 import { scrubCredentialValues } from "./operations.ts";
@@ -108,9 +109,15 @@ export class PersonalConnectionService extends Context.Service<
     readonly rotate: (
       input: PersonalConnectionRotateInput,
     ) => Effect.Effect<PersonalConnection, PersonalConnectionsError>;
-    /** Re-read for every operation so disable and rotation take effect immediately. */
+    /**
+     * Re-read for every operation so disable and rotation take effect
+     * immediately. A mailbox vendor has one connection per address, so it
+     * resolves by `account` and finds nothing without one; every other vendor
+     * resolves by vendor alone and ignores it.
+     */
     readonly resolveForOperation: (
       vendorId: PersonalConnectionVendorId,
+      account: string | null,
     ) => Effect.Effect<Option.Option<ResolvedPersonalConnection>, PersonalConnectionsError>;
   }
 >()("t3/personal/connections/service/PersonalConnectionService") {}
@@ -257,6 +264,11 @@ export const make = Effect.gen(function* () {
   const connectUnlocked = Effect.fn("PersonalConnectionService.connect")(function* (
     input: PersonalConnectionConnectInput,
   ) {
+    if (isEmailVendorId(input.vendorId)) {
+      return yield* fail(
+        `${connectionDefinition(input.vendorId).displayName} is connected by signing in, not by pasting a token.`,
+      );
+    }
     if (Option.isSome(yield* db("lookup", repository.getByVendor(input.vendorId)))) {
       return yield* fail("A connection for this vendor already exists.");
     }
@@ -378,6 +390,9 @@ export const make = Effect.gen(function* () {
     input: PersonalConnectionIdInput,
   ) {
     const previous = yield* requireConnection(input.connectionId);
+    if (usesOAuth(previous.vendorId) && previous.status !== "disabled") {
+      return yield* fail("Sign in again from the Connections screen to reconnect this account.");
+    }
     if (
       previous.status !== "disabled" &&
       previous.status !== "needs_reauth" &&
@@ -415,7 +430,7 @@ export const make = Effect.gen(function* () {
     input: PersonalConnectionRotateInput,
   ) {
     const previous = yield* requireConnection(input.connectionId);
-    if (usesBrowserSession(previous.vendorId)) {
+    if (usesBrowserSession(previous.vendorId) || usesOAuth(previous.vendorId)) {
       return yield* fail(
         `${connectionDefinition(previous.vendorId).displayName} has no token to replace. Sign in again from the Connections screen instead.`,
       );
@@ -493,6 +508,7 @@ export const make = Effect.gen(function* () {
         `${definition.displayName} is connected by pasting a token, not by signing in.`,
       );
     }
+    if (isEmailVendorId(input.vendorId)) return yield* fail("This vendor has no browser sign-in.");
     const existing = yield* db("lookup", repository.getByVendor(input.vendorId));
     const now = yield* DateTime.now;
     // Re-running this is the way back from an expired session, so an existing
@@ -541,8 +557,14 @@ export const make = Effect.gen(function* () {
 
   const resolveForOperation: PersonalConnectionService["Service"]["resolveForOperation"] = (
     vendorId,
+    account,
   ) =>
-    db("resolve", repository.getByVendor(vendorId)).pipe(
+    (isEmailVendorId(vendorId)
+      ? account === null
+        ? Effect.succeed(Option.none<Repository.StoredPersonalConnection>())
+        : db("resolve", repository.getByAccount(vendorId, account))
+      : db("resolve", repository.getByVendor(vendorId))
+    ).pipe(
       Effect.map(
         Option.flatMap((connection) =>
           connection.status === "connected"

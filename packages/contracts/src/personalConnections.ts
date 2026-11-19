@@ -25,6 +25,9 @@ export type EmailVendorId = typeof EmailVendorId.Type;
 export type SingleAccountVendorId = Exclude<PersonalConnectionVendorId, EmailVendorId>;
 export const isEmailVendorId = (vendorId: PersonalConnectionVendorId): vendorId is EmailVendorId =>
   vendorId === "gmail" || vendorId === "outlook";
+export const isSingleAccountVendorId = (
+  vendorId: PersonalConnectionVendorId,
+): vendorId is SingleAccountVendorId => !isEmailVendorId(vendorId);
 
 /**
  * How the owner proves the account is theirs.

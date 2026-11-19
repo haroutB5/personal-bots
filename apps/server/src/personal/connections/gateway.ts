@@ -1,4 +1,10 @@
-import { type PersonalBotId, type PersonalTaskId, type ThreadId } from "@t3tools/contracts";
+import {
+  isEmailVendorId,
+  type PersonalBotId,
+  type PersonalConnectionVendorId,
+  type PersonalTaskId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -115,6 +121,8 @@ export class PersonalConnectionGateway extends Context.Service<
       ReadonlyArray<{
         readonly vendorId: string;
         readonly displayName: string;
+        /** The mailbox addresses of a multi-account vendor; empty for every other vendor. */
+        readonly accounts: ReadonlyArray<string>;
         readonly operations: ReadonlyArray<{
           readonly operation: string;
           readonly description: string;
@@ -134,6 +142,29 @@ export const make = Effect.gen(function* () {
   const browser = yield* PersonalBrowser;
 
   const refuse = (reason: string) => new PersonalConnectionGatewayError({ reason });
+
+  /**
+   * Why no connection answered. A mailbox vendor names the address that was
+   * asked for and the ones that are connected, so a bot that mistyped one is
+   * told what to use instead of being sent to Settings.
+   */
+  const notConnectedReason = (
+    definition: { readonly displayName: string },
+    vendorId: PersonalConnectionVendorId,
+    account: string | null,
+  ) =>
+    Effect.gen(function* () {
+      if (!isEmailVendorId(vendorId) || account === null) {
+        return `${definition.displayName} is not connected, or the user disabled it. Ask the user to connect it in Settings; you cannot connect it yourself.`;
+      }
+      const all = yield* connections.list().pipe(Effect.mapError((error) => refuse(error.message)));
+      const live = all.connections
+        .filter((row) => row.vendorId === vendorId && row.status === "connected")
+        .map((row) => row.account?.accountId ?? "");
+      return live.length === 0
+        ? `${definition.displayName} has no connected mailbox, so ${account} cannot be used. Ask the user to add one in Settings; you cannot add it yourself.`
+        : `No connected ${definition.displayName} mailbox is ${account}, or the user disabled it. Connected: ${live.join(", ")}. Use one of those exactly.`;
+    });
 
   const call = Effect.fn("PersonalConnectionGateway.call")(function* (input: {
     readonly operation: string;
@@ -155,21 +186,21 @@ export const make = Effect.gen(function* () {
     const operation = found.value;
     const definition = connectionDefinition(operation.vendorId);
 
-    // Read now, not at session start: a connection disabled a minute ago is
-    // disabled for this call.
-    const resolved = yield* connections
-      .resolveForOperation(operation.vendorId)
-      .pipe(Effect.mapError((error) => refuse(error.message)));
-    if (Option.isNone(resolved)) {
-      return yield* refuse(
-        `${definition.displayName} is not connected, or the user disabled it. Ask the user to connect it in Settings; you cannot connect it yourself.`,
-      );
-    }
-    const connection = resolved.value;
-
     const prepared = yield* operation
       .prepare(input.arguments)
       .pipe(Effect.mapError((error) => refuse(error.message)));
+
+    // Read now, not at session start: a connection disabled a minute ago is
+    // disabled for this call.
+    const resolved = yield* connections
+      .resolveForOperation(operation.vendorId, prepared.account)
+      .pipe(Effect.mapError((error) => refuse(error.message)));
+    if (Option.isNone(resolved)) {
+      return yield* refuse(
+        yield* notConnectedReason(definition, operation.vendorId, prepared.account),
+      );
+    }
+    const connection = resolved.value;
 
     /**
      * The second connection a server-side credential transfer writes into.
@@ -185,7 +216,7 @@ export const make = Effect.gen(function* () {
       secondaryVendorId === null
         ? Effect.succeedNone
         : connections
-            .resolveForOperation(secondaryVendorId)
+            .resolveForOperation(secondaryVendorId, null)
             .pipe(Effect.mapError((error) => refuse(error.message)));
     const secondary = yield* resolveSecondary();
     if (secondaryDefinition !== null && Option.isNone(secondary)) {
@@ -342,7 +373,7 @@ export const make = Effect.gen(function* () {
     // minutes to answer, and a disable or a rotation in that window means the
     // approval was given for a connection that no longer exists.
     const current = yield* connections
-      .resolveForOperation(operation.vendorId)
+      .resolveForOperation(operation.vendorId, prepared.account)
       .pipe(Effect.mapError((error) => refuse(error.message)));
     if (
       Option.isNone(current) ||
@@ -530,21 +561,26 @@ export const make = Effect.gen(function* () {
   const describe: PersonalConnectionGateway["Service"]["describe"] = () =>
     connections.list().pipe(
       Effect.mapError((error) => refuse(error.message)),
-      Effect.map(({ connections: rows }) =>
-        rows
-          // Only connected accounts: an operation a bot cannot run is an
-          // invitation to try, and the refusal would read like a bug.
-          .filter((row) => row.status === "connected")
-          .map((row) => ({
-            vendorId: row.vendorId,
-            displayName: connectionDefinition(row.vendorId).displayName,
-            operations: Operations.operationsForVendor(row.vendorId).map((operation) => ({
-              operation: operation.operationId,
-              description: operation.description,
-              argumentsJsonSchema: operation.argumentsJsonSchema,
-            })),
+      Effect.map(({ connections: rows }) => {
+        // Only connected accounts: an operation a bot cannot run is an
+        // invitation to try, and the refusal would read like a bug.
+        const live = rows.filter((row) => row.status === "connected");
+        const vendors = [...new Set(live.map((row) => row.vendorId))];
+        return vendors.map((vendorId) => ({
+          vendorId,
+          displayName: connectionDefinition(vendorId).displayName,
+          accounts: isEmailVendorId(vendorId)
+            ? live
+                .filter((row) => row.vendorId === vendorId)
+                .flatMap((row) => (row.account === null ? [] : [row.account.accountId]))
+            : [],
+          operations: Operations.operationsForVendor(vendorId).map((operation) => ({
+            operation: operation.operationId,
+            description: operation.description,
+            argumentsJsonSchema: operation.argumentsJsonSchema,
           })),
-      ),
+        }));
+      }),
     );
 
   return PersonalConnectionGateway.of({ call, describe });
