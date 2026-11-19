@@ -75,6 +75,10 @@ vi.mock("@react-navigation/native-stack", async () => {
   };
 });
 
+vi.mock("../personal/chatPress", () => ({
+  pressChat: (_threadId: string, open: () => void) => open(),
+  onChatPress: () => undefined,
+}));
 vi.mock("../bots/BotFormScreen", () => ({ BotFormScreen: world.Null }));
 vi.mock("../bots/BotThreadsScreen", () => ({ BotThreadsScreen: world.Null }));
 vi.mock("./BotsScreen", () => ({ BotsScreen: world.Null }));

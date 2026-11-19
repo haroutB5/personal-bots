@@ -399,6 +399,7 @@ export function GroupConversationScreen({
       ) : (
         <>
           <MessageList
+            threadId={group.threadId}
             native={native}
             chat={chat}
             cardContext={cards.context}

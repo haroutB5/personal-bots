@@ -81,4 +81,20 @@ describe("cold start timings", () => {
       else expect(["number", "boolean"]).toContain(typeof value);
     }
   });
+
+  it("carries processStartMs as whole milliseconds when the caller knows it, and none when not", () => {
+    const withStart = createStartPerf();
+    withStart.mark("jsMain", 900);
+    expect(withStart.take(612.6)).toEqual({
+      event: "perf",
+      journey: "a-start",
+      jsMainMs: 900,
+      cold: false,
+      processStartMs: 613,
+    });
+
+    const without = createStartPerf();
+    without.mark("jsMain", 900);
+    expect(without.take()).not.toHaveProperty("processStartMs");
+  });
 });

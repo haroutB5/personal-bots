@@ -21,8 +21,9 @@ import { useLinkGate } from "../security/useLinkGate";
 import { storeLinkDraft } from "../chat/linkDraft";
 import { clearChatNotifications } from "../notifications/clearChatNotifications";
 import { nativeNotify } from "../notifications/nativeNotify";
-import { back, parseDeepLink, type Route, type TabName } from "../nav/routes";
+import { back, parseDeepLink, type NavState, type Route, type TabName } from "../nav/routes";
 import { chatStackAnimation, type ChatEntry } from "../nav/chatEntry";
+import { openChat, replaceWithChat, warmLinkedChat, type ChatTarget } from "./openChat";
 import { BotFormScreen } from "../bots/BotFormScreen";
 import { BotThreadsScreen } from "../bots/BotThreadsScreen";
 import { BotNewChatScreen } from "../screens/BotNewChatScreen";
@@ -77,12 +78,7 @@ export interface AppShellProps {
 
 export type RootStackParamList = {
   Tabs: { readonly tab?: TabName } | undefined;
-  Chat: {
-    readonly botId: string;
-    readonly threadId: string;
-    readonly requestId?: string;
-    readonly via?: ChatEntry | undefined;
-  };
+  Chat: ChatTarget;
   Chats: { readonly botId: string };
   Bot: { readonly botId: string };
   BotNew: undefined;
@@ -235,7 +231,7 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
 
 const VOICE_CALL_NAVIGATION: VoiceCallNavigation = {
   openChat: (botId, threadId) => {
-    if (navigationRef.isReady()) navigationRef.navigate("Chat", { botId, threadId });
+    if (navigationRef.isReady()) openChat(navigationRef, { botId, threadId });
   },
   openSettings: () => {
     if (navigationRef.isReady()) navigationRef.navigate("Settings");
@@ -267,7 +263,7 @@ function ChipEntrySettled({
 }
 
 function Shell({ props }: { readonly props: AppShellProps }) {
-  const pendingLink = useRef<string | null>(null);
+  const pendingLink = useRef<NavState | null>(null);
   const [navigatorReady, setNavigatorReady] = useState(false);
   const chat = useMemo(() => createChatEnvironment(props.native), [props.native]);
   const banners = useMemo(createInAppBannerFeed, []);
@@ -284,7 +280,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
       const params = current.params as { readonly threadId?: string } | undefined;
       if (params?.threadId === threadId) return true;
     }
-    navigationRef.navigate("Chat", { botId, threadId });
+    openChat(navigationRef, { botId, threadId });
     return true;
   }, []);
   useCameraRecovery({
@@ -293,14 +289,8 @@ function Shell({ props }: { readonly props: AppShellProps }) {
     openChat: openRecoveredChat,
   });
 
-  const openLink = useCallback(
-    (raw: string) => {
-      const state = parseDeepLink(raw);
-      if (state === null) return;
-      if (!navigationRef.isReady()) {
-        pendingLink.current = raw;
-        return;
-      }
+  const applyLink = useCallback(
+    (state: NavState) => {
       // A notification reply too long to send there arrives as a draft: put it where the composer reads from.
       for (const route of state.stack) {
         if (route.kind === "chat" && route.draft !== undefined) {
@@ -316,6 +306,20 @@ function Shell({ props }: { readonly props: AppShellProps }) {
       navigationRef.reset({ index: routes.length - 1, routes });
     },
     [props.native],
+  );
+
+  const openLink = useCallback(
+    (raw: string) => {
+      const state = parseDeepLink(raw);
+      if (state === null) return;
+      warmLinkedChat(state);
+      if (!navigationRef.isReady()) {
+        pendingLink.current = state;
+        return;
+      }
+      applyLink(state);
+    },
+    [applyLink],
   );
 
   // Every link from outside goes through the app lock gate: while locked it is held, not acted on.
@@ -337,7 +341,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
         const pending = pendingLink.current;
         if (pending !== null) {
           pendingLink.current = null;
-          openLink(pending);
+          applyLink(pending);
         }
       }}
     >
@@ -383,7 +387,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                   entry={route.params.via}
                   onBack={() => navigation.goBack()}
                   onOpenChat={(botId, threadId) =>
-                    navigation.replace("Chat", { botId, threadId, via: "chip" })
+                    replaceWithChat(navigation, { botId, threadId, via: "chip" })
                   }
                   onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
                   onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
@@ -401,9 +405,11 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 botId={route.params.botId}
                 onBack={() => navigation.goBack()}
                 onOpenChat={(threadId) =>
-                  navigation.replace("Chat", { botId: route.params.botId, threadId })
+                  replaceWithChat(navigation, { botId: route.params.botId, threadId })
                 }
-                onOpenBotChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onOpenBotChat={(botId, threadId) =>
+                  replaceWithChat(navigation, { botId, threadId })
+                }
                 onOpenTask={(taskId) => navigation.push("Task", { taskId })}
               />
             )}
@@ -416,7 +422,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 botId={route.params.botId}
                 onBack={() => navigation.goBack()}
                 onOpenChat={(threadId) =>
-                  navigation.navigate("Chat", { botId: route.params.botId, threadId })
+                  openChat(navigation, { botId: route.params.botId, threadId })
                 }
                 onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
               />
@@ -440,7 +446,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 native={props.native}
                 botId={route.params.botId}
                 onBack={() => navigation.goBack()}
-                onStarted={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onStarted={(botId, threadId) => replaceWithChat(navigation, { botId, threadId })}
               />
             )}
           </Stack.Screen>
@@ -450,7 +456,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 native={props.native}
                 shareId={route.params.shareId}
                 onClose={() => navigation.goBack()}
-                onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onOpenChat={(botId, threadId) => replaceWithChat(navigation, { botId, threadId })}
               />
             )}
           </Stack.Screen>
@@ -473,7 +479,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 chat={chat}
                 groupId={route.params.groupId}
                 onBack={() => navigation.goBack()}
-                onOpenChat={(botId, threadId) => navigation.replace("Chat", { botId, threadId })}
+                onOpenChat={(botId, threadId) => replaceWithChat(navigation, { botId, threadId })}
                 onEditBot={(botId) => navigation.navigate("BotEdit", { botId })}
               />
             )}
@@ -494,7 +500,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 taskId={route.params.taskId}
                 onBack={() => navigation.goBack()}
                 onOpenTask={(taskId) => navigation.push("Task", { taskId })}
-                onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+                onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
               />
             )}
           </Stack.Screen>
@@ -528,7 +534,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 onNewBot={() => navigation.navigate("BotNew")}
                 onOpenBot={(botId) => navigation.navigate("Bot", { botId })}
                 onOpenTask={(taskId) => navigation.navigate("Task", { taskId })}
-                onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+                onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
                 onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
               />
             )}
@@ -723,7 +729,7 @@ function TabsWithBots({
             installedVersion={installedVersion}
             update={update}
             onOpenInstallPermission={onOpenInstallPermission}
-            onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+            onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
             onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
             onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
             onOpenTeam={() => navigation.navigate("Team")}
@@ -733,14 +739,14 @@ function TabsWithBots({
           <TasksScreen
             native={native}
             onOpenTask={(taskId) => navigation.push("Task", { taskId })}
-            onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+            onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
             onOpenRoutine={(routineId) => navigation.push("Routine", { routineId })}
             onNewRoutine={() => navigation.navigate("RoutineForm", {})}
           />
         ) : tab === "computer" ? (
           <ComputerScreen
             native={native}
-            onOpenChat={(botId, threadId) => navigation.navigate("Chat", { botId, threadId })}
+            onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
           />
         ) : (
           <FilesScreen native={native} />

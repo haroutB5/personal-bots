@@ -27,7 +27,6 @@ import {
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { pressChat } from "../personal/chatPress";
 import { useBotShells } from "../personal/useBotShells";
 import { useHighRefresh } from "../display/useHighRefresh";
 import { tokens } from "../shell/tokens";
@@ -322,7 +321,7 @@ export function ChatsListScreen({
                     toggle(item.link.threadId);
                     return;
                   }
-                  pressChat(item.link.threadId, () => onOpenChat(item.link.threadId));
+                  onOpenChat(item.link.threadId);
                 }}
                 onLongPress={() => selectRow(item.link.threadId)}
                 delayLongPress={350}

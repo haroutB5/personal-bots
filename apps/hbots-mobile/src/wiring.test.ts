@@ -37,24 +37,45 @@ function after(text: string, anchor: string): string[] {
   return found;
 }
 
-describe("a chat row press reaches the early snapshot request", () => {
-  it("opens a chat from the chats list through pressChat, with the open as its callback", () => {
+describe("a chat opens only through the one function that starts its early snapshot request", () => {
+  it("opens a chat from the chats list through the screen's own open callback", () => {
     const presses = after(source("./screens/ChatsListScreen.tsx"), "onPress={").filter((handler) =>
-      handler.includes("pressChat("),
+      handler.includes("onOpenChat("),
     );
 
     expect(presses).toHaveLength(1);
-    expect(presses[0]).toMatch(/pressChat\(\s*item\.link\.threadId,\s*\(\) => onOpenChat\(/);
+    expect(presses[0]).toMatch(/onOpenChat\(item\.link\.threadId\)/);
+    expect(presses[0]).not.toContain("pressChat(");
   });
 
-  it("opens a chat from a bot tile through pressChat, with the open as its callback", () => {
+  it("opens a chat from a bot tile through the screen's own open callback", () => {
     const bots = source("./shell/BotsScreen.tsx");
     const declaration = bots.indexOf("const openBot = ");
     const body = balanced(bots, bots.indexOf("{", bots.indexOf("=>", declaration)));
-    const openBot = bots.split("const openBot = ").slice(1);
 
-    expect(openBot).toHaveLength(1);
-    expect(body).toMatch(/pressChat\(\s*tap\.threadId,\s*\(\) => onOpenChat\(/);
+    expect(body).toMatch(/onOpenChat\(target\.botId, tap\.threadId\)/);
+    expect(body).not.toContain("pressChat(");
+  });
+
+  it("reaches the Chat route from the shell only through openChat and replaceWithChat", () => {
+    const shell = source("./shell/AppShell.tsx");
+
+    expect(shell).not.toMatch(/\.(navigate|replace)\(\s*"Chat"/u);
+    expect(shell).toMatch(/\bopenChat\(/u);
+    expect(shell).toMatch(/\breplaceWithChat\(/u);
+  });
+
+  it("calls the early request from nowhere but the press module and openChat", () => {
+    const callers = NodeFS.readdirSync(new URL("./", import.meta.url), {
+      recursive: true,
+      encoding: "utf8",
+    })
+      .filter((file) => /\.tsx?$/u.test(file) && !/\.test\.tsx?$/u.test(file))
+      .filter((file) => /\b(pressChat|onChatPress)\(/u.test(source(`./${file}`)))
+      .map((file) => file.replaceAll("\\", "/"))
+      .sort();
+
+    expect(callers).toEqual(["personal/chatPress.ts", "shell/openChat.ts"]);
   });
 });
 
@@ -71,7 +92,9 @@ describe("the chat screen holds its chat", () => {
 
 describe("the app checks for an update when the connection returns", () => {
   const app = source("./App.tsx");
-  const effects = after(app, "useEffect(").filter((effect) => effect.includes("startReconnectCheck("));
+  const effects = after(app, "useEffect(").filter((effect) =>
+    effect.includes("startReconnectCheck("),
+  );
   const options = effects.flatMap((effect) => after(effect, "startReconnectCheck("));
 
   it("starts it in an effect, once", () => {
@@ -80,7 +103,9 @@ describe("the app checks for an update when the connection returns", () => {
   });
 
   it("listens to the native client's connection and to the updater state", () => {
-    expect(options[0]).toMatch(/connection:\s*\{\s*subscribe:\s*readyNative\.subscribeConnected\s*\}/);
+    expect(options[0]).toMatch(
+      /connection:\s*\{\s*subscribe:\s*readyNative\.subscribeConnected\s*\}/,
+    );
     expect(options[0]).toMatch(/updates:\s*\{\s*subscribe:\s*subscribeUpdate\s*\}/);
   });
 

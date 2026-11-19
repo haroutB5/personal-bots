@@ -286,6 +286,97 @@ describe("client diagnostics route", () => {
     ).toEqual({ event: "perf", journey: "a-chat-open", ms: 9 });
   });
 
+  it("keeps the list commit fields of an a-chat-open beacon and drops bad ones", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 207,
+          store: "memory",
+          listMs: 96,
+          rows: 31,
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 207,
+      store: "memory",
+      listMs: 96,
+      rows: 31,
+    });
+    for (const listMs of ["96", -1, 9.5, null, { a: 1 }]) {
+      expect(
+        sanitizeClientDiag(
+          JSON.stringify({ event: "perf", journey: "a-chat-open", ms: 5, listMs }),
+        ),
+      ).toEqual({ event: "perf", journey: "a-chat-open", ms: 5 });
+    }
+  });
+
+  it("keeps processToOpenMs and processStartMs as integers and drops bad ones", () => {
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 207,
+          store: "network",
+          processToOpenMs: 5_000,
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 207,
+      store: "network",
+      processToOpenMs: 5_000,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-start",
+          jsMainMs: 900,
+          processStartMs: 612,
+          cold: true,
+        }),
+      ),
+    ).toEqual({
+      event: "perf",
+      journey: "a-start",
+      jsMainMs: 900,
+      processStartMs: 612,
+      cold: true,
+    });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-chat-open",
+          ms: 5,
+          processToOpenMs: -3,
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-chat-open", ms: 5 });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({
+          event: "perf",
+          journey: "a-start",
+          jsMainMs: 900,
+          processStartMs: "612",
+        }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-start", jsMainMs: 900 });
+    expect(
+      sanitizeClientDiag(
+        JSON.stringify({ event: "perf", journey: "a-start", jsMainMs: 900, processStartMs: -1 }),
+      ),
+    ).toEqual({ event: "perf", journey: "a-start", jsMainMs: 900 });
+  });
+
   it("keeps the cold-start marks of an a-start beacon and drops bad ones", () => {
     expect(
       sanitizeClientDiag(

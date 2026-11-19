@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   noteCacheRead,
   noteCacheWrite,
+  noteListCommit,
   noteRequestDone,
   noteRequestStart,
   takeChatOpenReport,
@@ -148,5 +149,98 @@ describe("chat open timings", () => {
       fromTapMs: 200,
       store: "memory",
     });
+  });
+
+  it("ignores a list commit from before this open began", () => {
+    noteListCommit("t-list-old", { at: 900, ms: 80, rows: 40 });
+
+    expect(takeChatOpenReport("t-list-old", 1_000, 1_200).body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 200,
+      store: "memory",
+    });
+  });
+
+  it("reports the first list commit after the open began as listMs and rows", () => {
+    noteListCommit("t-list", { at: 1_150, ms: 96.4, rows: 31 });
+
+    const report = takeChatOpenReport("t-list", 1_000, 1_300);
+
+    expect(report.body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 300,
+      store: "memory",
+      listMs: 96,
+      rows: 31,
+    });
+    expect(report.line).toBe("[perf] chat-open-ms 300 memory request-at-ms - list-ms 96");
+  });
+
+  it("lets the next open's commit replace one an earlier open left behind after its report", () => {
+    // A chat opened with no rows reports first. Its rows commit later, with nobody to take them.
+    noteListCommit("t-list-two", { at: 2_400, ms: 25, rows: 13 });
+    noteListCommit("t-list-two", { at: 3_100, ms: 70, rows: 12 });
+
+    expect(takeChatOpenReport("t-list-two", 3_000, 3_500).body).toMatchObject({
+      listMs: 70,
+      rows: 12,
+    });
+    expect(takeChatOpenReport("t-list-two", 4_000, 4_100).body).not.toHaveProperty("listMs");
+  });
+
+  it("leaves out listMs and rows when the list never committed rows", () => {
+    const report = takeChatOpenReport("t-list-none", 4_000, 4_120);
+
+    expect(report.body).not.toHaveProperty("listMs");
+    expect(report.body).not.toHaveProperty("rows");
+    expect(report.line).not.toContain("list-ms");
+  });
+
+  it("puts list-ms after from-tap-ms on the line only when the body has it", () => {
+    noteListCommit("t-list-tap", { at: 5_300, ms: 41, rows: 8 });
+
+    expect(takeChatOpenReport("t-list-tap", 5_200, 5_400, 5_100).line).toBe(
+      "[perf] chat-open-ms 200 memory request-at-ms - from-tap-ms 300 list-ms 41",
+    );
+  });
+
+  it("counts processToOpenMs from the press when one is known", () => {
+    const report = takeChatOpenReport("t-proc-tap", 9_300, 9_500, 9_200, 4_200);
+
+    expect(report.body).toEqual({
+      event: "perf",
+      journey: "a-chat-open",
+      ms: 200,
+      fromTapMs: 300,
+      store: "memory",
+      processToOpenMs: 5_000,
+    });
+    expect(report.line).toBe(
+      "[perf] chat-open-ms 200 memory request-at-ms - from-tap-ms 300 process-ms 5000",
+    );
+  });
+
+  it("counts processToOpenMs from the mount when no press is known", () => {
+    const report = takeChatOpenReport("t-proc-mount", 8_000, 8_150, undefined, 2_999.6);
+
+    expect(report.body.processToOpenMs).toBe(5_000);
+    expect(report.line).toBe("[perf] chat-open-ms 150 memory request-at-ms - process-ms 5000");
+  });
+
+  it("leaves out processToOpenMs and process-ms without a process start", () => {
+    const report = takeChatOpenReport("t-proc-none", 8_000, 8_150, 7_900);
+
+    expect(report.body).not.toHaveProperty("processToOpenMs");
+    expect(report.line).not.toContain("process-ms");
+  });
+
+  it("puts process-ms after list-ms on the line", () => {
+    noteListCommit("t-proc-list", { at: 6_100, ms: 50, rows: 9 });
+
+    expect(takeChatOpenReport("t-proc-list", 6_000, 6_200, undefined, 1_000).line).toBe(
+      "[perf] chat-open-ms 200 memory request-at-ms - list-ms 50 process-ms 5000",
+    );
   });
 });

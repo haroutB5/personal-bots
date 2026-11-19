@@ -64,6 +64,7 @@ import { useThreadDetailView, useThreadRef } from "../chat/chatEnvironment";
 import { useBotShells } from "../personal/useBotShells";
 import { holdChat, takeChatTap } from "../personal/chatOpenIntent";
 import { takeChatOpenReport } from "../personal/chatOpenPerf";
+import { takeFirstOpenProcessStart } from "../personal/processStart";
 import { reportPerf } from "../crash/crashReporter";
 import { chatLoadRetryDelayMs } from "./chatLoadRetry";
 import {
@@ -465,7 +466,13 @@ export function ChatScreen({
     openLogged.current = true;
     requestAnimationFrame(() => {
       const tapAt = takeChatTap(threadId, openedAt.current);
-      const report = takeChatOpenReport(threadId, openedAt.current, performance.now(), tapAt);
+      const report = takeChatOpenReport(
+        threadId,
+        openedAt.current,
+        performance.now(),
+        tapAt,
+        takeFirstOpenProcessStart(),
+      );
       console.info(report.line);
       reportPerf(report.body);
     });
@@ -978,6 +985,7 @@ export function ChatScreen({
             {cards.rulesUsage === null ? null : <RulesUsageCard usage={cards.rulesUsage} />}
             <RiseIn enabled={enteredVia === "chip"} style={styles.riseHost}>
               <MessageList
+                threadId={threadId}
                 native={native}
                 chat={chat}
                 cardContext={cards.context}
