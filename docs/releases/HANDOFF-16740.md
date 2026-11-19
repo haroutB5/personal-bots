@@ -1,6 +1,6 @@
 # 1.67.40: a sealed secret store whose key does not open fails safe
 
-Based on 1.67.39 (`0130b5adf7b1`, trunk `2b13d0dfaf`). Trunk is `e9a58f66b1` with `fix/secret-store-locked` (`7c8b50b71d46`, two commits) merged on top and a version commit after it. The only change from 1.67.39 in shipped code is under `apps/server/src/auth`, `apps/server/src/cli` and `apps/server/src/personal/secrets`. The schema stays at 160. There is no web change and no new APK.
+Based on 1.67.39 (`0130b5adf7b1`, trunk `2b13d0dfaf`). Trunk is `e9a58f66b1` with `fix/secret-store-locked` (`7c8b50b71d46`, two commits) merged on top, then a version commit and a gate scope commit. The only change from 1.67.39 in shipped code is under `apps/server/src/auth`, `apps/server/src/cli` and `apps/server/src/personal/secrets`. The schema stays at 160. There is no web change and no new APK.
 
 ## Why
 
@@ -11,6 +11,7 @@ After the laptop move the secrets folder was copied byte for byte. It holds 13 s
 - **The data key has three states** (`e15f68b85d`). Absent, open or locked. A locked store raises `SecretStoreLockedError` with a reason and the wrapping source, never writes, and recovers on the next access once a key file opens. A missing key file next to sealed files is locked too, so no key is minted.
 - **Recovery commands.** `secrets status` reports locked or open with the sealed count. `secrets rewrap` re-wraps the key from the old machine's material, with a backup, a re-read proof and a restore on failure. `secrets import` works in place when every local entry opens with the bundle key.
 - **Import never overwrites or deletes what it cannot prove safe** (`7c8b50b71d`). With no key file, import refuses with `target-key-differs` unless every local entry opens with the bundle key, and `--force` does not bypass it. A failed import restores the original bytes of every entry it overwrote and the key file, and removes its own key backup. A successful import that replaces the key keeps the old one as `data-encryption-key.json.locked-<iso>`.
+- **Gate scope.** `qa/verify-skills/` (the recorded runs of the phone check script, already on trunk) joins `NO_CHECK` in `gateScope.mjs`. No check reads it, and an unmapped path stops the gate plan, which blocked the release gate on its PNG and text evidence files. Dev-team tooling only.
 - **Locked message.** It says the key file is missing for the key-missing case, not "sealed on another machine".
 
 ## Expected boot log

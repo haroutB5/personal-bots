@@ -125,6 +125,7 @@ export const NO_CHECK = [
   "scripts/personal/perf/",
   "scripts/personal/qa/",
   "scripts/personal/contract/",
+  "qa/verify-skills/",
   PARITY_MATRIX,
   ".repos/",
   ".agents/",
@@ -895,7 +896,12 @@ const COMMIT_FIELDS = 4;
 
 /** Git refuses a NUL byte in a commit message, so NUL is the one separator a message cannot hold. */
 function commitsOf(repo, base, head) {
-  const fields = gitOut(repo, ["log", "-z", "--format=%H%x00%P%x00%s%x00%b", `${base}..${head}`]).split("\0");
+  const fields = gitOut(repo, [
+    "log",
+    "-z",
+    "--format=%H%x00%P%x00%s%x00%b",
+    `${base}..${head}`,
+  ]).split("\0");
   if (fields.at(-1) === "") fields.pop();
   if (fields.length % COMMIT_FIELDS !== 0)
     throw new Error(`git log gave ${fields.length} fields, not a multiple of ${COMMIT_FIELDS}`);
@@ -904,7 +910,9 @@ function commitsOf(repo, base, head) {
   );
   return records.map(([sha, parents, subject, body]) => {
     const paths = RELEASE_SUBJECT.test(subject)
-      ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean)
+      ? gitOut(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", sha])
+          .split("\n")
+          .filter(Boolean)
       : [];
     return {
       sha,
