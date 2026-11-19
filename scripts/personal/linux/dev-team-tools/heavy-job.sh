@@ -25,14 +25,14 @@ cd -- "$workdir"
 # Single machine paths, independent of HOME, cwd, repo and XDG isolation.
 # HEAVY_JOB_BASE exists for tests: it must stay an absolute path.
 base=${HEAVY_JOB_BASE:-/home/harout/.personal-bots/run/omarchy-heavy}
-slots=${HEAVY_JOB_SLOTS:-2}
+slots=${HEAVY_JOB_SLOTS:-4}
 min_free_gb=${HEAVY_JOB_MIN_FREE_GB:-6}
 main=$base.lock
 [[ "$base" == /* ]] || { echo 'HEAVY_JOB_BASE must be an absolute path.' >&2; exit 2; }
-[[ "$slots" =~ ^[12]$ && "$min_free_gb" =~ ^[0-9]+$ ]] || { echo 'HEAVY_JOB_SLOTS must be 1 or 2; HEAVY_JOB_MIN_FREE_GB a whole number.' >&2; exit 2; }
+[[ "$slots" =~ ^[1-8]$ && "$min_free_gb" =~ ^[0-9]+$ ]] || { echo 'HEAVY_JOB_SLOTS must be 1 to 8; HEAVY_JOB_MIN_FREE_GB a whole number.' >&2; exit 2; }
 slot_for() { echo "$base-$1.lock"; }
-# Slot 2 is taken only while MemAvailable is at least HEAVY_JOB_MIN_FREE_GB, so a
-# second job never starves hbots on the 16 GB laptop.
+# Slots 2 and up are taken only while MemAvailable is at least HEAVY_JOB_MIN_FREE_GB,
+# so extra jobs never starve hbots. 4 slots by default on the 31 GB laptop (Harout, 19 Nov).
 mem_free_gb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
 try_slots() {
   local i l
@@ -72,6 +72,21 @@ if [[ ${HBOTS_HEAVY_JOB_HELD:-} == 1 && -e /proc/$$/fd/9 ]] &&
 fi
 umask 077
 deadline=$((SECONDS + wait_seconds))
+# 0. An armed release waits for idle. With 4 slots new jobs could keep it waiting
+#    for ever, so no new job starts while an hbots-release-run unit is active
+#    (Poteto, 19 Nov). Running jobs finish normally. Only the live lock base is
+#    checked, so tests with their own HEAVY_JOB_BASE are not affected.
+release_armed() {
+  [[ ( "$base" == /home/harout/.personal-bots/run/omarchy-heavy || ${HEAVY_JOB_RELEASE_CHECK:-} == 1 ) && ${HEAVY_JOB_IGNORE_RELEASE:-} != 1 ]] || return 1
+  [[ -n $(systemctl --user list-units --state=active --plain --no-legend 'hbots-release-run-*.service' 2>/dev/null) ]]
+}
+while release_armed; do
+  echo 'heavy-job: an hbots release is armed and waiting for idle; new jobs wait until it lands.' >&2
+  ((SECONDS < deadline)) || exit 75
+  remaining=$((deadline - SECONDS))
+  ((remaining > 30)) && remaining=30
+  sleep "$remaining"
+done
 # 1. A slot first: a job that cannot get one holds nothing, so it cannot keep a
 #    release from starting.
 until try_slots; do
@@ -97,17 +112,18 @@ printf 'pid=%s started=%s label=%s cwd=%s slot=%s\n' "$$" "$(date -Is)" "$label"
 export HBOTS_HEAVY_JOB_HELD=1
 # nice -n is relative; setpriority makes the inherited nice value exactly 10.
 prio=(ionice -c 3 python3 -c 'import os,sys; os.setpriority(os.PRIO_PROCESS,0,10); os.execvp(sys.argv[1],sys.argv[1:])')
-# A memory scope of its own. MemoryHigh softens the job past 5G so the live server
-# keeps its pages. MemoryMax and MemorySwapMax are the hard ceiling: past 6G RAM
-# plus 4G swap the kernel kills the job inside this scope, so a runaway build or
-# emulator cannot push the box to 90% swap and take hbots with it. Two jobs at
-# both limits leave room for the server, and 8G of job swap is far below the 90%
-# swap rule. Any cap accepts off, which restores the old behaviour; MemoryHigh=off
+# A memory scope of its own. MemoryHigh softens the job past 7G so the live server
+# keeps its pages. MemoryMax and MemorySwapMax are the hard ceiling: past 8G RAM
+# plus 8G swap the kernel kills the job inside this scope, so a runaway build or
+# emulator cannot push the box to 90% swap and take hbots with it. A Gradle APK
+# build fits these defaults. On the 31 GB laptop with 62 GB swap, four jobs at the
+# swap cap use about half the swap, and no extra slot starts under the free-RAM
+# floor. Any cap accepts off, which restores the old behaviour; MemoryHigh=off
 # also runs without a scope at all.
 # --expand-environment=no: systemd-run would otherwise rewrite $$ and $VAR in the job's arguments.
-high=${HEAVY_JOB_MEMORY_HIGH:-5G}
-max=${HEAVY_JOB_MEMORY_MAX:-6G}
-swap=${HEAVY_JOB_SWAP_MAX:-4G}
+high=${HEAVY_JOB_MEMORY_HIGH:-7G}
+max=${HEAVY_JOB_MEMORY_MAX:-8G}
+swap=${HEAVY_JOB_SWAP_MAX:-8G}
 size_re='^(off|[1-9][0-9]*[KMG])$'
 [[ "$high" =~ $size_re ]] || { echo 'HEAVY_JOB_MEMORY_HIGH must be off or a size such as 6G.' >&2; exit 2; }
 [[ "$max" =~ $size_re ]] || { echo 'HEAVY_JOB_MEMORY_MAX must be off or a size such as 6G.' >&2; exit 2; }
