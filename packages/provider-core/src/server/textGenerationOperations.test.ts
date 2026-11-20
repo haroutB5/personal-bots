@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { decodeJsonReply, fromRunner } from "./textGenerationOperations.ts";
 
@@ -24,5 +25,28 @@ it.effect("fails a thread title reply that is only the schema key", () =>
 
     assert.instanceOf(outcome, TextGenerationError);
     assert.strictEqual(outcome.operation, "generateThreadTitle");
+  }),
+);
+
+it.effect("exposes generateStructured on fromRunner with an absolute cwd", () =>
+  Effect.gen(function* () {
+    let seenCwd: string | null = null;
+    const textGeneration = fromRunner("Stub", (request) => {
+      seenCwd = request.cwd;
+      return decodeJsonReply(request, "Stub", '{"reply":"ok"}');
+    });
+
+    assert.isDefined(textGeneration.generateStructured);
+    const result = yield* textGeneration.generateStructured!({
+      prompt: "Reply with ok.",
+      outputSchema: Schema.Struct({ reply: Schema.String }),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("opencode"),
+        model: "opencode/big-pickle",
+      },
+    });
+
+    assert.deepStrictEqual(result, { reply: "ok" });
+    assert.isTrue(seenCwd !== null && /^([A-Za-z]:[\\/]|\/)/.test(seenCwd));
   }),
 );

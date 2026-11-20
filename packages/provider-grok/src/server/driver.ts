@@ -37,6 +37,7 @@ import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
+  resolveForkMiseProviderMaintenance,
   resolveHomebrewProviderMaintenance,
   resolveMiseProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -63,6 +64,11 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         packageName: GROK_NPM_PACKAGE,
       });
     }
+    const forkMise = yield* resolveForkMiseProviderMaintenance(
+      { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
+      context,
+    );
+    if (forkMise) return forkMise;
     const mise = yield* resolveMiseProviderMaintenance(
       { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
       { tool: "grok" },

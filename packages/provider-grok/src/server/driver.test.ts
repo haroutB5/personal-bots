@@ -16,7 +16,10 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokDriver } from "./driver.ts";
-import { resolveLatestProviderVersion } from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  createProviderVersionAdvisory,
+  resolveLatestProviderVersion,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -186,5 +189,79 @@ it.layer(layerTest)("GrokDriver", (it) => {
       });
       expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "updates a mise command-wrapper Grok through mise install with rollback support",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-mise-" }),
+        );
+        const toolDir = path.join(root, "mise", "installs", "grok");
+        const versionDir = path.join(toolDir, "1.0.88");
+        const realBinary = path.join(versionDir, "grok");
+        yield* fs.makeDirectory(versionDir, { recursive: true });
+        yield* fs.writeFileString(realBinary, "#!/bin/sh\n");
+        yield* fs.chmod(realBinary, 0o755);
+        yield* fs.writeFileString(
+          path.join(toolDir, ".mise.backend.toml"),
+          'short = "grok"\nfull = "npm:@xai-official/grok"\n',
+        );
+        yield* fs.symlink("1.0.88", path.join(toolDir, "latest"));
+
+        const binDir = path.join(root, "bin");
+        const misePath = path.join(binDir, "mise");
+        yield* fs.makeDirectory(binDir, { recursive: true });
+        yield* fs.writeFileString(
+          misePath,
+          [
+            "#!/bin/sh",
+            'if [ "$1" = "which" ] && [ "$2" = "grok" ]; then',
+            `  echo "${realBinary}"`,
+            "  exit 0",
+            "fi",
+            'if [ "$1" = "latest" ] && [ "$2" = "grok" ]; then',
+            "  echo 1.0.89",
+            "  exit 0",
+            "fi",
+            "exit 1",
+            "",
+          ].join("\n"),
+        );
+        yield* fs.chmod(misePath, 0o755);
+
+        const wrapperDir = path.join(root, "mise", "command-wrappers", "bin");
+        yield* fs.makeDirectory(wrapperDir, { recursive: true });
+        const wrapperPath = path.join(wrapperDir, "grok");
+        yield* fs.symlink(misePath, wrapperPath);
+
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-mise"),
+          displayName: "Grok mise",
+          enabled: false,
+          environment: [{ name: "PATH", value: `${wrapperDir}:${binDir}` }],
+          config: { ...GrokDriver.defaultConfig(), binaryPath: wrapperPath },
+        });
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+
+        expect(capabilities.update).toMatchObject({
+          command: "mise install grok@latest",
+          executable: misePath,
+          args: ["install", "grok@latest"],
+          lockKey: "mise",
+          latestPath: path.join(toolDir, "latest"),
+        });
+        const advisory = createProviderVersionAdvisory({
+          driver: GrokDriver.driverKind,
+          currentVersion: "1.0.88",
+          latestVersion: capabilities.latestVersion ?? null,
+          maintenanceCapabilities: capabilities,
+        });
+        expect(advisory.canUpdate).toBe(true);
+        expect(advisory.canInstallVersion).toBe(true);
+      }),
   );
 });

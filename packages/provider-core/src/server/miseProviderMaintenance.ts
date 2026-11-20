@@ -38,14 +38,22 @@ function miseInstallDirFromCommandPath(commandPath: string): string | null {
   return `${normalized.slice(0, markerIndex + marker.length)}${directory}`;
 }
 
-function miseShimName(commandPath: string): string | null {
+function miseShimName(commandPath: string, realCommandPath: string): string | null {
   const normalized = slashPath(commandPath);
-  const marker = "/mise/shims/";
-  const markerIndex = normalized.toLowerCase().lastIndexOf(marker);
-  if (markerIndex < 0) return null;
-  const name = normalized.slice(markerIndex + marker.length);
-  if (name.length === 0 || name.includes("/")) return null;
-  return name.replace(/\.exe$/i, "");
+  const lower = normalized.toLowerCase();
+  for (const marker of ["/mise/shims/", "/mise/command-wrappers/bin/", "/mise/command-wrappers/"]) {
+    const markerIndex = lower.lastIndexOf(marker);
+    if (markerIndex < 0) continue;
+    const name = normalized.slice(markerIndex + marker.length);
+    if (name.length > 0 && !name.includes("/")) {
+      return name.replace(/\.exe$/i, "");
+    }
+  }
+  if (/(?:^|\/)mise(?:\.exe)?$/i.test(slashPath(realCommandPath))) {
+    const name = normalized.split("/").at(-1) ?? "";
+    if (name.length > 0) return name.replace(/\.exe$/i, "");
+  }
+  return null;
 }
 
 /**
@@ -115,7 +123,7 @@ export const resolveMiseOwnership = Effect.fn("resolveMiseOwnership")(function* 
     if (toolSpec) return { toolSpec, misePath, installDir } satisfies MiseOwnership;
   }
 
-  const shim = miseShimName(context.resolvedCommandPath);
+  const shim = miseShimName(context.resolvedCommandPath, context.realCommandPath);
   if (!shim) return null;
   const resolvedByMise = yield* runMise(
     misePath,

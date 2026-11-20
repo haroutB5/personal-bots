@@ -189,6 +189,14 @@ export function makeTargetedProviderUpdateAction(
   if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
   const update = capabilities.update;
   if (!update) return null;
+  if (update.runTargetVersion !== undefined) {
+    const runTargetVersion = update.runTargetVersion;
+    return {
+      ...update,
+      command: `${update.command} (${version})`,
+      run: (onProgress) => runTargetVersion(version, onProgress),
+    };
+  }
   if (update.lockKey === "mise") {
     const latestPath = update.latestPath;
     if (!latestPath) return null;
@@ -799,6 +807,42 @@ const followVitePlusSystemFirstShim = Effect.fn("followVitePlusSystemFirstShim")
   return { ...context, resolvedCommandPath, realCommandPath };
 });
 
+export const resolveForkMiseProviderMaintenance = Effect.fn("resolveForkMiseProviderMaintenance")(
+  function* (
+    owner: { readonly provider: ProviderDriverKind; readonly packageName: string | null },
+    context: ProviderMaintenanceResolutionContext,
+  ) {
+    const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
+    const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
+    const isMise =
+      commandPaths.some(isMiseCommandPath) ||
+      isMiseExecutablePath(context.realCommandPath) ||
+      (homebrew?.kind === "formula" && homebrew.name.toLowerCase() === "mise") ||
+      (yield* isMiseWrapperScript(context));
+    if (!isMise) return null;
+    const owned = yield* resolveMiseOwnership(context);
+    if (!owned) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        ...owner,
+        installPath: context.realCommandPath,
+      });
+    }
+    return makeProviderMaintenanceCapabilities({
+      provider: owner.provider,
+      packageName: owner.packageName,
+      updateExecutable: owned.misePath,
+      updateArgs: ["install", `${owned.toolSpec}@latest`],
+      updateLockKey: "mise",
+      updateCommand: `mise install ${owned.toolSpec}@latest`,
+      env: context.env,
+      ...(context.platform === "win32" ? {} : { latestPath: `${owned.installDir}/latest` }),
+      // Mise's registry can lag npm, so only its own answer is installable.
+      latestVersion: yield* resolveMiseLatestVersion(owned, context.env),
+      installedVersions: yield* listMiseInstalledVersions(owned.installDir),
+    });
+  },
+);
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -858,6 +902,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   // Hold fork-mise-updates: our mise ownership (below, after npm) decides for mise paths.
   const forkMise =
     commandPaths.some(isMiseCommandPath) ||
+    isMiseExecutablePath(context.realCommandPath) ||
     // Mise shims resolve to the version manager's keg, not the provider's.
     (homebrew?.kind === "formula" && homebrew.name.toLowerCase() === "mise") ||
     (yield* isMiseWrapperScript(context));
@@ -1016,20 +1061,12 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
 
   if (forkMise) {
-    const owned = yield* resolveMiseOwnership(context);
-    if (!owned) return manual;
-    return makeProviderMaintenanceCapabilities({
-      provider: definition.provider,
-      packageName,
-      updateExecutable: owned.misePath,
-      updateArgs: ["install", `${owned.toolSpec}@latest`],
-      updateLockKey: "mise",
-      updateCommand: `mise install ${owned.toolSpec}@latest`,
-      ...(context.platform === "win32" ? {} : { latestPath: `${owned.installDir}/latest` }),
-      // Mise's registry can lag npm, so only its own answer is installable.
-      latestVersion: yield* resolveMiseLatestVersion(owned, context.env),
-      installedVersions: yield* listMiseInstalledVersions(owned.installDir),
-    });
+    return (
+      (yield* resolveForkMiseProviderMaintenance(
+        { provider: definition.provider, packageName },
+        context,
+      )) ?? manual
+    );
   }
   if (homebrew) {
     return (

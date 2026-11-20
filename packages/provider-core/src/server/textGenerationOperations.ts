@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Temporary cwd for tool-less structured smoke calls.
+import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -5,7 +7,7 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { ProviderStructuredGeneration, ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -84,7 +86,10 @@ export const generatedThreadTitle = (raw: string) => {
     : Effect.succeed(title);
 };
 
-export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
+export function fromRunner(
+  name: string,
+  run: Runner,
+): ProviderTextGeneration & ProviderStructuredGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
   )(function* (input) {
@@ -194,6 +199,17 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const generateStructured: NonNullable<ProviderStructuredGeneration["generateStructured"]> = (
+    input,
+  ) =>
+    run({
+      operation: "generateStructured",
+      cwd: NodeOS.tmpdir(),
+      prompt: input.prompt,
+      outputSchema: input.outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -201,5 +217,6 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generateThreadTitle,
     generateReviewGuide,
     generateTranscriptionPostProcessing,
-  } satisfies ProviderTextGeneration;
+    generateStructured,
+  } satisfies ProviderTextGeneration & ProviderStructuredGeneration;
 }
