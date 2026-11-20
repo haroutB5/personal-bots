@@ -14,7 +14,9 @@ import {
   RESET_CREDIT_NO_SCOPE_TEXT,
   RESET_CREDIT_PAIR_AGAIN_TEXT,
   RESET_CREDIT_UNKNOWN_OUTCOME_TEXT,
+  selectUsageCards,
 } from "./usagePresentation.ts";
+import { selectUsageStripCells } from "./usageStrip.ts";
 
 const setupError = (detail: string) =>
   new ProviderSetupError({
@@ -132,5 +134,41 @@ describe("resetCreditOffer", () => {
   it("offers nothing when no credit is banked", () => {
     expect(resetCreditOffer(0, true)).toEqual({ _tag: "Hidden" });
     expect(resetCreditOffer(0, false)).toEqual({ _tag: "Hidden" });
+  });
+});
+
+describe("selectUsageCards Antigravity", () => {
+  it("excludes 3p-* buckets from the strip and picks Gemini windows", () => {
+    const provider = {
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: "antigravity",
+      enabled: true,
+      installed: true,
+      status: "ready",
+      version: "1.5.13",
+      checkedAt: "2026-11-20T18:14:54.831Z",
+      auth: { status: "authenticated", label: "Google account" },
+      models: [],
+      slashCommands: [],
+      skills: [],
+      usageLimits: {
+        checkedAt: "2026-11-20T18:14:54.418Z",
+        windows: [
+          { id: "3p-5h", label: "Claude & GPT (shared) · 5-hour", kind: "session", usedPercent: 0 },
+          { id: "gemini-5h", label: "Gemini · 5-hour", kind: "session", usedPercent: 12 },
+          {
+            id: "3p-weekly",
+            label: "Claude & GPT (shared) · Weekly",
+            kind: "weekly",
+            usedPercent: 0,
+          },
+          { id: "gemini-weekly", label: "Gemini · Weekly", kind: "weekly", usedPercent: 4 },
+        ],
+      },
+    } as never;
+    const cards = selectUsageCards([provider], Date.parse("2026-11-20T18:15:00.000Z"));
+    expect(selectUsageStripCells(cards)).toEqual([
+      { driver: "antigravity", title: "Antigravity", sessionPercent: 12, weeklyPercent: 4 },
+    ]);
   });
 });

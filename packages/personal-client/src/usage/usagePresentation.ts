@@ -501,9 +501,35 @@ export function selectUsageCards(
             ? (limits.unavailable.message ?? "")
             : null;
       const isAntigravity = driver === "antigravity";
+      const isThirdPartyAntigravity = (w: ServerProviderUsageWindow): boolean => {
+        const id = w.id.toLowerCase();
+        const label = w.label.toLowerCase();
+        return (
+          id.startsWith("3p-") ||
+          id.includes("claude") ||
+          id.includes("gpt") ||
+          label.includes("claude") ||
+          label.includes("gpt")
+        );
+      };
       const stripWindows = isAntigravity
-        ? limits.windows.filter((w) => !w.id.includes("claude") && !w.id.includes("gpt"))
+        ? limits.windows.filter((w) => !isThirdPartyAntigravity(w))
         : limits.windows;
+      const orderedWindows = isAntigravity
+        ? [...stripWindows, ...limits.windows.filter(isThirdPartyAntigravity)]
+        : limits.windows;
+      const weeklies = pickWeeklies(stripWindows, now);
+      const orderedWeeklies = isAntigravity
+        ? [...weeklies].sort((a, b) =>
+            b.usedPercent !== a.usedPercent
+              ? b.usedPercent - a.usedPercent
+              : a.id === "gemini-weekly"
+                ? -1
+                : b.id === "gemini-weekly"
+                  ? 1
+                  : 0,
+          )
+        : weeklies;
 
       cards.push({
         driver,
@@ -514,8 +540,8 @@ export function selectUsageCards(
         refreshFailure: failure,
         resetSinceReading: usageResetSinceReading(limits, now),
         session: pickSession(stripWindows, now),
-        weeklies: pickWeeklies(stripWindows, now),
-        windows: limits.windows.map((w) => toRow(w, now)),
+        weeklies: orderedWeeklies,
+        windows: orderedWindows.map((w) => toRow(w, now)),
         checkedAt: parseCheckedAt(limits.checkedAt),
         resetCredits: limits.resetCredits
           ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }

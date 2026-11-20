@@ -105,7 +105,22 @@ export function pickUsageWindows(windows: ReadonlyArray<ServerProviderUsageWindo
 export function usageProviderReading(provider: ServerProvider): UsageProviderReading | null {
   // The header only draws an enabled, installed instance.
   if (!provider.enabled || !provider.installed) return null;
-  const windows = pickUsageWindows(provider.usageLimits?.windows ?? []);
+  const rawWindows = provider.usageLimits?.windows ?? [];
+  const primaryWindows =
+    provider.driver === "antigravity"
+      ? rawWindows.filter((window) => {
+          const id = window.id.toLowerCase();
+          const label = window.label.toLowerCase();
+          return (
+            !id.startsWith("3p-") &&
+            !id.includes("claude") &&
+            !id.includes("gpt") &&
+            !label.includes("claude") &&
+            !label.includes("gpt")
+          );
+        })
+      : rawWindows;
+  const windows = pickUsageWindows(primaryWindows.length > 0 ? primaryWindows : rawWindows);
   return {
     instanceId: provider.instanceId,
     driver: provider.driver,

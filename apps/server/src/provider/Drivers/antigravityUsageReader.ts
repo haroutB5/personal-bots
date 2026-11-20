@@ -126,6 +126,7 @@ const MODEL_IDS: Record<number, string> = {
   1417: "gemini-4-argon",
   1418: "gemini-4-argon",
   1419: "gemini-4-argon",
+  1532: "gemini-4-neon",
 };
 
 // Effort and routing variants share the base model's price.
