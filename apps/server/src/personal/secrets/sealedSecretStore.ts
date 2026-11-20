@@ -369,7 +369,7 @@ export const decorateSecretStore = (
       const state = yield* readState;
       if (state._tag !== "Locked") return state;
       const sealed = yield* countSealedFiles.pipe(Effect.orElseSucceed(() => 0));
-      yield* Effect.logError(
+      yield* Effect.logWarning(
         `Saved secrets are locked: reason=${state.reason} source=${state.source ?? "none"} sealed=${sealed}. ` +
           "Sealed keys and logins cannot be opened or saved until the key is moved over. " +
           "Run `secrets status` to inspect, then `secrets rewrap` or `secrets import` to recover.",

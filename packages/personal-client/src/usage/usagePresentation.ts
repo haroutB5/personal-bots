@@ -515,9 +515,6 @@ export function selectUsageCards(
       const stripWindows = isAntigravity
         ? limits.windows.filter((w) => !isThirdPartyAntigravity(w))
         : limits.windows;
-      const orderedWindows = isAntigravity
-        ? [...stripWindows, ...limits.windows.filter(isThirdPartyAntigravity)]
-        : limits.windows;
       const weeklies = pickWeeklies(stripWindows, now);
       const orderedWeeklies = isAntigravity
         ? [...weeklies].sort((a, b) =>
@@ -541,7 +538,7 @@ export function selectUsageCards(
         resetSinceReading: usageResetSinceReading(limits, now),
         session: pickSession(stripWindows, now),
         weeklies: orderedWeeklies,
-        windows: orderedWindows.map((w) => toRow(w, now)),
+        windows: limits.windows.map((w) => toRow(w, now)),
         checkedAt: parseCheckedAt(limits.checkedAt),
         resetCredits: limits.resetCredits
           ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }
