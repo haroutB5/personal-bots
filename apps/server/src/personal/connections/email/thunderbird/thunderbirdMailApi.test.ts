@@ -494,6 +494,32 @@ describe("drafts", () => {
     expect(failure.status).toBe(400);
   });
 
+  it("reports a draft saved outside the mailbox as done, says where, and never as a retryable failure", async () => {
+    const landed = {
+      success: true,
+      messageId: "8a6ddbb7-b1a9-4022-8733-eb26e06ac494@gmail.com",
+      folderPath: "mailbox://nobody@Local%20Folders/Drafts",
+      message: "Draft saved",
+    };
+    const h = harness({ ...base, saveDraft: landed, replyToMessage: landed });
+    const fresh = await Effect.runPromise(Effect.flip(h.api.createDraft(h.call, draft, null)));
+    const reply = await Effect.runPromise(
+      Effect.flip(h.api.createDraft(h.call, { ...draft, replyTo: refOf("m1@mail") }, null)),
+    );
+    for (const failure of [fresh, reply]) {
+      expect(failure.completed).toBe(true);
+      expect(failure.detail).toContain("Draft saved to Local Folders, not harout@gmail.com");
+      expect(failure.detail).toContain("do not call create_draft again");
+    }
+  });
+
+  it("also treats a saved draft with no location as done", async () => {
+    const h = harness({ ...base, saveDraft: { success: true, messageId: "d9@mail" } });
+    const failure = await Effect.runPromise(Effect.flip(h.api.createDraft(h.call, draft, null)));
+    expect(failure.completed).toBe(true);
+    expect(failure.detail).toContain("did not say where it saved the draft");
+  });
+
   it("never calls a tool outside the eight the client allows", async () => {
     const h = harness({
       ...base,

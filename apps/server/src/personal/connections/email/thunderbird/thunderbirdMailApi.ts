@@ -386,17 +386,31 @@ export const makeThunderbirdMailApi = (client: CommonpostClient["Service"]): Mai
     isHtml: false,
   });
 
+  const placeOf = (folderPath: string): string => {
+    const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i.exec(folderPath)?.[1] ?? "";
+    try {
+      return decodeURIComponent(authority.slice(authority.lastIndexOf("@") + 1)) || "another place";
+    } catch {
+      return "another place";
+    }
+  };
+
   const savedRef = (call: MailCall, box: Mailbox, reply: unknown) => {
     const saved = record(reply);
-    const ref = encodeRef(box, str(saved["messageId"]), str(saved["folderPath"]));
-    return ref === null
-      ? Effect.fail(
-          new ConnectionVendorError({
-            operationId: call.operationId,
-            detail: "Thunderbird saved the draft but did not say where, so it has no ref.",
-          }),
-        )
-      : Effect.succeed({ draftRef: ref });
+    const folderPath = str(saved["folderPath"]);
+    const ref = encodeRef(box, str(saved["messageId"]), folderPath);
+    if (ref !== null) return Effect.succeed({ draftRef: ref });
+    const where =
+      folderPath.length === 0
+        ? "Thunderbird did not say where it saved the draft"
+        : `Draft saved to ${placeOf(folderPath)}, not ${box.address}`;
+    return Effect.fail(
+      new ConnectionVendorError({
+        operationId: call.operationId,
+        completed: true,
+        detail: `${where}, so there is no draftRef. The draft exists once: do not call create_draft again, a second call saves a second copy. Tell the user, and ask them to check that account's Drafts folder in Thunderbird.`,
+      }),
+    );
   };
 
   const createDraft: MailApi["createDraft"] = (call, draft, update) =>

@@ -53,6 +53,12 @@ export class ConnectionVendorError extends Schema.TaggedError<ConnectionVendorEr
      * sentence for the model.
      */
     unavailable: Schema.optionalKey(Schema.Boolean),
+    /**
+     * The vendor did what was asked, but not where it was asked to, so a
+     * second call would repeat the effect. `detail` is then the whole
+     * sentence for the model, and the gateway passes it on unchanged.
+     */
+    completed: Schema.optionalKey(Schema.Boolean),
   },
 ) {}
 

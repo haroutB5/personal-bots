@@ -32,7 +32,9 @@ const caller = {
 
 type Tool = Parameters<CommonpostClient["Service"]["call"]>[0];
 
-const harness = (options: { readonly closed?: boolean } = {}) => {
+const harness = (
+  options: { readonly closed?: boolean; readonly draftsInLocalFolders?: boolean } = {},
+) => {
   const approvals = new Map<string, PersonalConnectionApproval>();
   const calls: Array<{ tool: Tool; args: Readonly<Record<string, unknown>> }> = [];
   const reauthed: Array<string> = [];
@@ -61,6 +63,14 @@ const harness = (options: { readonly closed?: boolean } = {}) => {
         return Effect.succeed([{ name: "INBOX", path: `${ROOT}/INBOX`, accountId: "account1" }]);
       }
       if (tool === "saveDraft") {
+        if (options.draftsInLocalFolders === true) {
+          return Effect.succeed({
+            success: true,
+            messageId: "8a6ddbb7-b1a9-4022-8733-eb26e06ac494@gmail.com",
+            folderPath: "mailbox://nobody@Local%20Folders/Drafts",
+            message: "Draft saved",
+          });
+        }
         return Effect.succeed({ messageId: "d1@mail", folderPath: `${ROOT}/Drafts` });
       }
       return Effect.succeed({ messages: [] });
@@ -205,6 +215,21 @@ describe("a Gmail mailbox read through Thunderbird", () => {
       expect(h.calls[2]?.args).toMatchObject({ from: "owner@gmail.com", isHtml: false });
     }).pipe(Effect.provide(h.layer));
   });
+
+  it.effect(
+    "says where a draft landed outside the mailbox and does not ask the add-on a second time",
+    () => {
+      const h = harness({ draftsInLocalFolders: true });
+      return Effect.gen(function* () {
+        const gateway = yield* Gateway.PersonalConnectionGateway;
+        const failure = yield* Effect.flip(gateway.call(draft));
+        expect(failure.reason).toContain("Draft saved to Local Folders, not owner@gmail.com");
+        expect(failure.reason).toContain("do not call create_draft again");
+        expect(failure.ambiguous).toBeUndefined();
+        expect(h.calls.filter((call) => call.tool === "saveDraft")).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
   it.effect("has no send operation to ask for", () => {
     const h = harness();

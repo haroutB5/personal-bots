@@ -503,6 +503,7 @@ export const make = Effect.gen(function* () {
             ok: false as const,
             unauthorized: error.unauthorized === true,
             unavailable: error.unavailable === true,
+            completed: error.completed === true,
             secondaryRejected: error.rejectedCredential === "secondary",
             // Only a 4xx is a definite "no": anything else may have acted.
             ambiguous: !(error.status !== undefined && error.status >= 400 && error.status < 500),
@@ -515,6 +516,7 @@ export const make = Effect.gen(function* () {
             ok: false as const,
             unauthorized: false,
             unavailable: false,
+            completed: false,
             secondaryRejected: false,
             ambiguous: true,
             detail: Operations.scrubCredentialValues(cause, secrets),
@@ -539,6 +541,11 @@ export const make = Effect.gen(function* () {
         // serves it is closed. Say so in the vendor's own words and leave the
         // connection as it was.
         return yield* refuse(outcome.detail);
+      }
+      if (outcome.completed) {
+        // The effect happened, just somewhere else. Say where and say not to
+        // repeat it: a second call adds a second copy.
+        return yield* new PersonalConnectionGatewayError({ reason: outcome.detail });
       }
       if (outcome.unauthorized) {
         // Personal access tokens expire on the provider's schedule, so this is
