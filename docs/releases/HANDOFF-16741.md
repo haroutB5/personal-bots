@@ -37,3 +37,24 @@ None. Max migration is 160 in `Migrations.ts` on trunk and on the head, and `app
 ## Rollback
 
 Binary rollback to `0130b5adf7b1` (1.67.39). No data change, so no data restore.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=2c1649654e17a8886c2f08e65a3654abc3ad43df release=2c1649654e17 json-sha256=9bbfa9563475486e26fc0caf79b0f0491843421534f5853e699fc475cc2351d4 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/scripts/secrets-roundtrip.ts, apps/server/src/auth/ServerSecretStore.test.ts, apps/server/src/auth/ServerSecretStore.ts, apps/server/src/auth/secretEncryption.ts, ...; selected 279 test files
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, selected: e2e inputs changed: apps/server/scripts/secrets-roundtrip.ts, apps/server/src/auth/ServerSecretStore.test.ts, apps/server/src/auth/ServerSecretStore.ts, apps/server/src/auth/secretEncryption.ts, ...; selected 12 journeys
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/hbots-release/lib/gateScope.mjs; selected 15 test files
+- not run by any gate: apps/server/src/auth/ServerSecretStore.test.ts
+- not run by any gate: packages/provider-core/src/server/textGenerationOperations.test.ts
+- not run by any gate: packages/provider-grok/src/server/driver.test.ts
+- not run by any gate: scripts/personal/testing/fake-claude/cli.test.mjs
+
+<!-- gate-evidence:end -->
