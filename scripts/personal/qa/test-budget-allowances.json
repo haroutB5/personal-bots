@@ -1,0 +1,10 @@
+{
+  "allowances": [
+    {
+      "change": "feat/hbots-email",
+      "lines": 3845,
+      "reason": "The release from main carries the U1 to U4 OAuth commits and the T1 to T6 Thunderbird email work, which has one test file per new module.",
+      "strongest": "apps/server/src/personal/connections/email/thunderbird/thunderbirdMailApi.test.ts"
+    }
+  ]
+}
