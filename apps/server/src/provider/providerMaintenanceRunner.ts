@@ -38,7 +38,11 @@ import {
   type ProviderMaintenanceCommandAction,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
-import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import type {
+  ProviderMaintenanceCapabilities,
+  ProviderMaintenanceCommandResult,
+} from "@t3tools/provider-core/server/maintenance";
+export type { ProviderMaintenanceCommandResult };
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import { miseVersionsNewerThan } from "../personal/providerUpdates/miseProviderMaintenance.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
@@ -54,15 +58,6 @@ const UPDATE_PROGRESS_INTERVAL = Duration.seconds(1);
 const UPDATE_PROGRESS_MAX_LENGTH = 200;
 // An installer may write for minutes without a line ending; only its tail matters.
 const UPDATE_PARTIAL_LINE_MAX_LENGTH = 4_096;
-
-export interface ProviderMaintenanceCommandResult {
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly exitCode: number | null;
-  readonly timedOut: boolean;
-  readonly stdoutTruncated: boolean;
-  readonly stderrTruncated: boolean;
-}
 
 export interface ProviderMaintenanceRunnerShape {
   readonly updateProvider: (
@@ -248,6 +243,7 @@ export function toProgressLine(line: string): string | null {
 }
 
 function describeCommand(command: ProviderMaintenanceCommandAction): string {
+  if (command.run) return command.command;
   const executable = command.executable.split(/[\\/]/).pop() || command.executable;
   return [executable, ...command.args].join(" ");
 }
@@ -619,7 +615,11 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const result = yield* installationGate.update(
               sharingInstances,
               setRunningMessage(`Running ${describeCommand(command)}`).pipe(
-                Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
+                Effect.andThen(
+                  command.run
+                    ? command.run(setRunningMessage)
+                    : runMaintenanceCommand(command, setRunningMessage),
+                ),
               ),
             );
             const finishedAt = yield* nowIso;

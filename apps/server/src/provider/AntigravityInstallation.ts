@@ -115,6 +115,14 @@ interface AntigravityInstallationService {
   readonly state: Effect.Effect<ProviderInstallState>;
   readonly changes: Stream.Stream<ProviderInstallState>;
   readonly checkForUpdate: Effect.Effect<void>;
+  /** Checks Google's CLI release manifest and returns the newest eligible version, or null. */
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
+  /** Starts an update and waits until the installation finishes or fails. */
+  readonly updateToLatest?: (
+    onProgress?: (line: string) => Effect.Effect<void>,
+  ) => Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
+  /** Switches active.json to an already-installed version (used for rollback). */
+  readonly activateVersion?: (version: string) => Effect.Effect<void, AntigravityInstallationError>;
   readonly remove: (
     protectedBinaryPaths?: ReadonlyArray<string>,
   ) => Effect.Effect<void, AntigravityInstallationError>;
@@ -1163,6 +1171,116 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     ),
   );
 
+  const lookupLatestVersion = Effect.gen(function* () {
+    yield* refreshRelease(true);
+    if (releaseAsset === null) return null;
+    return (yield* isWithdrawn(releaseAsset.version)) ? null : releaseAsset.version;
+  }).pipe(Effect.catch(() => Effect.succeed(null)));
+
+  const updateToLatest = Effect.fn("AntigravityInstallation.updateToLatest")(function* (
+    onProgress?: (line: string) => Effect.Effect<void>,
+  ) {
+    const started = yield* start;
+    if (!isRunning(started)) {
+      if (started.phase === "failed" || started.phase === "cancelled") {
+        return yield* installationError(
+          "install",
+          started.message ?? "Antigravity update did not finish.",
+        );
+      }
+      return started;
+    }
+    if (onProgress && started.message) yield* onProgress(started.message);
+    const terminal = yield* SubscriptionRef.changes(state).pipe(
+      Stream.tap((current) =>
+        onProgress && current.operationId === started.operationId && current.message
+          ? onProgress(current.message)
+          : Effect.void,
+      ),
+      Stream.filter(
+        (current) =>
+          current.operationId !== started.operationId ||
+          current.phase === "succeeded" ||
+          current.phase === "failed" ||
+          current.phase === "cancelled",
+      ),
+      Stream.runHead,
+    );
+    const finalState = Option.getOrElse(terminal, () => started);
+    if (finalState.phase !== "succeeded") {
+      return yield* installationError(
+        "install",
+        finalState.message ?? "Antigravity update did not finish.",
+      );
+    }
+    return finalState;
+  });
+
+  const activateVersion = Effect.fn("AntigravityInstallation.activateVersion")(
+    function* (version: string) {
+      yield* gate.withPermit(
+        Effect.gen(function* () {
+          if (isRunning(yield* SubscriptionRef.get(state))) {
+            return yield* installationError(
+              "activate",
+              "An Antigravity installation is already running.",
+            );
+          }
+          yield* ensureEligible(version);
+          const entries = yield* fs
+            .readDirectory(versionsDirectory)
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+          let match: {
+            readonly releaseId: string;
+            readonly executable: AntigravityExecutable;
+          } | null = null;
+          for (const entry of entries) {
+            if (!/^[a-f0-9]{64}$/u.test(entry)) continue;
+            const candidate = yield* completedRelease(entry).pipe(Effect.option);
+            if (Option.isSome(candidate) && candidate.value.version === version) {
+              match = { releaseId: entry, executable: candidate.value };
+              break;
+            }
+          }
+          if (match === null) {
+            return yield* installationError(
+              "activate",
+              `Antigravity ${version} is not installed on this computer.`,
+            );
+          }
+          yield* validate(match.executable, version).pipe(
+            Effect.scoped,
+            Effect.timeout(VALIDATION_TIMEOUT),
+          );
+          const pointerDirectory = yield* fs.makeTempDirectoryScoped({
+            directory: managedDirectory,
+            prefix: "active.json.",
+          });
+          const pointerPath = path.join(pointerDirectory, "contents.tmp");
+          yield* fs.writeFileString(
+            pointerPath,
+            yield* encodeActiveRelease({ releaseId: match.releaseId }),
+            { flag: "wx", mode: 0o600 },
+          );
+          yield* fs.rename(pointerPath, activePath);
+          yield* SubscriptionRef.update(
+            state,
+            (current) =>
+              ({
+                ...current,
+                phase: "succeeded",
+                installedVersion: version,
+                message: null,
+              }) satisfies ProviderInstallState,
+          );
+        }).pipe(Effect.scoped, Effect.uninterruptible),
+      );
+    },
+    Effect.mapError(
+      wrapFailure("activate", "Could not switch to the previous Antigravity version."),
+    ),
+  );
+
   return AntigravityInstallation.of({
     managedDirectory,
     resolve,
@@ -1172,6 +1290,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     state: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
     checkForUpdate: refreshRelease().pipe(Effect.ignore),
+    lookupLatestVersion,
+    updateToLatest,
+    activateVersion,
     remove,
   });
 });

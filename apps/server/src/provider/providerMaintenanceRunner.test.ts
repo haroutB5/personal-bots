@@ -2155,3 +2155,94 @@ it.effect(
     );
   },
 );
+
+it.effect("runs in-process managed provider updates and targeted rollbacks without spawning", () =>
+  Effect.gen(function* () {
+    const calls: string[] = [];
+    let currentVersion = "1.5.13";
+    const ok = (stdout: string) => ({
+      exitCode: 0,
+      stdout,
+      stderr: "",
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
+    const antigravityDriver = ProviderDriverKind.make("antigravity");
+    const antigravityInstanceId = ProviderInstanceId.make("antigravity");
+    const { registry, providersRef } = yield* makeRegistry({
+      ...baseProvider,
+      instanceId: antigravityInstanceId,
+      driver: antigravityDriver,
+      version: currentVersion,
+    });
+    const managedCapabilities: ProviderMaintenanceCapabilities = {
+      provider: antigravityDriver,
+      packageName: null,
+      lookupLatestVersion: Effect.succeed("1.6.0"),
+      update: {
+        command: "Managed Antigravity update",
+        executable: "",
+        args: [],
+        lockKey: "antigravity-managed",
+        run: (onProgress) =>
+          onProgress("Downloading Antigravity...").pipe(
+            Effect.as((calls.push("update"), (currentVersion = "1.6.0"), ok("Updated."))),
+          ),
+        runTargetVersion: (version, onProgress) =>
+          onProgress(`Activating Antigravity ${version}...`).pipe(
+            Effect.as(
+              (calls.push(`activate:${version}`), (currentVersion = version), ok("Active.")),
+            ),
+          ),
+      },
+    };
+    const updater = yield* makeTestRunner({
+      ...registry,
+      getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(managedCapabilities),
+      refreshAfterUpdate: () =>
+        Ref.updateAndGet(providersRef, (providers) =>
+          providers.map((provider) => ({ ...provider, version: currentVersion })),
+        ),
+    });
+
+    const updated = yield* updater.updateProvider({
+      provider: antigravityDriver,
+      instanceId: antigravityInstanceId,
+    });
+    assert.strictEqual(updated.providers[0]?.updateState?.status, "succeeded");
+    assert.strictEqual(updated.providers[0]?.version, "1.6.0");
+
+    yield* Ref.update(providersRef, (providers) =>
+      providers.map((provider) => ({
+        ...provider,
+        smokeCheck: {
+          status: "failed" as const,
+          version: "1.6.0",
+          checkedAt: "2026-11-20T00:00:00.000Z",
+          message: "Smoke test failed.",
+          previousVersion: "1.5.13",
+        },
+      })),
+    );
+    const rolledBack = yield* updater.updateProvider({
+      provider: antigravityDriver,
+      instanceId: antigravityInstanceId,
+      targetVersion: "1.5.13",
+      rollback: true,
+    });
+    assert.strictEqual(rolledBack.providers[0]?.updateState?.status, "succeeded");
+    assert.strictEqual(rolledBack.providers[0]?.version, "1.5.13");
+    assert.deepStrictEqual(calls, ["update", "activate:1.5.13"]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        layerLatestVersionHttpClient("1.6.0"),
+        layerMockSpawner(() => {
+          throw new Error("In-process managed updater must not spawn a shell process");
+        }),
+      ),
+    ),
+  ),
+);

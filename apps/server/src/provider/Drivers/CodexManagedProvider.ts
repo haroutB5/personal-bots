@@ -3,10 +3,12 @@ import {
   ProviderSetupError,
   TextGenerationError,
   type CodexSettings,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
@@ -29,6 +31,16 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ProviderMaintenanceCommandResult } from "@t3tools/provider-core/server/maintenance";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
 
@@ -215,13 +227,106 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),
   );
+  const latestVersionsOption = yield* Effect.serviceOption(
+    ProviderLatestVersions.ProviderLatestVersions,
+  );
+  const latestVersions = Option.isSome(latestVersionsOption)
+    ? latestVersionsOption.value
+    : yield* ProviderLatestVersions.make();
+  const platform = yield* HostProcess.Platform;
+  const okResult = (stdout: string): ProviderMaintenanceCommandResult => ({
+    stdout,
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  });
+  const failedResult = (stderr: string): ProviderMaintenanceCommandResult => ({
+    stdout: "",
+    stderr,
+    exitCode: 1,
+    timedOut: false,
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  });
+  const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+    Effect.gen(function* () {
+      const executable = yield* runtime.installation.resolve().pipe(Effect.option);
+      if (
+        Option.isSome(executable) &&
+        executable.value.source === "managed" &&
+        runtime.installation.lookupLatestVersion !== undefined &&
+        runtime.installation.updateToLatest !== undefined &&
+        runtime.installation.activateVersion !== undefined
+      ) {
+        const lookupLatestVersion = runtime.installation.lookupLatestVersion;
+        const updateToLatest = runtime.installation.updateToLatest;
+        const activateVersion = runtime.installation.activateVersion;
+        const base = makeProviderMaintenanceCapabilities({
+          provider: DRIVER,
+          packageName: null,
+          updateExecutable: "codex",
+          updateArgs: ["update"],
+          updateLockKey: "codex-managed",
+          updateCommand: "Update Codex",
+          platform,
+          latestVersion: null,
+          lookupLatestVersion,
+        });
+        return {
+          ...base,
+          latestVersionCacheKey: "codex-managed",
+          update: base.update
+            ? {
+                ...base.update,
+                run: (onProgress) =>
+                  updateToLatest(onProgress).pipe(
+                    Effect.map((done) =>
+                      okResult(
+                        done.installedVersion
+                          ? `Updated Codex to ${done.installedVersion}.`
+                          : "Updated Codex.",
+                      ),
+                    ),
+                    Effect.catch((error) => Effect.succeed(failedResult(error.detail))),
+                  ),
+                runTargetVersion: (version, onProgress) =>
+                  onProgress(`Switching Codex to ${version}`).pipe(
+                    Effect.andThen(activateVersion(version)),
+                    Effect.as(okResult(`Switched Codex to ${version}.`)),
+                    Effect.catch((error) => Effect.succeed(failedResult(error.detail))),
+                  ),
+              }
+            : null,
+        } satisfies ProviderMaintenanceCapabilities;
+      }
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        provider: DRIVER,
+        packageName: null,
+      });
+    }),
+  );
   const snapshot = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed({ provider: DRIVER, packageName: null, update: null }),
+    resolveMaintenance,
     getSettings: host.settings.get,
     streamSettings: host.settings.changes,
-    haveSettingsChanged: () => false,
+    haveSettingsChanged: (previous, next) =>
+      previous.enableProviderUpdateChecks !== next.enableProviderUpdateChecks,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => pending,
     checkProvider: check,
+    enrichSnapshot: ({ settings: currentSettings, snapshot: current, publishSnapshot }) =>
+      resolveMaintenance().pipe(
+        Effect.flatMap((maintenanceCapabilities) =>
+          enrichProviderSnapshotWithVersionAdvisory(current, maintenanceCapabilities, {
+            enableProviderUpdateChecks: currentSettings.enableProviderUpdateChecks,
+          }),
+        ),
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+        Effect.flatMap(publishSnapshot),
+      ),
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -291,6 +396,22 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         "generateTranscriptionPostProcessing",
         nativeGeneration.generateTranscriptionPostProcessing(value),
       ),
+    ...(nativeGeneration.generateStructured === undefined
+      ? {}
+      : {
+          generateStructured: <S extends Schema.Top>(value: {
+            readonly prompt: string;
+            readonly outputSchema: S;
+            readonly modelSelection: ModelSelection;
+          }) =>
+            protect(
+              "generateStructured",
+              nativeGeneration.generateStructured!(value) as Effect.Effect<
+                S["Type"],
+                TextGenerationError
+              >,
+            ) as Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>,
+        }),
   };
   return {
     instanceId,

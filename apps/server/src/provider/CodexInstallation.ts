@@ -153,6 +153,14 @@ interface CodexInstallationService {
    * through `state.version` when it is newer than the managed install.
    */
   readonly checkForUpdate: Effect.Effect<void>;
+  /** Checks OpenAI's latest supported Codex release and returns its version, or null. */
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
+  /** Starts a managed Codex update and waits until it finishes or fails. */
+  readonly updateToLatest?: (
+    onProgress?: (line: string) => Effect.Effect<void>,
+  ) => Effect.Effect<ProviderInstallState, CodexInstallationError>;
+  /** Switches active.json to an already-installed Codex version (used for rollback). */
+  readonly activateVersion?: (version: string) => Effect.Effect<void, CodexInstallationError>;
   readonly remove: (
     protectedBinaryPaths?: ReadonlyArray<string>,
   ) => Effect.Effect<void, CodexInstallationError>;
@@ -976,6 +984,110 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     ),
   );
 
+  const lookupLatestVersion = updateCheckGate.withPermits(1)(
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      upstreamCheckedAt = now;
+      upstream = yield* lookupUpstream.pipe(
+        Effect.timeout(UPDATE_CHECK_TIMEOUT),
+        Effect.orElseSucceed(() => upstream),
+      );
+      const current = yield* SubscriptionRef.get(state);
+      const kept = yield* keptInstall(managedVersion(current));
+      if (!isRunning(current)) {
+        yield* SubscriptionRef.update(state, (value) =>
+          isRunning(value) ? value : { ...value, ...offer(kept) },
+        );
+      }
+      return selectManagedRelease(kept, asset, upstream)?.version ?? kept;
+    }),
+  );
+
+  const updateToLatest = Effect.fn("CodexInstallation.updateToLatest")(function* (
+    onProgress?: (line: string) => Effect.Effect<void>,
+  ) {
+    yield* lookupLatestVersion;
+    const started = yield* start;
+    if (!isRunning(started)) {
+      if (started.phase === "failed" || started.phase === "cancelled") {
+        return yield* installationError(
+          "install",
+          started.message ?? "Codex update did not finish.",
+        );
+      }
+      return started;
+    }
+    if (onProgress && started.message) yield* onProgress(started.message);
+    const terminal = yield* SubscriptionRef.changes(state).pipe(
+      Stream.tap((current) =>
+        onProgress && current.operationId === started.operationId && current.message
+          ? onProgress(current.message)
+          : Effect.void,
+      ),
+      Stream.filter(
+        (current) =>
+          current.operationId !== started.operationId ||
+          current.phase === "succeeded" ||
+          current.phase === "failed" ||
+          current.phase === "cancelled",
+      ),
+      Stream.runHead,
+    );
+    const finalState = Option.getOrElse(terminal, () => started);
+    if (finalState.phase !== "succeeded") {
+      return yield* installationError(
+        "install",
+        finalState.message ?? "Codex update did not finish.",
+      );
+    }
+    return finalState;
+  });
+
+  const activateVersion = Effect.fn("CodexInstallation.activateVersion")(
+    function* (version: string) {
+      yield* gate.withPermit(
+        Effect.gen(function* () {
+          if (isRunning(yield* SubscriptionRef.get(state))) {
+            return yield* installationError("activate", "A Codex installation is already running.");
+          }
+          if (!(yield* isSupported(version))) {
+            return yield* installationError(
+              "activate",
+              `Codex ${version} is not supported by this T3 Code release.`,
+            );
+          }
+          const executable = yield* completedRelease(version);
+          yield* validate(executable, version).pipe(Effect.scoped, Effect.timeout("90 seconds"));
+          const pointerDirectory = yield* fs.makeTempDirectoryScoped({
+            directory: managedDirectory,
+            prefix: ".active-",
+          });
+          const pointerPath = path.join(pointerDirectory, "active.json");
+          yield* fs.writeFileString(pointerPath, yield* encodeActive({ version }), {
+            flag: "wx",
+            mode: 0o600,
+          });
+          yield* fs.rename(pointerPath, activePath);
+          const kept = yield* keptInstall(version);
+          yield* SubscriptionRef.update(
+            state,
+            (current) =>
+              ({
+                ...current,
+                ...offer(kept),
+                phase: "succeeded",
+                source: "managed",
+                installedVersion: version,
+                executablePath: executable.executablePath,
+                message: null,
+              }) satisfies ProviderInstallState,
+          );
+        }).pipe(Effect.scoped, Effect.uninterruptible),
+      );
+    },
+    Effect.mapError(wrapFailure("activate", "Could not switch to the previous Codex version.")),
+  );
+
   return CodexInstallation.of({
     managedDirectory,
     resolve,
@@ -986,6 +1098,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     state: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
     checkForUpdate,
+    lookupLatestVersion,
+    updateToLatest,
+    activateVersion,
     remove,
   });
 });

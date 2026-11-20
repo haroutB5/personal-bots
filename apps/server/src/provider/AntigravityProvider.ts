@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as FiberHandle from "effect/FiberHandle";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -30,6 +31,12 @@ import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "@t3tools/provider-core/server/snapshotSettings";
 import {
   buildServerProvider,
   isCommandMissingCause,
@@ -168,6 +175,11 @@ interface AntigravityProviderOptions {
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly resolveMaintenance?: ManagedServerProvider["resolveMaintenance"];
+  readonly enrichVersionAdvisory?: (
+    snapshot: ServerProvider,
+    options: { readonly enableProviderUpdateChecks: boolean },
+  ) => Effect.Effect<ServerProvider>;
   readonly auth?: { readonly type: string; readonly label: string };
 }
 
@@ -227,8 +239,16 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       thinkingLevels.set(model.currentValue, antigravityThinkingConfig(configOptions) ?? null);
     }
   };
+  const versionAdvisoryRef = yield* Ref.make<ServerProvider["versionAdvisory"]>(undefined);
+  const attachVersionAdvisory = (snapshot: ServerProvider) =>
+    Ref.get(versionAdvisoryRef).pipe(
+      Effect.map((versionAdvisory) =>
+        versionAdvisory === undefined ? snapshot : { ...snapshot, versionAdvisory },
+      ),
+    );
   const getSnapshot = SubscriptionRef.get(metadata).pipe(
     Effect.flatMap((state) => options.stampIdentity(state.draft)),
+    Effect.flatMap(attachVersionAdvisory),
   );
 
   // The quota read can take 30 seconds, so it never blocks readiness or a session start.
@@ -349,19 +369,37 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       provider: ProviderDriverKind.make("antigravity"),
       packageName: null,
     });
-  const managed = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-    getSettings: Effect.succeed(settings),
-    streamSettings: Stream.empty,
-    haveSettingsChanged: () => false,
+  const resolveMaintenance: ManagedServerProvider["resolveMaintenance"] =
+    options.resolveMaintenance ?? (() => Effect.succeed(maintenanceCapabilities));
+  const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
+  const managed = yield* makeManagedServerProvider<ProviderSnapshotSettings<AntigravitySettings>>({
+    resolveMaintenance,
+    getSettings: snapshotSettings.getSettings,
+    streamSettings: snapshotSettings.streamSettings,
+    haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    enrichSnapshot: ({ publishSnapshot }) =>
-      SubscriptionRef.changes(metadata).pipe(
+    enrichSnapshot: Effect.fn("AntigravityProvider.enrichSnapshot")(function* ({
+      settings: currentSettings,
+      snapshot,
+      publishSnapshot,
+    }) {
+      if (options.enrichVersionAdvisory) {
+        const enriched = yield* options.enrichVersionAdvisory(snapshot, {
+          enableProviderUpdateChecks: currentSettings.enableProviderUpdateChecks,
+        });
+        yield* Ref.set(versionAdvisoryRef, enriched.versionAdvisory);
+        yield* publishSnapshot(enriched);
+      }
+      yield* SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
-          options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
+          options
+            .stampIdentity(state.draft)
+            .pipe(Effect.flatMap(attachVersionAdvisory), Effect.flatMap(publishSnapshot)),
         ),
-      ),
+      );
+    }),
   });
   yield* Deferred.succeed(republish, managed.refresh);
 

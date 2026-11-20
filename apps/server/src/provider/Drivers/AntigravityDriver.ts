@@ -17,6 +17,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -72,6 +73,17 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+  resolveForkMiseProviderMaintenance,
+  resolveProviderMaintenanceCapabilitiesEffect,
+  type ProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ProviderMaintenanceCommandResult } from "@t3tools/provider-core/server/maintenance";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
@@ -433,12 +445,136 @@ export const AntigravityDriver: ProviderDriver<
       Effect.provideService(Digest.Digest, digest),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
+    const latestVersionsOption = yield* Effect.serviceOption(
+      ProviderLatestVersions.ProviderLatestVersions,
+    );
+    const latestVersions = Option.isSome(latestVersionsOption)
+      ? latestVersionsOption.value
+      : yield* ProviderLatestVersions.make();
+    const platform = yield* HostProcess.Platform;
+    const okResult = (stdout: string): ProviderMaintenanceCommandResult => ({
+      stdout,
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
+    const failedResult = (stderr: string): ProviderMaintenanceCommandResult => ({
+      stdout: "",
+      stderr,
+      exitCode: 1,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
+    const manualCapabilities = (installPath?: string): ProviderMaintenanceCapabilities =>
+      makeManualOnlyProviderMaintenanceCapabilities({
+        provider: DRIVER,
+        packageName: null,
+        ...(installPath ? { installPath } : {}),
+      });
+    const miseResolver = {
+      resolve: (context: Parameters<typeof resolveForkMiseProviderMaintenance>[1] | null) =>
+        context === null
+          ? Effect.succeed(manualCapabilities())
+          : resolveForkMiseProviderMaintenance(
+              { provider: DRIVER, packageName: null },
+              context,
+            ).pipe(Effect.map((mise) => mise ?? manualCapabilities(context.realCommandPath))),
+    };
+    const resolveMaintenanceUncached: Effect.Effect<ProviderMaintenanceCapabilities> = Effect.gen(
+      function* () {
+        if (settings.binaryPath.trim().length > 0) {
+          return yield* resolveProviderMaintenanceCapabilitiesEffect(miseResolver, {
+            binaryPath: settings.binaryPath,
+            env: processEnvironment,
+          });
+        }
+        const executable = yield* installation
+          .resolve(settings.binaryPath, processEnvironment)
+          .pipe(Effect.option);
+        if (Option.isNone(executable)) {
+          return manualCapabilities();
+        }
+        if (
+          executable.value.source === "managed" &&
+          installation.lookupLatestVersion !== undefined &&
+          installation.updateToLatest !== undefined &&
+          installation.activateVersion !== undefined
+        ) {
+          const lookupLatestVersion = installation.lookupLatestVersion;
+          const updateToLatest = installation.updateToLatest;
+          const activateVersion = installation.activateVersion;
+          const base = makeProviderMaintenanceCapabilities({
+            provider: DRIVER,
+            packageName: null,
+            updateExecutable: "antigravity",
+            updateArgs: ["update"],
+            updateLockKey: "antigravity-managed",
+            updateCommand: "Update Antigravity",
+            platform,
+            latestVersion: null,
+            lookupLatestVersion,
+          });
+          return {
+            ...base,
+            latestVersionCacheKey: "antigravity-managed",
+            update: base.update
+              ? {
+                  ...base.update,
+                  run: (onProgress) =>
+                    updateToLatest(onProgress).pipe(
+                      Effect.map((done) =>
+                        okResult(
+                          done.installedVersion
+                            ? `Updated Antigravity to ${done.installedVersion}.`
+                            : "Updated Antigravity.",
+                        ),
+                      ),
+                      Effect.catch((error) => Effect.succeed(failedResult(error.detail))),
+                    ),
+                  runTargetVersion: (version, onProgress) =>
+                    onProgress(`Switching Antigravity to ${version}`).pipe(
+                      Effect.andThen(activateVersion(version)),
+                      Effect.as(okResult(`Switched Antigravity to ${version}.`)),
+                      Effect.catch((error) => Effect.succeed(failedResult(error.detail))),
+                    ),
+                }
+              : null,
+          } satisfies ProviderMaintenanceCapabilities;
+        }
+        return yield* resolveProviderMaintenanceCapabilitiesEffect(miseResolver, {
+          binaryPath: executable.value.executablePath,
+          env: processEnvironment,
+        });
+      },
+    ).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcess.Platform, platform),
+    );
+    const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+      resolveMaintenanceUncached,
+    );
     const provider = yield* makeAntigravityProvider(settings, {
       environment: processEnvironment,
       stampIdentity: classifyModels,
       probe,
       probeUsage: usage.probe,
       clearUsage: usage.clear,
+      resolveMaintenance,
+      enrichVersionAdvisory: (snapshot, { enableProviderUpdateChecks }) =>
+        resolveMaintenance().pipe(
+          Effect.flatMap((maintenanceCapabilities) =>
+            enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+              enableProviderUpdateChecks,
+            }),
+          ),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+        ),
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
       supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),

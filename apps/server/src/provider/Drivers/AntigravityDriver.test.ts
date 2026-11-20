@@ -10,11 +10,14 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -577,6 +580,75 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "exposes managed update and rollback capabilities and populates versionAdvisory",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-maintenance-" });
+        const execPath = path.join(root, "agy_acp_server.par");
+        const harnessPath = path.join(root, "localharness_external");
+        yield* fs.writeFileString(execPath, "#!/bin/sh\n");
+        yield* fs.writeFileString(harnessPath, "#!/bin/sh\n");
+        yield* fs.chmod(execPath, 0o755);
+        yield* fs.chmod(harnessPath, 0o755);
+
+        let currentVersion = "1.5.13";
+        const instance = yield* AntigravityDriver.create({
+          instanceId: ProviderInstanceId.make("antigravity-managed-update"),
+          displayName: "Antigravity",
+          enabled: true,
+          config: AntigravityDriver.defaultConfig(),
+          environment: [],
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AntigravityInstallation.AntigravityInstallation)({
+              managedDirectory: root,
+              resolve: () =>
+                Effect.succeed({
+                  executablePath: execPath,
+                  harnessPath,
+                  source: "managed",
+                  version: currentVersion,
+                  managedVersionDirectory: root,
+                }),
+              acquire: () => Effect.die("unused"),
+              lookupLatestVersion: Effect.succeed("1.6.0"),
+              updateToLatest: () => Effect.die("unused"),
+              activateVersion: (version) =>
+                Effect.sync(() => {
+                  currentVersion = version;
+                }),
+            }),
+          ),
+        );
+
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        expect(capabilities.update?.lockKey).toBe("antigravity-managed");
+        expect(typeof capabilities.update?.run).toBe("function");
+        expect(typeof capabilities.update?.runTargetVersion).toBe("function");
+
+        const nextEnriched = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((candidate) => candidate.versionAdvisory !== undefined),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* instance.snapshot.refresh;
+        const enriched = Option.getOrThrow(yield* Fiber.join(nextEnriched));
+        expect(enriched.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "1.5.13",
+          latestVersion: "1.6.0",
+          canUpdate: true,
+          canInstallVersion: true,
+        });
+        expect((yield* instance.snapshot.getSnapshot).versionAdvisory).toEqual(
+          enriched.versionAdvisory,
+        );
       }),
   );
 });

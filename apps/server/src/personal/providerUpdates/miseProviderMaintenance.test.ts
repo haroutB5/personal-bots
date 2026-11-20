@@ -206,4 +206,55 @@ it.layer(NodeServices.layer)("mise provider maintenance", (it) => {
         }
       }),
   );
+
+  it.effect("recognises mise command-wrappers symlinks pointing to mise", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-mise-command-wrapper");
+      const toolDir = NodePath.join(tempDir, "mise", "installs", "claude");
+      const binaryPath = NodePath.join(toolDir, "2.1.327", "claude");
+      writeExecutable(binaryPath);
+      NodeFS.writeFileSync(
+        NodePath.join(toolDir, ".mise.backend.toml"),
+        'short = "claude"\nfull = "aqua:anthropics/claude-code"\n',
+      );
+      NodeFS.symlinkSync("2.1.327", NodePath.join(toolDir, "latest"));
+
+      const binDir = NodePath.join(tempDir, "bin");
+      const misePath = NodePath.join(binDir, "mise");
+      writeExecutable(
+        misePath,
+        `#!/bin/sh\ncase "$1:$2" in\n  which:claude) echo "${binaryPath}" ;;\n  latest:claude) echo 2.1.328 ;;\n  *) exit 1 ;;\nesac\n`,
+      );
+      const wrapperDir = NodePath.join(tempDir, "mise", "command-wrappers", "bin");
+      NodeFS.mkdirSync(wrapperDir, { recursive: true });
+      const wrapperPath = NodePath.join(wrapperDir, "claude");
+      NodeFS.symlinkSync(misePath, wrapperPath);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        makePackageManagedProviderMaintenanceResolver({
+          provider: driver("claudeAgent"),
+          npmPackageName: "@anthropic-ai/claude-code",
+          nativeUpdate: null,
+        }),
+        { binaryPath: wrapperPath, env: { PATH: `${wrapperDir}:${binDir}` } },
+      ).pipe(Effect.provideService(HostProcess.Platform, "linux"));
+
+      expect(capabilities.update).toMatchObject({
+        command: "mise install claude@latest",
+        executable: misePath,
+        args: ["install", "claude@latest"],
+        lockKey: "mise",
+        latestPath: NodePath.join(toolDir, "latest"),
+      });
+      expect(capabilities.latestVersion).toBe("2.1.328");
+      expect(
+        createProviderVersionAdvisory({
+          driver: driver("claudeAgent"),
+          currentVersion: "2.1.327",
+          latestVersion: "2.1.328",
+          maintenanceCapabilities: capabilities,
+        }),
+      ).toMatchObject({ status: "behind_latest", canUpdate: true, canInstallVersion: true });
+    }),
+  );
 });

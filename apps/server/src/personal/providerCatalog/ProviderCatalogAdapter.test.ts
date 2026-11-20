@@ -271,4 +271,15 @@ describe("provider catalog adapter", () => {
 
     expect(result).toEqual(settings);
   });
+
+  it("fails installFacts cleanly with ProviderSetupError for built-in catalog ids", async () => {
+    const { adapter } = harness({ agents: [gemini] });
+
+    const error = await Effect.runPromise(
+      adapter.installFacts({ catalogId: "builtin:claudeAgent" }).pipe(Effect.flip),
+    );
+
+    expect(error._tag).toBe("ProviderSetupError");
+    expect(error.detail).toContain("built into hbots");
+  });
 });

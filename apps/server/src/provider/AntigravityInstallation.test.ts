@@ -1318,4 +1318,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(requests).toEqual([]);
     }),
   );
+
+  it.effect("supports lookupLatestVersion, updateToLatest, and activateVersion rollback", () =>
+    Effect.gen(function* () {
+      const { installation } = yield* makeHarness({ previous: true });
+      const progress: string[] = [];
+
+      expect(yield* installation.lookupLatestVersion!).toBe("fixture-new");
+      expect((yield* installation.resolve()).version).toBe(previousVersion);
+
+      const updated = yield* installation.updateToLatest!((message) =>
+        Effect.sync(() => {
+          progress.push(message);
+        }),
+      );
+      expect(updated.phase).toBe("succeeded");
+      expect(updated.installedVersion).toBe("fixture-new");
+      expect((yield* installation.resolve()).version).toBe("fixture-new");
+      expect(progress.length).toBeGreaterThan(0);
+
+      yield* installation.activateVersion!(previousVersion);
+      expect((yield* installation.resolve()).version).toBe(previousVersion);
+      expect((yield* installation.state).installedVersion).toBe(previousVersion);
+    }),
+  );
 });
