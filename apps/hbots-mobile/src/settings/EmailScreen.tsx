@@ -32,7 +32,8 @@ export function EmailScreen({
   const [howToOpen, setHowToOpen] = useState(false);
   const [waiting, setWaiting] = useState(false);
 
-  const view = emailView(status.data, connections.data?.connections ?? [], status.error);
+  const failure = status.error ?? connections.error;
+  const view = emailView(status.data, connections.data?.connections ?? null, failure);
   const settled = view.kind !== "closed" && view.kind !== "loading";
   const refreshStatus = status.refresh;
 
@@ -103,7 +104,7 @@ export function EmailScreen({
     >
       <EmailPanel
         view={view}
-        thunderbirdLine={thunderbirdLine(status.data)}
+        thunderbirdLine={thunderbirdLine(status.data, failure)}
         profileSize={profileSizeLabel(status.data?.profileSizeBytes ?? null)}
         busy={busy}
         notice={notice}

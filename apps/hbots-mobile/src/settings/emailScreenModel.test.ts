@@ -92,6 +92,24 @@ describe("emailView", () => {
     });
   });
 
+  it("waits for the connection rows instead of showing confirmed accounts as found", () => {
+    const accounts = [account("account1", "a@gmail.com", "gmail")];
+    expect(emailView(ready(accounts, true), null, null)).toEqual({ kind: "loading" });
+    expect(emailView(ready(accounts, false), null, null)).toMatchObject({
+      kind: "accounts",
+      rows: [{ state: "found" }],
+    });
+  });
+
+  it("shows an error, not the last good answer, when a refresh fails", () => {
+    const accounts = [account("account1", "a@gmail.com", "gmail")];
+    const rows = [connection("gmail", "a@gmail.com")];
+    expect(emailView(ready(accounts, true), rows, "The environment request failed.")).toEqual({
+      kind: "unreachable",
+      message: "The environment request failed.",
+    });
+  });
+
   it("offers no button for a ready Thunderbird whose only account is not IMAP", () => {
     const view = emailView(ready([account("account1", "a@live.com", "outlook", "ews")]), [], null);
     expect(canUseAccounts(view)).toBe(false);
@@ -100,8 +118,9 @@ describe("emailView", () => {
 
 describe("labels", () => {
   it("names the Thunderbird state", () => {
-    expect(thunderbirdLine(null)).toBe("Checking");
-    expect(thunderbirdLine(ready([]))).toBe("Running");
+    expect(thunderbirdLine(null, null)).toBe("Checking");
+    expect(thunderbirdLine(ready([]), null)).toBe("Running");
+    expect(thunderbirdLine(ready([]), "Not connected to your computer.")).toBe("Not reachable");
   });
 
   it("writes the profile size in the unit a person reads", () => {

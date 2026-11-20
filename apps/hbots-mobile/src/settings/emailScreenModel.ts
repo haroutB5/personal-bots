@@ -29,14 +29,18 @@ export const REPAIR_LINES = {
   "addon-missing": "Thunderbird is open but its mail add-on is not answering.",
 } as const;
 
+/**
+ * A failed read wins over whatever an earlier read left behind, and a status
+ * that says the accounts are confirmed waits for the connection rows, because
+ * without them every account would flash as merely found.
+ */
 export function emailView(
   status: PersonalEmailStatus | null,
-  connections: ReadonlyArray<PersonalConnection>,
+  connections: ReadonlyArray<PersonalConnection> | null,
   failure: string | null,
 ): EmailView {
-  if (status === null) {
-    return failure === null ? { kind: "loading" } : { kind: "unreachable", message: failure };
-  }
+  if (failure !== null) return { kind: "unreachable", message: failure };
+  if (status === null) return { kind: "loading" };
   const thunderbird = status.thunderbird;
   switch (thunderbird._tag) {
     case "closed":
@@ -47,8 +51,9 @@ export function emailView(
       return { kind: "repair", line: thunderbird.reason };
     case "ready": {
       if (thunderbird.accounts.length === 0) return { kind: "no-accounts" };
+      if (status.accountsConfirmed && connections === null) return { kind: "loading" };
       const connected = new Set(
-        connections
+        (connections ?? [])
           .filter((connection) => connection.status === "connected")
           .map((connection) => `${connection.vendorId}:${connection.account?.accountId ?? ""}`),
       );
@@ -74,7 +79,11 @@ export function emailView(
 export const canUseAccounts = (view: EmailView): boolean =>
   view.kind === "accounts" && view.rows.some((row) => row.state === "found");
 
-export const thunderbirdLine = (status: PersonalEmailStatus | null): string => {
+export const thunderbirdLine = (
+  status: PersonalEmailStatus | null,
+  failure: string | null,
+): string => {
+  if (failure !== null) return "Not reachable";
   if (status === null) return "Checking";
   switch (status.thunderbird._tag) {
     case "ready":
