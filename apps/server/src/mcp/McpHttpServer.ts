@@ -1486,6 +1486,15 @@ const PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS: ReadonlySet<string> = new Set([
   "t3_worktree_handoff",
   "t3_worktree_status",
   "t3_worktree_list",
+  "link_pull_request",
+  "link_pull_requests",
+  "unlink_pull_request",
+  "unlink_pull_requests",
+  "list_thread_pull_requests",
+  "watch_pull_request",
+  "unwatch_pull_request",
+  "write_pull_request_guides",
+  "read_pull_request_guide",
 ]);
 
 const TEAM_LEAD_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set([

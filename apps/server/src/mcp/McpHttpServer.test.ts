@@ -1880,6 +1880,7 @@ it("isToolListedForPersonalBot hides T3 desktop IDE tools and inapplicable lead/
   expect(McpHttpServer.isToolListedForPersonalBot("t3_thread_list", member)).toBe(false);
   expect(McpHttpServer.isToolListedForPersonalBot("t3_project_create", member)).toBe(false);
   expect(McpHttpServer.isToolListedForPersonalBot("schedule_task", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("link_pull_request", member)).toBe(false);
   expect(McpHttpServer.isToolListedForPersonalBot("orchestrator_capabilities", member)).toBe(false);
   expect(McpHttpServer.isToolListedForPersonalBot("create_bot", member)).toBe(false);
   expect(McpHttpServer.isToolListedForPersonalBot("update_bot", member)).toBe(false);
