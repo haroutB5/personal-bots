@@ -20,6 +20,7 @@ import * as Gateway from "../gateway.ts";
 import * as ConnectionService from "../service.ts";
 import { makeEmailAdapter } from "./adapter.ts";
 import type { CommonpostClient } from "./thunderbird/commonpostClient.ts";
+import { COMMONPOST_REVIEWED_SCHEMA } from "./thunderbird/pins.ts";
 import { THUNDERBIRD_CLOSED_LINE } from "./thunderbird/status.ts";
 import { makeThunderbirdMailApi } from "./thunderbird/thunderbirdMailApi.ts";
 
@@ -33,7 +34,11 @@ const caller = {
 type Tool = Parameters<CommonpostClient["Service"]["call"]>[0];
 
 const harness = (
-  options: { readonly closed?: boolean; readonly draftsInLocalFolders?: boolean } = {},
+  options: {
+    readonly closed?: boolean;
+    readonly draftsInLocalFolders?: boolean;
+    readonly changedAddon?: boolean;
+  } = {},
 ) => {
   const approvals = new Map<string, PersonalConnectionApproval>();
   const calls: Array<{ tool: Tool; args: Readonly<Record<string, unknown>> }> = [];
@@ -75,6 +80,12 @@ const harness = (
       }
       return Effect.succeed({ messages: [] });
     },
+    schema: () =>
+      Effect.succeed(
+        options.changedAddon === true
+          ? "commonpost-mcp/0.26.1/tools@0000000000000000"
+          : COMMONPOST_REVIEWED_SCHEMA,
+      ),
     status: () => Effect.succeed({ _tag: "closed" }),
   };
 
@@ -230,6 +241,17 @@ describe("a Gmail mailbox read through Thunderbird", () => {
       }).pipe(Effect.provide(h.layer));
     },
   );
+
+  it.effect("runs nothing when the add-on's tools are not the reviewed ones", () => {
+    const h = harness({ changedAddon: true });
+    return Effect.gen(function* () {
+      const gateway = yield* Gateway.PersonalConnectionGateway;
+      const failure = yield* Effect.flip(gateway.call(draft));
+      expect(failure.reason).toContain("changed its gmail.create_draft contract");
+      expect(failure.reason).toContain("Nothing ran");
+      expect(h.calls).toEqual([]);
+    }).pipe(Effect.provide(h.layer));
+  });
 
   it.effect("has no send operation to ask for", () => {
     const h = harness();

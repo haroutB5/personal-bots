@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 
 import { ConnectionVendorError } from "../../adapters.ts";
 import { CommonpostClient, layer, type CommonpostConfig } from "./commonpostClient.ts";
-import { COMMONPOST_TOOLS_FINGERPRINT } from "./pins.ts";
+import { COMMONPOST_REVIEWED_SCHEMA, COMMONPOST_TOOLS_FINGERPRINT } from "./pins.ts";
 import { THUNDERBIRD_ADDON_LINE, THUNDERBIRD_CLOSED_LINE } from "./status.ts";
 import * as ThunderbirdProcess from "./thunderbirdProcess.ts";
 
@@ -159,6 +159,49 @@ describe("CommonpostClient against a fake bridge", () => {
         echoed: "searchMessages",
         arguments: { query: "invoice", maxResults: 5 },
       });
+    }));
+
+  it("reads the add-on's live schema, which is the reviewed one while its tools are unchanged", () =>
+    withHome("ready", async (home) => {
+      const live = await run(
+        configFor(home),
+        true,
+        withClient((client) => client.schema()),
+      );
+      expect(live).toBe(COMMONPOST_REVIEWED_SCHEMA);
+    }));
+
+  it("reads a different schema when the add-on's argument schemas drift", () =>
+    withHome("drift", async (home) => {
+      const live = await run(
+        configFor(home),
+        true,
+        withClient((client) => client.schema()),
+      );
+      expect(live).not.toBe(COMMONPOST_REVIEWED_SCHEMA);
+    }));
+
+  it("reads the schema from a closed Thunderbird without calling any tool", () =>
+    withHome("closed", async (home) => {
+      const live = await run(
+        configFor(home),
+        false,
+        withClient((client) => client.schema()),
+      );
+      expect(live).toBe(COMMONPOST_REVIEWED_SCHEMA);
+      expect(NodeFS.readFileSync(NodePath.join(home, "seen.jsonl"), "utf8")).not.toContain(
+        "tools/call",
+      );
+    }));
+
+  it("fails a call that comes back with the bridge's notice instead of returning its data", () =>
+    withHome("notice", async (home) => {
+      const error = await run(
+        configFor(home),
+        true,
+        withClient((client) => client.call("listAccounts", {})).pipe(Effect.flip),
+      );
+      expect(error.detail).toContain("version 0.9.0");
     }));
 
   it("fails a call with the not running line and the unavailable flag when Thunderbird is closed", () =>

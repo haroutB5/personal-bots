@@ -124,4 +124,8 @@ export const toolsFingerprint = (tools: ReadonlyArray<ListedTool>): string =>
 export const COMMONPOST_TOOLS_FINGERPRINT =
   "db95cfb2d28a795f03a2cee542874d0860a077587797b6ac10f6a17511528f16";
 
-export const COMMONPOST_REVIEWED_SCHEMA = `commonpost-mcp/${COMMONPOST_ADDON_VERSION}/tools@${COMMONPOST_TOOLS_FINGERPRINT.slice(0, 16)}`;
+/** The schema id for a tools fingerprint: the reviewed one when the add-on is unchanged, another one when it is not. */
+export const schemaOfFingerprint = (fingerprint: string): string =>
+  `commonpost-mcp/${COMMONPOST_ADDON_VERSION}/tools@${fingerprint.slice(0, 16)}`;
+
+export const COMMONPOST_REVIEWED_SCHEMA = schemaOfFingerprint(COMMONPOST_TOOLS_FINGERPRINT);

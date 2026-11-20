@@ -245,7 +245,7 @@ export const makeGmailApi = (http: VendorHttp): OAuthMailApi => {
     });
 
   return {
-    vendorSchema: GMAIL_SCHEMA,
+    vendorSchema: () => Effect.succeed(GMAIL_SCHEMA),
     search,
     listThreads,
     readMessage,

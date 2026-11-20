@@ -14,7 +14,6 @@ import {
   type ThreadSummary,
 } from "../mailApi.ts";
 import type { CommonpostClient } from "./commonpostClient.ts";
-import { COMMONPOST_REVIEWED_SCHEMA } from "./pins.ts";
 import { accountsFromList } from "./status.ts";
 
 type Row = Readonly<Record<string, unknown>>;
@@ -448,7 +447,7 @@ export const makeThunderbirdMailApi = (client: CommonpostClient["Service"]): Mai
     });
 
   return {
-    vendorSchema: COMMONPOST_REVIEWED_SCHEMA,
+    vendorSchema: client.schema,
     search,
     listThreads,
     readMessage,

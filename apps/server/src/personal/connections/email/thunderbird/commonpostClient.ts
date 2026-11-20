@@ -21,6 +21,7 @@ import {
   COMMONPOST_BRIDGE_PROFILE,
   COMMONPOST_BRIDGE_SHA256,
   COMMONPOST_TOOLS_FINGERPRINT,
+  schemaOfFingerprint,
   toolsFingerprint,
   type CommonpostTool,
 } from "./pins.ts";
@@ -66,6 +67,8 @@ export class CommonpostClient extends Context.Service<
       tool: CommonpostTool,
       args: Readonly<Record<string, unknown>>,
     ) => Effect.Effect<unknown, ConnectionVendorError>;
+    /** The schema the add-on speaks right now, read from its own tool list. Nothing is called. */
+    readonly schema: () => Effect.Effect<string, ConnectionVendorError>;
     /** Never fails: every way Thunderbird can be unavailable is a value of the status. */
     readonly status: () => Effect.Effect<ThunderbirdStatus>;
   }
@@ -162,10 +165,34 @@ export const makeCommonpostClient = (config: CommonpostConfig) =>
           });
         }
         const read = readToolReply(reply);
+        const notice = read.notices.find((text) => text.startsWith("Commonpost notice"));
+        if (notice !== undefined) {
+          return yield* new ConnectionVendorError({ operationId, detail: notice });
+        }
         if (!read.isError) return read.value;
         const text = errorTextOf(read.value);
         if (isUnreachableText(text)) return yield* unavailable(operationId);
         return yield* new ConnectionVendorError({ operationId, detail: text });
+      });
+    };
+
+    const listedTools = (listed: RpcReply | undefined) => {
+      const value = (listed?.result ?? {}) as { readonly tools?: unknown };
+      return Array.isArray(value.tools)
+        ? (value.tools as ReadonlyArray<{ name: string; inputSchema: unknown }>)
+        : [];
+    };
+
+    const schema: CommonpostClient["Service"]["schema"] = () => {
+      const operationId = "thunderbird.tools";
+      return Effect.gen(function* () {
+        const replies = yield* session(
+          [{ method: "tools/list", params: {}, timeoutMs: timeouts.listMs }],
+          operationId,
+        );
+        const tools = listedTools(replies[0]);
+        if (tools.length === 0) return yield* unavailable(operationId);
+        return schemaOfFingerprint(toolsFingerprint(tools));
       });
     };
 
@@ -198,12 +225,7 @@ export const makeCommonpostClient = (config: CommonpostConfig) =>
           } as const;
         }
         const [accounts, listed] = outcome.success;
-        const tools = ((): ReadonlyArray<{ name: string; inputSchema: unknown }> => {
-          const value = (listed?.result ?? {}) as { readonly tools?: unknown };
-          return Array.isArray(value.tools)
-            ? (value.tools as ReadonlyArray<{ name: string; inputSchema: unknown }>)
-            : [];
-        })();
+        const tools = listedTools(listed);
         if (accounts === undefined) return { _tag: "unsupported", reason: "No answer." } as const;
         const read = readToolReply(accounts);
         const notice = read.notices.find((text) => text.startsWith("Commonpost notice"));
@@ -225,7 +247,7 @@ export const makeCommonpostClient = (config: CommonpostConfig) =>
         return { _tag: "ready", accounts: accountsFromList(read.value) } as const;
       });
 
-    return CommonpostClient.of({ call, status });
+    return CommonpostClient.of({ call, schema, status });
   });
 
 export const layer = (config: CommonpostConfig = defaultCommonpostConfig()) =>

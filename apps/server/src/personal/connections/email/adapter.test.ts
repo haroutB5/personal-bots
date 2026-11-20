@@ -34,7 +34,7 @@ const recorder = () => {
   const drafts: Array<{ draft: MailDraft; update: string | null }> = [];
   const mailboxes: Array<string> = [];
   const api: MailApi = {
-    vendorSchema: COMMONPOST_REVIEWED_SCHEMA,
+    vendorSchema: () => Effect.succeed(COMMONPOST_REVIEWED_SCHEMA),
     search: (call, query) =>
       Effect.sync(() => {
         mailboxes.push(call.mailbox);

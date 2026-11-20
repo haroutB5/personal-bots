@@ -169,7 +169,7 @@ export const makeEmailAdapter = (vendorId: EmailVendorId, api: MailApi) =>
         new RegExp(
           `^${vendorId}\\.(search|list_threads|read_message|read_thread|create_draft)$`,
         ).test(operationId)
-          ? Effect.succeed(api.vendorSchema)
+          ? api.vendorSchema()
           : Effect.fail(
               new ConnectionVendorError({
                 operationId,

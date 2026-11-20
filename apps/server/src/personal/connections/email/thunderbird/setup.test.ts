@@ -63,6 +63,7 @@ const withHarness = async (run: (h: Harness) => Promise<void>) => {
     const layer = Layer.mergeAll(
       Layer.succeed(CommonpostClient, {
         call: () => Effect.die("unused"),
+        schema: () => Effect.die("unused"),
         status: () => Effect.succeed(status),
       }),
       Layer.succeed(ThunderbirdProcess, {

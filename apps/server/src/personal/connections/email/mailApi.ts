@@ -73,8 +73,8 @@ export interface MailCall {
 type Failing<A> = Effect.Effect<A, ConnectionVendorError>;
 
 export interface MailApi<Call extends { readonly operationId: string } = MailCall> {
-  /** The request and reply shape this implementation speaks, compared with the reviewed one by the gateway. */
-  readonly vendorSchema: string;
+  /** The request and reply shape the vendor speaks right now, compared with the reviewed one by the gateway before every call. */
+  readonly vendorSchema: () => Failing<string>;
   readonly search: (call: Call, query: MailQuery) => Failing<ReadonlyArray<MailSummary>>;
   readonly listThreads: (
     call: Call,

@@ -287,7 +287,7 @@ export const makeGraphMailApi = (http: VendorHttp): OAuthMailApi => {
     });
 
   return {
-    vendorSchema: GRAPH_MAIL_SCHEMA,
+    vendorSchema: () => Effect.succeed(GRAPH_MAIL_SCHEMA),
     search,
     listThreads,
     readMessage,

@@ -56,6 +56,7 @@ const harness = (
       if (reply instanceof ConnectionVendorError) return Effect.fail(reply);
       return Effect.succeed(typeof reply === "function" ? reply(args) : reply);
     },
+    schema: () => Effect.succeed(COMMONPOST_REVIEWED_SCHEMA),
     status: () => Effect.succeed({ _tag: "closed" }),
   };
   const api: MailApi = makeThunderbirdMailApi(client);
@@ -581,7 +582,9 @@ describe("a mailbox Thunderbird does not serve", () => {
 });
 
 describe("the schema it reports", () => {
-  it("is the reviewed Commonpost one", () => {
-    expect(harness({}).api.vendorSchema).toBe(COMMONPOST_REVIEWED_SCHEMA);
+  it("is the reviewed Commonpost one", async () => {
+    expect(await Effect.runPromise(harness({}).api.vendorSchema())).toBe(
+      COMMONPOST_REVIEWED_SCHEMA,
+    );
   });
 });
