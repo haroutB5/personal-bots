@@ -124,5 +124,5 @@ export const keptSettings = (userJs: string): UserJsOptions => {
   const offlineServers = [...userJs.matchAll(OFFLINE_LINE)].flatMap((match) =>
     match[1] === undefined ? [] : [match[1]],
   );
-  return { allowedAccounts, offlineServers };
+  return allowedAccounts === undefined ? { offlineServers } : { allowedAccounts, offlineServers };
 };
