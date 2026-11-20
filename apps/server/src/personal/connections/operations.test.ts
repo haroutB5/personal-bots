@@ -335,6 +335,17 @@ describe("vercel provisioning operations", () => {
         });
         expect(draft.risk).toMatchObject({ approvalRequired: false, reason: "account_write" });
         expect(draft.risk.summary).toContain("Nothing is sent");
+        expect(draft.risk.summary).toContain('subject "Hello"');
+
+        const reply = yield* prepare(`${vendor}.create_draft`, {
+          mailbox: "me@example.com",
+          to: ["a@example.com"],
+          subject: "Hello",
+          body: "Hi",
+          replyTo: "abc123",
+        });
+        expect(reply.risk.summary).toContain("conversation's own subject");
+        expect(reply.risk.summary).not.toContain("Hello");
       }
     }),
   );

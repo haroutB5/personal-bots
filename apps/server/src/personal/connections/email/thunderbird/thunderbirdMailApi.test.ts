@@ -479,6 +479,23 @@ describe("drafts", () => {
     });
   });
 
+  it("rewrites a reply draft without a subject, so Thunderbird keeps the Re: one", async () => {
+    const h = harness({
+      ...base,
+      saveDraft: { messageId: "d4@mail", folderPath: `${ROOT}/[Gmail]/Drafts` },
+    });
+    await Effect.runPromise(
+      h.api.createDraft(
+        h.call,
+        { ...draft, cc: [], subject: "My own subject", replyTo: refOf("m1@mail") },
+        encodeRef(BOX, "d2@mail", `${ROOT}/[Gmail]/Drafts`),
+      ),
+    );
+    const args = afterLookup(h.seen)[0]?.args ?? {};
+    expect(args).toMatchObject({ draftId: "d2@mail", from: ADDRESS });
+    expect(args).not.toHaveProperty("subject");
+  });
+
   it("turns the add-on's wrong-identity refusal into a plain one with no send path", async () => {
     const h = harness({
       ...base,

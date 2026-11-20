@@ -421,7 +421,7 @@ export const makeThunderbirdMailApi = (client: CommonpostClient["Service"]): Mai
         replacing !== null
           ? client.call("saveDraft", {
               ...composeArgs(box, draft),
-              subject: draft.subject,
+              ...(replyTo === null ? { subject: draft.subject } : {}),
               draftId: replacing.messageId,
               folderPath: replacing.folderPath,
             })

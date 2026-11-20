@@ -84,7 +84,9 @@ const recipients = (input: DraftSummaryInput) =>
   }`;
 
 export const draftSummary = (input: DraftSummaryInput) =>
-  `Save a draft in ${input.mailbox} ${recipients(input)}, subject "${input.subject}". Nothing is sent.`;
+  input.replyTo === undefined
+    ? `Save a draft in ${input.mailbox} ${recipients(input)}, subject "${input.subject}". Nothing is sent.`
+    : `Save a reply draft in ${input.mailbox} ${recipients(input)}, under the conversation's own subject. Nothing is sent.`;
 
 export const emailTargetResource = (vendorId: string, mailbox: string) =>
   `email:${vendorId}:${mailbox.toLowerCase()}`;
