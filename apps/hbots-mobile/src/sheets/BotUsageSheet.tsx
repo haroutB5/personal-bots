@@ -19,7 +19,6 @@ import {
   formatSplit,
   formatTokenCount,
   formatWindowSpan,
-  providerColor,
   shortProviderLabel,
   TOKEN_USAGE_WINDOWS,
 } from "@hbots/personal-client/usage/tokenUsagePresentation";
@@ -28,7 +27,7 @@ import { useMemo } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { BotAvatar } from "../shell/BotAvatar";
-import { tokens } from "../shell/tokens";
+import { nativeProviderColor, tokens } from "../shell/tokens";
 import { SheetShell } from "./SheetShell";
 
 function costText(cost: TokenCostView): string {
@@ -153,7 +152,7 @@ export function BotUsageSheet({
                         key={segment.provider}
                         style={{
                           flex: segment.tokens,
-                          backgroundColor: providerColor(segment.provider),
+                          backgroundColor: nativeProviderColor(segment.provider),
                         }}
                       />
                     ))}
@@ -162,7 +161,10 @@ export function BotUsageSheet({
                     {row.mix.map((segment) => (
                       <View key={segment.provider} style={styles.legendItem}>
                         <View
-                          style={[styles.dot, { backgroundColor: providerColor(segment.provider) }]}
+                          style={[
+                            styles.dot,
+                            { backgroundColor: nativeProviderColor(segment.provider) },
+                          ]}
                         />
                         <Text style={styles.legendText}>
                           {shortProviderLabel(segment.provider)}
@@ -189,7 +191,9 @@ export function BotUsageSheet({
               <Text style={styles.section}>Models</Text>
               {row.models.map((model) => (
                 <View key={`${model.provider}:${model.modelId}`} style={styles.modelRow}>
-                  <View style={[styles.dot, { backgroundColor: providerColor(model.provider) }]} />
+                  <View
+                    style={[styles.dot, { backgroundColor: nativeProviderColor(model.provider) }]}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.modelName}>{model.model}</Text>
                     <Text style={styles.modelMeta}>

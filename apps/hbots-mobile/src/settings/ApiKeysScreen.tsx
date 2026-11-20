@@ -32,7 +32,6 @@ export function ApiKeysScreen({
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId as EnvironmentId;
-  useSecureScreen(true);
   const secrets = native.secrets.useSavedSecrets(environmentId);
   const create = native.client.useAtomCommand(native.secrets.personalSecretCreate, {
     reportFailure: false,
@@ -47,6 +46,7 @@ export function ApiKeysScreen({
   const [name, setName] = useState("");
   const [label, setLabel] = useState("");
   const [value, setValue, clearValue] = useSecretDraft();
+  useSecureScreen(adding && value.length > 0);
   const [access, setAccess] = useState<SecretAccessState>(initialSecretAccess());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [expandedAccess, setExpandedAccess] = useState<SecretAccessState>(initialSecretAccess());

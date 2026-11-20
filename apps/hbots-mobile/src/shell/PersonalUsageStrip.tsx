@@ -50,21 +50,9 @@ import {
 import { useSheetMotion } from "../motion/useSheetMotion";
 import { useWindowTouch } from "../motion/useWindowTouch";
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { tokens } from "./tokens";
+import { nativeProviderColor, tokens } from "./tokens";
 import { usageRedeemRow } from "./usageRedeem";
 import { sendUsageRefresh } from "./usageRefresh";
-
-const PROVIDER_DOT: Record<UsageProviderKind, string> = {
-  claude: "#c98500",
-  opencode: "#d55181",
-  antigravity: "#3987e5",
-  codex: "#008300",
-  deepseek: "#4d6bfe",
-  cursor: "#8c8c88",
-  grok: "#8c8c88",
-  muse: "#8c8c88",
-  pi: "#8c8c88",
-};
 
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   reset: "Reset applied. Your windows have cleared.",
@@ -362,7 +350,7 @@ function UsageCardView({
           <View
             style={[
               styles.providerDot,
-              { backgroundColor: PROVIDER_DOT[usageProviderOfDriver(card.driver)] },
+              { backgroundColor: nativeProviderColor(usageProviderOfDriver(card.driver)) },
             ]}
           />
           <Text style={styles.cardTitle} numberOfLines={1}>

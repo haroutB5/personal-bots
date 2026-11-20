@@ -24,7 +24,6 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { useSecureScreen } from "../platform/secureScreen";
 import { ScreenHeader } from "../shell/ScreenHeader";
 import { tokens } from "../shell/tokens";
 import { memoryEmptyLine, memorySections } from "./memoryScreenModel";
@@ -41,7 +40,6 @@ export function MemoryScreen({
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId as EnvironmentId;
-  useSecureScreen(true);
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [selecting, setSelecting] = useState(false);

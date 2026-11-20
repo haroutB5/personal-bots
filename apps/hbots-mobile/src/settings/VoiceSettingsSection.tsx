@@ -49,7 +49,6 @@ const CHECK_COLOR: Record<VoiceCallCheck["tone"], string> = {
 
 export function VoiceSettingsSection({ native }: { readonly native: NativePersonal }) {
   const environmentId = native.environmentId as EnvironmentId;
-  useSecureScreen(true);
   const profile = native.bots.usePersonalProfile(environmentId);
   const savedSecrets = native.secrets.useSavedSecrets(environmentId);
   const setProfile = native.client.useAtomCommand(native.bots.personalProfileSet, {
@@ -154,6 +153,7 @@ export function VoiceSettingsSection({ native }: { readonly native: NativePerson
 
   const keyMissing = !hasKey;
   const showForm = editing || keyMissing;
+  useSecureScreen(showForm && draft.length > 0);
 
   return (
     <>

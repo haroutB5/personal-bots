@@ -40,7 +40,6 @@ export function ConnectionsScreen({
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId as EnvironmentId;
-  useSecureScreen(true);
   const list = native.connections.usePersonalConnections(environmentId);
   const runConnect = native.client.useAtomCommand(native.connections.personalConnectionConnect, {
     reportFailure: false,
@@ -414,6 +413,7 @@ function TokenForm({
 }) {
   const vendor = vendorInfo(vendorId);
   const [draft, setDraft, clear] = useSecretDrafts();
+  useSecureScreen(Object.values(draft).some((fieldValue) => fieldValue.length > 0));
   const [error, setError] = useState<string | null>(null);
   const fields = vendor.requiredCredentialFields;
   return (

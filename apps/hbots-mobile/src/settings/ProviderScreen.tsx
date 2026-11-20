@@ -55,6 +55,7 @@ export function ProviderScreen({
 }) {
   const environmentId = native.environmentId as EnvironmentId;
   const providers = native.useProviders();
+  const hiddenUsage = native.bots.useHiddenUsageProviders(environmentId);
   const bots = native.bots.usePersonalBotsList(environmentId);
   const settings = native.providers.useServerSettings(environmentId);
   const install = native.providers.useProviderInstallState(environmentId, instanceId as never);
@@ -86,7 +87,8 @@ export function ProviderScreen({
   const setProfile = native.client.useAtomCommand(native.bots.personalProfileSet, {
     reportFailure: false,
   });
-  const catalogId = providers.find((candidate) => candidate.instanceId === instanceId)?.catalogId;
+  const snapshot = providers.find((candidate) => candidate.instanceId === instanceId) ?? null;
+  const catalogId = snapshot?.source === "registry" ? snapshot.catalogId : undefined;
   const facts = native.providers.useProviderInstallFacts(environmentId, catalogId ?? null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -96,9 +98,8 @@ export function ProviderScreen({
   const [expanded, setExpanded] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
   const [keyDraft, setKeyDraft, clearKeyDraft] = useSecretDraft();
-  const snapshot = providers.find((candidate) => candidate.instanceId === instanceId) ?? null;
   const keyField = snapshot === null ? undefined : providerApiKeyField(snapshot.driver);
-  useSecureScreen(keyField !== undefined);
+  useSecureScreen(keyOpen && keyDraft.length > 0);
 
   if (snapshot === null) {
     return (
@@ -537,7 +538,7 @@ export function ProviderScreen({
         <ToggleRow
           title="Show usage"
           hint="Its limits on the Bots page"
-          value={snapshot.showUsage !== false}
+          value={!hiddenUsage.has(instanceId)}
           onValueChange={(visible) => {
             void setProfile({
               environmentId,

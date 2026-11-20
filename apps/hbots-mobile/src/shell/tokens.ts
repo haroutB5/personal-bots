@@ -1,3 +1,5 @@
+import type { UsageProviderKind } from "@t3tools/contracts";
+
 /** The approved dark tokens from the web app, copied once so phone and web agree. */
 export const tokens = {
   bg: "#0f0f0e",
@@ -29,3 +31,20 @@ export const tokens = {
   goalTagBg: "#1f2a22",
   goalTagText: "#bfe8c8",
 } as const;
+
+const PROVIDER_HEX: Record<UsageProviderKind, string> = {
+  claude: "#c98500",
+  opencode: "#d55181",
+  antigravity: "#3987e5",
+  codex: "#008300",
+  deepseek: "#4d6bfe",
+  cursor: "#8c8c88",
+  grok: "#8c8c88",
+  muse: "#8c8c88",
+  pi: "#8c8c88",
+};
+
+/** Native hex color for provider dots and usage mix bars (React Native cannot resolve CSS `var(--...)`). */
+export function nativeProviderColor(provider: UsageProviderKind): string {
+  return PROVIDER_HEX[provider] ?? "#8c8c88";
+}

@@ -8,7 +8,6 @@ import {
   formatModelsAndShare,
   formatShare,
   formatTokenCount,
-  providerColor,
   tokenUsageBotButtonLabel,
 } from "@hbots/personal-client/usage/tokenUsagePresentation";
 import { useEffect, useState } from "react";
@@ -16,7 +15,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { BotUsageSheet } from "../sheets/BotUsageSheet";
-import { tokens } from "../shell/tokens";
+import { nativeProviderColor, tokens } from "../shell/tokens";
 import { teamUsageModel } from "./teamScreenModel";
 
 /** Keep the open card current without asking on every render. */
@@ -272,7 +271,10 @@ export function TeamTokenUsage({
                           ]}
                         >
                           <View
-                            style={[styles.dot, { backgroundColor: providerColor(row.provider) }]}
+                            style={[
+                              styles.dot,
+                              { backgroundColor: nativeProviderColor(row.provider) },
+                            ]}
                           />
                           <View style={styles.modelText}>
                             <Text

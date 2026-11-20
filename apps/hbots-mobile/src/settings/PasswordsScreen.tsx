@@ -31,7 +31,6 @@ export function PasswordsScreen({
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId as EnvironmentId;
-  useSecureScreen(true);
   const logins = native.logins.usePersonalLogins(environmentId);
   const create = native.client.useAtomCommand(native.logins.personalLoginCreate, {
     reportFailure: false,
@@ -51,6 +50,7 @@ export function PasswordsScreen({
   const [editing, setEditing] = useState<Editing | null>(null);
   const [draft, setDraft] = useState<PasswordDraft>(emptyPasswordDraft());
   const [password, setPassword, clearPassword] = useSecretDraft();
+  useSecureScreen(editing !== null && password.length > 0);
   const [errors, setErrors] = useState<PasswordDraftErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
