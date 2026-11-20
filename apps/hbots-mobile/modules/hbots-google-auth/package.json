@@ -1,8 +1,0 @@
-{
-  "name": "hbots-google-auth",
-  "version": "0.0.1",
-  "private": true,
-  "peerDependencies": {
-    "expo": "*"
-  }
-}
