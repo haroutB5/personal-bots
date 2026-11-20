@@ -12,7 +12,7 @@ import { CommonpostClient } from "./commonpostClient.ts";
 import { renderUserJs } from "./profile.ts";
 import { makeThunderbirdSetup, ThunderbirdSetup } from "./setup.ts";
 import type { ThunderbirdAccount, ThunderbirdStatus } from "./status.ts";
-import { ThunderbirdProcess } from "./thunderbirdProcess.ts";
+import { ThunderbirdProcess, ThunderbirdProcessError } from "./thunderbirdProcess.ts";
 
 const GMAIL: ThunderbirdAccount = {
   accountId: "account1",
@@ -37,7 +37,10 @@ interface Harness {
   readonly home: string;
   readonly userJs: string;
   readonly events: Array<string>;
-  readonly setup: (status: ThunderbirdStatus) => Promise<ThunderbirdSetup["Service"]>;
+  readonly setup: (
+    status: ThunderbirdStatus,
+    options?: { readonly hiddenProcess?: boolean; readonly stuckOnTerminate?: boolean },
+  ) => Promise<ThunderbirdSetup["Service"]>;
 }
 
 const withHarness = async (run: (h: Harness) => Promise<void>) => {
@@ -52,22 +55,30 @@ const withHarness = async (run: (h: Harness) => Promise<void>) => {
   NodeFS.writeFileSync(NodePath.join(profile, "user.js"), renderUserJs());
   const events: Array<string> = [];
   const userJsPath = NodePath.join(profile, "user.js");
-  const setup = (status: ThunderbirdStatus) => {
+  const setup = (
+    status: ThunderbirdStatus,
+    options: { readonly hiddenProcess?: boolean; readonly stuckOnTerminate?: boolean } = {},
+  ) => {
+    const hidden = options.hiddenProcess === true;
     const layer = Layer.mergeAll(
       Layer.succeed(CommonpostClient, {
         call: () => Effect.die("unused"),
         status: () => Effect.succeed(status),
       }),
       Layer.succeed(ThunderbirdProcess, {
-        running: () => Effect.succeed(status._tag === "ready"),
+        running: () => Effect.succeed(status._tag === "ready" && !hidden),
         launch: () =>
           Effect.sync(() => {
             events.push(`launch:${NodeFS.readFileSync(userJsPath, "utf8").length}`);
           }),
         terminate: () =>
-          Effect.sync(() => {
-            events.push(`terminate:${NodeFS.readFileSync(userJsPath, "utf8").length}`);
-          }),
+          options.stuckOnTerminate === true
+            ? Effect.fail(
+                new ThunderbirdProcessError({ message: "Thunderbird did not close in time." }),
+              )
+            : Effect.sync(() => {
+                events.push(`terminate:${NodeFS.readFileSync(userJsPath, "utf8").length}`);
+              }),
       }),
       Layer.mock(PersonalConnectionService)({
         connectLocalMailbox: (input) =>
@@ -123,6 +134,32 @@ describe("ThunderbirdSetup.useAccounts", () => {
       expect(again).toEqual({ changed: false, problem: null });
       expect(h.userJs).toBe(first);
       expect(h.events).toEqual(["row:gmail:harout@gmail.com"]);
+    });
+  });
+
+  it("fails and writes nothing when the add-on answers but the profile's Thunderbird cannot be found", async () => {
+    await withHarness(async (h) => {
+      const setup = await h.setup({ _tag: "ready", accounts: [GMAIL] }, { hiddenProcess: true });
+      const before = h.userJs;
+      const failure = await Effect.runPromise(
+        Effect.flip(setup.useAccounts({ accountIds: ["account1"] })),
+      );
+      expect(failure.message).toContain("cannot find the Thunderbird");
+      expect(h.userJs).toBe(before);
+      expect(h.events).toEqual([]);
+    });
+  });
+
+  it("fails without adding rows when Thunderbird does not close", async () => {
+    await withHarness(async (h) => {
+      const setup = await h.setup({ _tag: "ready", accounts: [GMAIL] }, { stuckOnTerminate: true });
+      const before = h.userJs;
+      const failure = await Effect.runPromise(
+        Effect.flip(setup.useAccounts({ accountIds: ["account1"] })),
+      );
+      expect(failure.message).toBe("Thunderbird did not close in time.");
+      expect(h.userJs).toBe(before);
+      expect(h.events).toEqual([]);
     });
   });
 

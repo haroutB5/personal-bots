@@ -10,44 +10,47 @@ import * as Schema from "effect/Schema";
 
 import { discoverGraphicalSession } from "../../../browser/headlessMode.ts";
 import { THUNDERBIRD_PROFILE_NAME } from "./pins.ts";
+import { resolveProfileDir } from "./profile.ts";
 
 const MAIN_NAMES: ReadonlySet<string> = new Set(["thunderbird", "thunderbird-bin"]);
 
+export interface RunningThunderbirdWhere {
+  readonly home: string;
+  readonly profile: string;
+  readonly procRoot: string;
+}
+
 /**
- * The main Thunderbird processes started on `profile`, read from a
- * /proc-shaped folder. A process counts when the program it was started as is
- * Thunderbird itself and it was given that profile with `-P`, which leaves out
- * a shell or editor that merely has the word in an argument, the owner's own
- * Thunderbird on another profile, and content children (`-contentproc`).
+ * The PID of the Thunderbird that holds the hbots profile, found through the
+ * profile's own `lock` symlink (target `host:+PID`) and then confirmed by the
+ * program that PID runs. How Thunderbird was started does not matter, and a
+ * stale lock, a reused PID, a shell that merely mentions Thunderbird or a
+ * Thunderbird on another profile or home all come back as null.
  */
-export const findThunderbirdPids = (
-  procRoot: string,
-  profile: string = THUNDERBIRD_PROFILE_NAME,
-): ReadonlyArray<number> => {
-  let entries: ReadonlyArray<string>;
+export const runningThunderbirdPid = (where: RunningThunderbirdWhere): number | null => {
+  const profileDir = resolveProfileDir(where.home, where.profile);
+  if (profileDir === null) return null;
+  let target: string;
   try {
-    entries = NodeFS.readdirSync(procRoot);
+    target = NodeFS.readlinkSync(NodePath.join(profileDir, "lock"));
   } catch {
-    return [];
+    return null;
   }
-  return entries.flatMap((entry) => {
-    if (!/^\d+$/.test(entry)) return [];
-    try {
-      const argv = NodeFS.readFileSync(NodePath.join(procRoot, entry, "cmdline"), "utf8").split(
-        "\0",
-      );
-      const program = NodePath.basename(argv[0] ?? "");
-      const flag = argv.indexOf("-P");
-      return MAIN_NAMES.has(program) &&
-        !argv.includes("-contentproc") &&
-        flag >= 0 &&
-        argv[flag + 1] === profile
-        ? [Number(entry)]
-        : [];
-    } catch {
-      return [];
-    }
-  });
+  const digits = /:\+?(\d+)$/.exec(target)?.[1];
+  if (digits === undefined) return null;
+  const pid = Number(digits);
+  try {
+    const exe = NodeFS.readlinkSync(NodePath.join(where.procRoot, digits, "exe"));
+    if (!MAIN_NAMES.has(NodePath.basename(exe.replace(/ \(deleted\)$/, "")))) return null;
+    const argv = NodeFS.readFileSync(
+      NodePath.join(where.procRoot, digits, "cmdline"),
+      "utf8",
+    ).split("\0");
+    const named = argv.indexOf("-P");
+    return named >= 0 && argv[named + 1] !== where.profile ? null : pid;
+  } catch {
+    return null;
+  }
 };
 
 export class ThunderbirdProcessError extends Schema.TaggedError<ThunderbirdProcessError>()(
@@ -62,6 +65,7 @@ export interface ThunderbirdProcessConfig {
   readonly procRoot: string;
   readonly graphicalEnv: () => Readonly<Record<string, string>>;
   readonly exitWaitMs: number;
+  readonly startWaitMs: number;
 }
 
 export const defaultThunderbirdProcessConfig = (
@@ -73,28 +77,39 @@ export const defaultThunderbirdProcessConfig = (
   procRoot: "/proc",
   graphicalEnv: () => discoverGraphicalSession().env,
   exitWaitMs: 20_000,
+  startWaitMs: 20_000,
 });
 
 export class ThunderbirdProcess extends Context.Service<
   ThunderbirdProcess,
   {
     readonly running: () => Effect.Effect<boolean>;
+    /** Starts Thunderbird on the hbots profile and returns once a running Thunderbird holds that profile. */
     readonly launch: () => Effect.Effect<void, ThunderbirdProcessError>;
-    /** Asks the hbots profile's Thunderbird to quit and waits until it has. Never forces it. */
+    /** Asks the hbots profile's Thunderbird to quit and fails unless it has exited. Never forces it. */
     readonly terminate: () => Effect.Effect<void, ThunderbirdProcessError>;
   }
 >()("t3/personal/connections/email/thunderbird/ThunderbirdProcess") {}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export const makeThunderbirdProcess = (config: ThunderbirdProcessConfig) =>
-  ThunderbirdProcess.of({
-    running: () =>
-      Effect.sync(() => findThunderbirdPids(config.procRoot, config.profile).length > 0),
+const until = async (done: () => boolean, waitMs: number): Promise<boolean> => {
+  const deadline = Date.now() + waitMs;
+  while (!done()) {
+    if (Date.now() >= deadline) return false;
+    await sleep(100);
+  }
+  return true;
+};
+
+export const makeThunderbirdProcess = (config: ThunderbirdProcessConfig) => {
+  const pid = () => runningThunderbirdPid(config);
+  return ThunderbirdProcess.of({
+    running: () => Effect.sync(() => pid() !== null),
     launch: () =>
       Effect.tryPromise({
-        try: () =>
-          new Promise<void>((resolve, reject) => {
+        try: async () => {
+          await new Promise<void>((resolve, reject) => {
             const child = NodeChildProcess.spawn(config.binary, ["-P", config.profile], {
               detached: true,
               stdio: "ignore",
@@ -113,27 +128,27 @@ export const makeThunderbirdProcess = (config: ThunderbirdProcessConfig) =>
               child.unref();
               resolve();
             });
-          }),
+          });
+          if (!(await until(() => pid() !== null, config.startWaitMs))) {
+            throw new Error("not locked");
+          }
+        },
         catch: () => new ThunderbirdProcessError({ message: "Thunderbird could not be started." }),
       }),
     terminate: () =>
       Effect.tryPromise({
         try: async () => {
-          const captured = findThunderbirdPids(config.procRoot, config.profile);
-          for (const pid of captured) process.kill(pid, "SIGTERM");
-          const deadline = Date.now() + config.exitWaitMs;
-          while (Date.now() < deadline) {
-            const alive = findThunderbirdPids(config.procRoot, config.profile).filter((pid) =>
-              captured.includes(pid),
-            );
-            if (alive.length === 0) return;
-            await sleep(200);
+          const captured = pid();
+          if (captured === null) return;
+          process.kill(captured, "SIGTERM");
+          if (!(await until(() => pid() !== captured, config.exitWaitMs))) {
+            throw new Error("still running");
           }
-          throw new Error("still running");
         },
         catch: () => new ThunderbirdProcessError({ message: "Thunderbird did not close in time." }),
       }),
   });
+};
 
 export const layerLive = (config: ThunderbirdProcessConfig = defaultThunderbirdProcessConfig()) =>
   Layer.succeed(ThunderbirdProcess, makeThunderbirdProcess(config));

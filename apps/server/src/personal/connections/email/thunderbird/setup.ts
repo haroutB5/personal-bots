@@ -161,6 +161,12 @@ export const makeThunderbirdSetup = (config: ThunderbirdSetupConfig) =>
       });
       const changed = readText(userJsPath) !== next;
       if (changed) {
+        if (!(yield* processes.running())) {
+          return yield* new PersonalConnectionsError({
+            message:
+              "Thunderbird answers, but hbots cannot find the Thunderbird that holds the hbots mail profile, so it cannot restart it. Close Thunderbird, open it from this page, then choose the accounts again.",
+          });
+        }
         yield* processes.terminate();
         yield* Effect.try({
           try: () => writeAtomically(userJsPath, next),

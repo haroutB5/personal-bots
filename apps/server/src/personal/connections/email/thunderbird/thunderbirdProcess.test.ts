@@ -7,61 +7,100 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
-  findThunderbirdPids,
   makeThunderbirdProcess,
+  runningThunderbirdPid,
   type ThunderbirdProcessConfig,
 } from "./thunderbirdProcess.ts";
 
-const proc = (entries: Readonly<Record<string, ReadonlyArray<string>>>) => {
+const PROFILE = "hbots-mail-test";
+
+const makeHome = (): { readonly home: string; readonly profileDir: string } => {
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-tb-proc-"));
+  const profileDir = NodePath.join(home, ".thunderbird", "p.test");
+  NodeFS.mkdirSync(profileDir, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(home, ".thunderbird", "profiles.ini"),
+    `[Profile0]\nName=${PROFILE}\nIsRelative=1\nPath=p.test\n`,
+  );
+  return { home, profileDir };
+};
+
+const lockTo = (profileDir: string, pid: number) =>
+  NodeFS.symlinkSync(`127.0.1.1:+${pid}`, NodePath.join(profileDir, "lock"));
+
+const fakeProc = (
+  entries: Readonly<Record<string, { exe: string; argv: ReadonlyArray<string> }>>,
+) => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-proc-"));
-  for (const [pid, argv] of Object.entries(entries)) {
+  for (const [pid, entry] of Object.entries(entries)) {
     NodeFS.mkdirSync(NodePath.join(root, pid));
-    NodeFS.writeFileSync(NodePath.join(root, pid, "cmdline"), `${argv.join("\0")}\0`);
+    NodeFS.symlinkSync(entry.exe, NodePath.join(root, pid, "exe"));
+    NodeFS.writeFileSync(NodePath.join(root, pid, "cmdline"), `${entry.argv.join("\0")}\0`);
   }
   return root;
 };
 
-describe("findThunderbirdPids", () => {
-  it("finds the hbots profile's main process and ignores content children, look-alikes and other profiles", () => {
-    const root = proc({
-      "100": ["/home/h/.local/opt/thunderbird/thunderbird-bin", "-P", "hbots-mail"],
-      "101": ["/home/h/.local/opt/thunderbird/thunderbird-bin", "-contentproc", "x"],
-      "102": ["vim", "thunderbird.txt"],
-      "103": ["bash", "-c", "thunderbird -P hbots-mail"],
-      "104": ["/usr/bin/thunderbird", "-P", "personal"],
-      "105": ["/usr/bin/thunderbird"],
-    });
-    try {
-      expect(findThunderbirdPids(root)).toEqual([100]);
-      expect(findThunderbirdPids(root, "personal")).toEqual([104]);
-    } finally {
-      NodeFS.rmSync(root, { recursive: true, force: true });
-    }
-  });
+const withHome = async <A>(run: (home: string, profileDir: string) => Promise<A>): Promise<A> => {
+  const { home, profileDir } = makeHome();
+  try {
+    return await run(home, profileDir);
+  } finally {
+    NodeFS.rmSync(home, { recursive: true, force: true });
+  }
+};
 
-  it("finds nothing in a folder that does not exist", () => {
-    expect(findThunderbirdPids("/nonexistent-proc-root")).toEqual([]);
-  });
+describe("runningThunderbirdPid", () => {
+  it("finds the profile's Thunderbird through its lock however it was started", () =>
+    withHome(async (home, profileDir) => {
+      lockTo(profileDir, 100);
+      const procRoot = fakeProc({
+        "100": { exe: "/opt/thunderbird/thunderbird-bin", argv: ["/opt/thunderbird/thunderbird"] },
+      });
+      try {
+        expect(runningThunderbirdPid({ home, profile: PROFILE, procRoot })).toBe(100);
+      } finally {
+        NodeFS.rmSync(procRoot, { recursive: true, force: true });
+      }
+    }));
+
+  it("finds nothing for a stale lock, a reused PID, another profile, another home or no lock", () =>
+    withHome(async (home, profileDir) => {
+      const procRoot = fakeProc({
+        "200": { exe: "/usr/bin/bash", argv: ["bash", "-c", "thunderbird -P hbots-mail-test"] },
+        "300": {
+          exe: "/opt/thunderbird/thunderbird-bin",
+          argv: ["/opt/thunderbird/thunderbird", "-P", "personal"],
+        },
+      });
+      try {
+        const where = { home, profile: PROFILE, procRoot };
+        expect(runningThunderbirdPid(where)).toBeNull();
+        lockTo(profileDir, 999);
+        expect(runningThunderbirdPid(where)).toBeNull();
+        NodeFS.rmSync(NodePath.join(profileDir, "lock"));
+        lockTo(profileDir, 200);
+        expect(runningThunderbirdPid(where)).toBeNull();
+        NodeFS.rmSync(NodePath.join(profileDir, "lock"));
+        lockTo(profileDir, 300);
+        expect(runningThunderbirdPid(where)).toBeNull();
+        expect(runningThunderbirdPid({ ...where, home: "/nonexistent-home" })).toBeNull();
+        expect(runningThunderbirdPid({ ...where, profile: "missing" })).toBeNull();
+      } finally {
+        NodeFS.rmSync(procRoot, { recursive: true, force: true });
+      }
+    }));
 });
 
 const configIn = (home: string, patch: Partial<ThunderbirdProcessConfig> = {}) => ({
   home,
   binary: NodePath.join(home, "thunderbird"),
-  profile: "hbots-mail-test",
+  profile: PROFILE,
   procRoot: "/proc",
   graphicalEnv: () => ({ WAYLAND_DISPLAY: "wayland-test" }),
-  exitWaitMs: 5_000,
+  exitWaitMs: 1_500,
+  startWaitMs: 5_000,
   ...patch,
 });
-
-const withHome = async <A>(run: (home: string) => Promise<A>): Promise<A> => {
-  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-tb-proc-"));
-  try {
-    return await run(home);
-  } finally {
-    NodeFS.rmSync(home, { recursive: true, force: true });
-  }
-};
 
 const waitFor = async (check: () => boolean) => {
   for (let tries = 0; tries < 100 && !check(); tries += 1) {
@@ -69,20 +108,44 @@ const waitFor = async (check: () => boolean) => {
   }
 };
 
+/** A process that runs as `thunderbird-bin`, takes the profile lock the way Thunderbird does, and stays up. */
+const FAKE_THUNDERBIRD = (lockPath: string, ignoreTerm: boolean) => `
+const fs = require("node:fs");
+fs.symlinkSync("127.0.1.1:+" + process.pid, ${JSON.stringify(lockPath)});
+${ignoreTerm ? 'process.on("SIGTERM", () => {});' : 'process.on("SIGTERM", () => { fs.rmSync(' + JSON.stringify(lockPath) + ", { force: true }); process.exit(0); });"}
+setInterval(() => {}, 1000);
+`;
+
+const installFake = (home: string, name: string): string => {
+  const path = NodePath.join(home, name);
+  NodeFS.copyFileSync(process.execPath, path);
+  NodeFS.chmodSync(path, 0o755);
+  return path;
+};
+
 describe("ThunderbirdProcess", () => {
-  it("launches the binary on the hbots profile with the session it found", () =>
-    withHome(async (home) => {
+  it("launches the binary on the hbots profile with the session it found and waits for the lock", () =>
+    withHome(async (home, profileDir) => {
+      const fake = installFake(home, "thunderbird-bin");
+      const lockPath = NodePath.join(profileDir, "lock");
+      NodeFS.writeFileSync(NodePath.join(home, "fake.cjs"), FAKE_THUNDERBIRD(lockPath, false));
       const binary = NodePath.join(home, "thunderbird");
       NodeFS.writeFileSync(
         binary,
-        `#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' "$*" "$WAYLAND_DISPLAY" "$HOME" > "${home}/launched"\n`,
+        `#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' "$*" "$WAYLAND_DISPLAY" "$HOME" > "${home}/launched"\nexec "${fake}" "${home}/fake.cjs"\n`,
         { mode: 0o755 },
       );
-      await Effect.runPromise(makeThunderbirdProcess(configIn(home)).launch());
-      await waitFor(() => NodeFS.existsSync(NodePath.join(home, "launched")));
-      expect(NodeFS.readFileSync(NodePath.join(home, "launched"), "utf8")).toBe(
-        `-P hbots-mail-test\nwayland-test\n${home}\n`,
-      );
+      const service = makeThunderbirdProcess(configIn(home));
+      try {
+        await Effect.runPromise(service.launch());
+        expect(NodeFS.readFileSync(NodePath.join(home, "launched"), "utf8")).toBe(
+          `-P ${PROFILE}\nwayland-test\n${home}\n`,
+        );
+        expect(await Effect.runPromise(service.running())).toBe(true);
+      } finally {
+        const pid = runningThunderbirdPid(configIn(home));
+        if (pid !== null) process.kill(pid, "SIGKILL");
+      }
     }));
 
   it("fails to launch when the binary is missing", () =>
@@ -93,29 +156,66 @@ describe("ThunderbirdProcess", () => {
       expect(failure.message).toBe("Thunderbird could not be started.");
     }));
 
-  it("asks the profile's own Thunderbird to quit and waits, leaving other processes alone", () =>
-    withHome(async () => {
-      const code = "setInterval(() => {}, 1000)";
-      const mine = NodeChildProcess.spawn(
-        process.execPath,
-        ["-e", code, "--", "-P", "hbots-mail-test"],
-        { argv0: "thunderbird", stdio: "ignore" },
+  it("fails to launch when no Thunderbird takes the profile", () =>
+    withHome(async (home) => {
+      NodeFS.writeFileSync(NodePath.join(home, "thunderbird"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+      const failure = await Effect.runPromise(
+        Effect.flip(makeThunderbirdProcess(configIn(home, { startWaitMs: 400 })).launch()),
       );
-      const other = NodeChildProcess.spawn(
-        process.execPath,
-        ["-e", code, "--", "-P", "someone-else"],
-        { argv0: "thunderbird", stdio: "ignore" },
+      expect(failure.message).toBe("Thunderbird could not be started.");
+    }));
+
+  it("quits the profile's Thunderbird and waits for it, leaving another home's process alone", () =>
+    withHome(async (home, profileDir) => {
+      const other = makeHome();
+      const fake = installFake(home, "thunderbird-bin");
+      const otherFake = installFake(other.home, "thunderbird-bin");
+      const mine = NodeChildProcess.spawn(
+        fake,
+        ["-e", FAKE_THUNDERBIRD(NodePath.join(profileDir, "lock"), false)],
+        { stdio: "ignore" },
+      );
+      const theirs = NodeChildProcess.spawn(
+        otherFake,
+        ["-e", FAKE_THUNDERBIRD(NodePath.join(other.profileDir, "lock"), false)],
+        { stdio: "ignore" },
       );
       try {
-        const service = makeThunderbirdProcess(configIn("/tmp"));
-        await waitFor(() => findThunderbirdPids("/proc", "hbots-mail-test").length === 1);
+        const service = makeThunderbirdProcess(configIn(home));
+        await waitFor(
+          () =>
+            runningThunderbirdPid(configIn(home)) !== null &&
+            runningThunderbirdPid(configIn(other.home)) !== null,
+        );
         expect(await Effect.runPromise(service.running())).toBe(true);
         await Effect.runPromise(service.terminate());
         expect(await Effect.runPromise(service.running())).toBe(false);
-        expect(findThunderbirdPids("/proc", "someone-else")).toEqual([other.pid]);
+        expect(runningThunderbirdPid(configIn(other.home))).toBe(theirs.pid);
       } finally {
         mine.kill("SIGKILL");
-        other.kill("SIGKILL");
+        theirs.kill("SIGKILL");
+        NodeFS.rmSync(other.home, { recursive: true, force: true });
+      }
+    }));
+
+  it("fails instead of reporting success while Thunderbird keeps running", () =>
+    withHome(async (home, profileDir) => {
+      const fake = installFake(home, "thunderbird-bin");
+      const stubborn = NodeChildProcess.spawn(
+        fake,
+        ["-e", FAKE_THUNDERBIRD(NodePath.join(profileDir, "lock"), true)],
+        { stdio: "ignore" },
+      );
+      try {
+        const service = makeThunderbirdProcess(configIn(home, { exitWaitMs: 600 }));
+        await waitFor(() => runningThunderbirdPid(configIn(home)) !== null);
+        const failure = await Effect.runPromise(Effect.flip(service.terminate()));
+        expect(failure.message).toBe("Thunderbird did not close in time.");
+        expect(await Effect.runPromise(service.running())).toBe(true);
+      } finally {
+        stubborn.kill("SIGKILL");
       }
     }));
 });
