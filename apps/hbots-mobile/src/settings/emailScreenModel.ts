@@ -71,7 +71,6 @@ export function emailView(
   }
 }
 
-/** The button shows while an account is found that bots cannot use yet. */
 export const canUseAccounts = (view: EmailView): boolean =>
   view.kind === "accounts" && view.rows.some((row) => row.state === "found");
 

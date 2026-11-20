@@ -75,7 +75,6 @@ export function Row({
   readonly hint?: string | undefined;
   readonly value?: string | undefined;
   readonly onPress?: (() => void) | undefined;
-  /** One letter in a round badge before the title, for a row that stands for an account. */
   readonly badge?: string | undefined;
   readonly right?: ReactNode;
   readonly disabled?: boolean;

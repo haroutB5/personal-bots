@@ -172,7 +172,6 @@ export const runBridgeSession = (
 
 export interface ToolReply {
   readonly isError: boolean;
-  /** The first text block, parsed as JSON when it is JSON. */
   readonly value: unknown;
   /** Later text blocks: the bridge appends its own notices there. */
   readonly notices: ReadonlyArray<string>;

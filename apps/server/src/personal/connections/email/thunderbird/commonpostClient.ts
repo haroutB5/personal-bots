@@ -62,7 +62,6 @@ const COMPOSE_TOOLS: ReadonlySet<CommonpostTool> = new Set(["saveDraft", "replyT
 export class CommonpostClient extends Context.Service<
   CommonpostClient,
   {
-    /** Only the eight tools `CommonpostTool` names can be asked for. */
     readonly call: (
       tool: CommonpostTool,
       args: Readonly<Record<string, unknown>>,

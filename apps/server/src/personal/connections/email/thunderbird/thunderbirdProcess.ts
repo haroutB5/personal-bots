@@ -79,7 +79,6 @@ export class ThunderbirdProcess extends Context.Service<
   ThunderbirdProcess,
   {
     readonly running: () => Effect.Effect<boolean>;
-    /** Starts the hbots profile detached, with the graphical session found now. */
     readonly launch: () => Effect.Effect<void, ThunderbirdProcessError>;
     /** Asks the hbots profile's Thunderbird to quit and waits until it has. Never forces it. */
     readonly terminate: () => Effect.Effect<void, ThunderbirdProcessError>;
