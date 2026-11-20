@@ -615,4 +615,46 @@ describe("secrets rewrap and status", () => {
     ).toBe("entry-unreadable");
     expect(snapshotDir(moved)).toEqual(before);
   });
+
+  it("refuses crafted bundle entry names that try to escape secretsDir", () => {
+    const source = makeStore(WINDOWS, { "personal-secret-OK": "value" });
+    const parent = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hbots-traversal-"));
+    const targetDir = NodePath.join(parent, "secrets");
+    NodeFS.mkdirSync(targetDir, { recursive: true });
+    const bundlePath = NodePath.join(parent, "bundle.json");
+    exportSecretsBundle({
+      secretsDir: source.dir,
+      outFile: bundlePath,
+      passphrase: PASSPHRASE,
+      deps: { resolveMachineMaterial: material(WINDOWS) },
+    });
+    const parsed = JSON.parse(NodeFS.readFileSync(bundlePath, "utf8")) as {
+      entries: Array<{ name: string; sha256: string; sealed: string }>;
+    };
+    for (const badName of [
+      "personal-secret-../escaped",
+      "personal-secret-sub/escaped",
+      "personal-secret-..\\escaped",
+      "personal-secret-\0bad",
+      "personal-secret-",
+    ]) {
+      const crafted = NodePath.join(parent, `bad-${badName.replace(/[^a-z0-9]/gi, "_")}.json`);
+      NodeFS.writeFileSync(
+        crafted,
+        JSON.stringify({ ...parsed, entries: [{ ...parsed.entries[0]!, name: badName }] }),
+      );
+      expect(
+        codeOf(() =>
+          importSecretsBundle({
+            bundleFile: crafted,
+            secretsDir: targetDir,
+            passphrase: PASSPHRASE,
+            deps: { resolveMachineMaterial: material(LINUX) },
+          }),
+        ),
+      ).toBe("bundle-malformed");
+    }
+    expect(NodeFS.readdirSync(targetDir)).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(parent, "escaped.bin"))).toBe(false);
+  });
 });

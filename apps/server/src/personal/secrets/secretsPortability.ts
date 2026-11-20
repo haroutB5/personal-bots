@@ -54,7 +54,34 @@ const SEALED_PREFIXES: ReadonlyArray<string> = [
   "personal-secret-",
 ];
 
-const isPortableName = (name: string) => SEALED_PREFIXES.some((prefix) => name.startsWith(prefix));
+const isPortableName = (name: string): boolean => {
+  if (!SEALED_PREFIXES.some((prefix) => name.startsWith(prefix) && name.length > prefix.length)) {
+    return false;
+  }
+  if (
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("\0") ||
+    name.includes("..") ||
+    name.trim() !== name ||
+    /[\u0000-\u001f\u007f]/u.test(name)
+  ) {
+    return false;
+  }
+  return NodePath.basename(name) === name;
+};
+
+const resolvePortableSecretPath = (secretsDir: string, name: string): string => {
+  if (!isPortableName(name)) {
+    throw new SecretsPortabilityError("bundle-malformed", "The bundle holds an invalid entry.");
+  }
+  const base = NodePath.resolve(secretsDir);
+  const file = NodePath.resolve(base, `${name}.bin`);
+  if (NodePath.dirname(file) !== base || !file.startsWith(`${base}${NodePath.sep}`)) {
+    throw new SecretsPortabilityError("bundle-malformed", "The bundle holds an invalid entry.");
+  }
+  return file;
+};
 
 export type SecretsPortabilityErrorCode =
   | "passphrase-too-short"
@@ -535,7 +562,7 @@ export function importSecretsBundle(options: SecretsImportOptions): SecretsImpor
         keyWritten = true;
       }
       for (const entry of decoded) {
-        const file = NodePath.join(options.secretsDir, `${entry.name}.bin`);
+        const file = resolvePortableSecretPath(options.secretsDir, entry.name);
         let previous: Uint8Array | null = null;
         try {
           previous = Uint8Array.from(NodeFS.readFileSync(file));
