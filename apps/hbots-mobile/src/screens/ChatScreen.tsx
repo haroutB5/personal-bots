@@ -53,7 +53,10 @@ import { motionForConversationState } from "@hbots/personal-client/bots/avatarMo
 import { readChatsSnapshot } from "@hbots/personal-client/bots/chatsSnapshot";
 import { isChatArchived } from "@hbots/personal-client/bots/chatState";
 import { buildChatFeed } from "@hbots/personal-client/feed/chatFeed";
-import { deriveLatestMessageReadStatus } from "@hbots/personal-client/feed/messageReadStatus";
+import {
+  deriveLatestMessageReadStatus,
+  driverSupportsActiveSteering,
+} from "@hbots/personal-client/feed/messageReadStatus";
 import { sharedPreferencesFromProfile } from "@hbots/personal-client/settings/profilePreferences";
 import type { PersonalBotThread } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
@@ -309,6 +312,15 @@ export function ChatScreen({
     onRevealCard: revealCard,
     cardMaxHeight: chatLayout.keyboardOpen ? chatLayout.cardMaxHeight : null,
   });
+  const activeDriver = useMemo(() => {
+    const instanceId =
+      record?.bot !== undefined
+        ? botEffectiveModelSelection(record.bot).instanceId
+        : (thread?.modelSelection?.instanceId ?? null);
+    if (instanceId === null) return null;
+    return providers.find((provider) => provider.instanceId === instanceId)?.driver ?? null;
+  }, [providers, record?.bot, thread?.modelSelection?.instanceId]);
+  const supportsActiveSteering = driverSupportsActiveSteering(activeDriver);
   const latestMessageStatus = useMemo(
     () =>
       thread === null
@@ -318,8 +330,9 @@ export function ChatScreen({
             activities: thread.activities,
             busy: thread.session?.status === "running" || thread.session?.status === "starting",
             latestTurn: thread.latestTurn,
+            supportsActiveSteering,
           }),
-    [cards.items, thread],
+    [cards.items, supportsActiveSteering, thread],
   );
   // A send the transcript now shows arrived: drop its failed bubble and saved copy.
   const arrivedIds = useMemo(() => new Set(cards.items.map((item) => item.id)), [cards.items]);
@@ -1060,6 +1073,7 @@ export function ChatScreen({
                     bot={record?.bot ?? null}
                     botName={header.botName}
                     working={running}
+                    supportsActiveSteering={supportsActiveSteering}
                     replyTo={replyTo}
                     onClearReply={() => setReplyTo(null)}
                     onPendingChange={setPending}

@@ -147,6 +147,7 @@ export function Composer({
   bot,
   botName,
   working,
+  supportsActiveSteering = true,
   replyTo,
   onClearReply,
   onPendingChange,
@@ -162,6 +163,7 @@ export function Composer({
   readonly bot: PersonalBot | null;
   readonly botName: string;
   readonly working: boolean;
+  readonly supportsActiveSteering?: boolean;
   readonly replyTo: PersonalReplyQuote | null;
   readonly onClearReply: () => void;
   readonly onPendingChange: (
@@ -1131,12 +1133,18 @@ export function Composer({
           <Pressable
             onPress={() => void send()}
             onLongPress={() => {
-              if (canSend && working) setSendMenuOpen(true);
+              if (canSend && working && supportsActiveSteering) setSendMenuOpen(true);
             }}
             delayLongPress={350}
             disabled={!canSend}
             accessibilityRole="button"
-            accessibilityLabel={offline ? "Send, waits here until your laptop reconnects" : "Send"}
+            accessibilityLabel={
+              offline
+                ? "Send, waits here until your laptop reconnects"
+                : working && !supportsActiveSteering
+                  ? "Send, queues until this turn ends"
+                  : "Send"
+            }
             style={[styles.sendButton, !canSend ? styles.disabled : null]}
           >
             <IconArrowUp size={21} color={tokens.primaryText} strokeWidth={2.5} />
@@ -1147,6 +1155,8 @@ export function Composer({
         <Text style={styles.offline}>
           Offline. Your draft is saved and sends when the laptop is back.
         </Text>
+      ) : working && !supportsActiveSteering && hasContent ? (
+        <Text style={styles.offline}>Queued until this turn ends.</Text>
       ) : null}
       <SheetShell
         visible={previewAttachment !== null}

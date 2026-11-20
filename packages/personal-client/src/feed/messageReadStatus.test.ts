@@ -11,7 +11,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ConversationItem } from "../conversation/conversationModel.ts";
 import type { ChatMessage } from "../conversation/types.ts";
-import { deriveLatestMessageReadStatus, USER_MESSAGE_DELIVERED_KIND } from "./messageReadStatus.ts";
+import {
+  deriveLatestMessageReadStatus,
+  driverSupportsActiveSteering,
+  USER_MESSAGE_DELIVERED_KIND,
+} from "./messageReadStatus.ts";
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 8, 27, 10, 0, seconds)).toISOString();
 
@@ -210,5 +214,26 @@ describe("deriveLatestMessageReadStatus", () => {
         latestTurn: completedTurn,
       }),
     ).toBeNull();
+  });
+
+  it("shows Queued instead of Steering on providers without active steering", () => {
+    expect(driverSupportsActiveSteering("antigravity")).toBe(false);
+    expect(driverSupportsActiveSteering("claudeAgent")).toBe(true);
+    expect(driverSupportsActiveSteering(null)).toBe(true);
+
+    const items = [
+      message("m1", "user", 0),
+      message("a1", "assistant", 5),
+      message("m2", "user", 20),
+    ];
+    expect(
+      deriveLatestMessageReadStatus({
+        items,
+        activities: [],
+        busy: true,
+        latestTurn: runningTurn(1),
+        supportsActiveSteering: false,
+      }),
+    ).toEqual({ messageId: "m2", status: "queued" });
   });
 });

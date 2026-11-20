@@ -21,6 +21,17 @@ function deliveredMessageId(activity: OrchestrationThreadActivity): string | nul
 }
 
 /**
+ * Providers backed by the generic ACP adapter (such as Antigravity) cannot take
+ * a steering message mid-turn; the server queues follow-up messages until the
+ * active turn finishes.
+ */
+const NON_STEERING_DRIVERS: ReadonlySet<string> = new Set(["antigravity"]);
+
+export function driverSupportsActiveSteering(driver: string | null | undefined): boolean {
+  return driver == null || !NON_STEERING_DRIVERS.has(driver);
+}
+
+/**
  * The status under the owner's latest message, or null for none.
  * "Read" rests only on the server's `user-message.delivered` activity for that
  * message, written when the provider actually took it in (Claude's CLI drained
@@ -30,6 +41,7 @@ export function deriveLatestMessageReadStatus(input: {
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
   readonly busy: boolean;
   readonly latestTurn: OrchestrationLatestTurn | null;
+  readonly supportsActiveSteering?: boolean;
 }): LatestMessageReadStatus | null {
   let latest: Extract<ConversationItem, { kind: "message" }>["message"] | null = null;
   for (let index = input.items.length - 1; index >= 0; index -= 1) {
@@ -55,8 +67,10 @@ export function deriveLatestMessageReadStatus(input: {
     turn.state === "running" &&
     Date.parse(turn.requestedAt) < Date.parse(latest.createdAt);
   if (!input.busy || !sentMidTurn) return null;
+  const queued =
+    input.supportsActiveSteering === false || readPersonalFollowUp(latest.context) === "queue";
   return {
     messageId,
-    status: readPersonalFollowUp(latest.context) === "queue" ? "queued" : "steering",
+    status: queued ? "queued" : "steering",
   };
 }
