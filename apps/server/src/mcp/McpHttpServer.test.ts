@@ -1868,3 +1868,29 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it("isToolListedForPersonalBot hides T3 desktop IDE tools and inapplicable lead/group tools while keeping personal tools", () => {
+  const member = { isLead: false, isGroup: false };
+  expect(McpHttpServer.isToolListedForPersonalBot("save_memory", member)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("delegate_task", member)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("request_secret", member)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("preview_open", member)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("device_open", member)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("html_render", member)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("t3_thread_list", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("t3_project_create", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("schedule_task", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("orchestrator_capabilities", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("create_bot", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("update_bot", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("call_vote", member)).toBe(false);
+
+  const lead = { isLead: true, isGroup: false };
+  expect(McpHttpServer.isToolListedForPersonalBot("create_bot", lead)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("update_bot", lead)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("call_vote", lead)).toBe(false);
+
+  const groupMember = { isLead: false, isGroup: true };
+  expect(McpHttpServer.isToolListedForPersonalBot("call_vote", groupMember)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("cast_vote", groupMember)).toBe(true);
+});

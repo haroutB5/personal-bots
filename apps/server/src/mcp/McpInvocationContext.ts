@@ -134,6 +134,11 @@ export const withRuntimeModeCeiling = (
 };
 
 /** Thread callers default to their own thread; client callers need thread for tools that act as the caller. */
+export interface McpPersonalBotScope {
+  readonly isLead: boolean;
+  readonly isGroup: boolean;
+}
+
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   readonly capabilities: ReadonlySet<McpCapability>;
@@ -143,6 +148,8 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /** Present when the calling thread belongs to a personal bot chat or group relay. */
+  readonly personalBot?: McpPersonalBotScope | undefined;
 }
 
 /**

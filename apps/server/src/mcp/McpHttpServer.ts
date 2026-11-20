@@ -246,12 +246,35 @@ const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
+  const personalBots = yield* Effect.serviceOption(PersonalBotRepository.PersonalBotRepository);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   const linksEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+  const resolvePersonalBotScope = (
+    threadId: ThreadId | undefined,
+  ): Effect.Effect<McpInvocationContext.McpPersonalBotScope | undefined> => {
+    if (threadId === undefined || Option.isNone(personalBots)) {
+      return Effect.succeed(undefined);
+    }
+    const repo = personalBots.value;
+    return Effect.gen(function* () {
+      const [link, isGroup] = yield* Effect.all([
+        repo.getThreadLink({ threadId }),
+        repo.isGroupRelay({ threadId }),
+      ]);
+      if (Option.isNone(link) && !isGroup) return undefined;
+      const bot = Option.isSome(link)
+        ? yield* repo.getBotById({ botId: link.value.botId })
+        : Option.none();
+      return {
+        isLead: Option.isSome(bot) && bot.value.lead === true,
+        isGroup,
+      } satisfies McpInvocationContext.McpPersonalBotScope;
+    }).pipe(Effect.orElseSucceed(() => undefined));
+  };
   const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
     request: HttpServerRequest.HttpServerRequest,
   ) {
@@ -282,9 +305,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(withSenderThread(invocation, request), request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const linkedEnvironments = yield* linksEnabled;
+    const [linkedEnvironments, personalBot] = yield* Effect.all([
+      linksEnabled,
+      resolvePersonalBotScope(limited.thread?.threadId),
+    ]);
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
-    return { ...limited, linkedEnvironments };
+    return {
+      ...limited,
+      linkedEnvironments,
+      ...(personalBot === undefined ? {} : { personalBot }),
+    };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -1408,9 +1438,81 @@ const layerToolExposure = Layer.effect(
 );
 
 /**
+ * T3 desktop IDE tools that personal bots never call. Hiding them from personal-bot
+ * `tools/list` keeps the advertised MCP schema set under eager-client size budgets
+ * (such as Antigravity ACP's ~58 KB cap) so core personal tools like `save_memory`
+ * stay registered. Calls remain unaffected (`tools/call` is never gated here).
+ */
+const PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS: ReadonlySet<string> = new Set([
+  "orchestrator_capabilities",
+  "task_status",
+  "task_cancel",
+  "t3_workflow_stop",
+  "t3_background_wait",
+  "schedule_task",
+  "list_scheduled_tasks",
+  "delete_scheduled_task",
+  "run_scheduled_task_now",
+  "create_threads",
+  "t3_thread_list",
+  "t3_thread_read",
+  "t3_thread_update",
+  "t3_thread_send",
+  "t3_thread_wait",
+  "t3_thread_interrupt",
+  "t3_thread_search",
+  "t3_thread_configure",
+  "t3_thread_transfer",
+  "t3_thread_organize",
+  "t3_thread_launch",
+  "t3_pending_request",
+  "t3_queue",
+  "t3_attachment_prepare_upload",
+  "t3_attachment_discard",
+  "t3_thread_send_attachments",
+  "t3_project_list",
+  "t3_project_read",
+  "t3_project_create",
+  "t3_project_update",
+  "t3_project_delete",
+  "t3_project_clone",
+  "t3_environment_read",
+  "t3_environment_preferences_update",
+  "t3_environment_links",
+  "t3_environment_link",
+  "t3_environment_unlink",
+  "t3_preview_list",
+  "t3_preview_close",
+  "t3_worktree_handoff",
+  "t3_worktree_status",
+  "t3_worktree_list",
+]);
+
+const TEAM_LEAD_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set([
+  "create_bot",
+  "update_bot",
+  "remove_bot",
+  "update_project",
+]);
+
+const GROUP_CHAT_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set(["call_vote", "cast_vote"]);
+
+export const isToolListedForPersonalBot = (
+  toolName: string,
+  bot: McpInvocationContext.McpPersonalBotScope,
+): boolean => {
+  if (PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS.has(toolName)) return false;
+  if (!bot.isLead && TEAM_LEAD_ONLY_MCP_TOOLS.has(toolName)) return false;
+  if (!bot.isGroup && GROUP_CHAT_ONLY_MCP_TOOLS.has(toolName)) return false;
+  return true;
+};
+
+/**
  * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
  * the direct tools and what its `tool_search` calls loaded. Calls are never
- * gated, and every other client lists everything but `tool_search`.
+ * gated, and every other client lists everything but `tool_search`. Personal bot
+ * threads also omit T3 desktop IDE tools and inapplicable lead/group tools from
+ * `tools/list` so eager MCP clients keep `save_memory` and personal tools in budget.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
@@ -1418,8 +1520,14 @@ const layerDeferredListing = McpServer.visibility(
     // Untraced: it runs once per tool on every list request.
     return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
       if (method !== "tools/list") return true;
-      const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
-      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
+      const scope = Option.getOrUndefined(
+        yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+      );
+      const personalBot = scope?.personalBot;
+      if (personalBot !== undefined && !isToolListedForPersonalBot(target, personalBot)) {
+        return false;
+      }
+      const providerSessionId = scope?.thread?.providerSessionId;
       if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
         return target !== McpToolExposure.TOOL_SEARCH;
       }
@@ -1437,4 +1545,4 @@ export const layerToolSearch = Layer.mergeAll(
 
 export const layer = layerMcpTransport(
   Layer.mergeAll(layerTools, layerToolSearch, layerPersonalTools),
-);
+).pipe(Layer.provide(PersonalBotRepository.layer));
