@@ -48,6 +48,7 @@ import {
   taskListCounts,
   taskRowMeta,
   tasksScreenState,
+  unansweredQuestionCount,
 } from "./tasksModel";
 import { ClosedProjects } from "../work/ProjectCards";
 import { WorkScreen } from "../work/WorkScreen";
@@ -225,6 +226,7 @@ export function TasksScreen({
   const { tasks: taskFeed, error: taskError } = native.automation.usePersonalTasks(environmentId);
   const routinesQuery = native.automation.usePersonalRoutines(environmentId);
   const projectsQuery = native.automation.usePersonalProjects(environmentId);
+  const workQuestions = native.automation.usePersonalWorkQuestions(environmentId);
   const botsQuery = native.bots.usePersonalBotsList(environmentId);
   const { shells } = useBotShells(native, environmentId);
   const history = native.client.useAtomCommand(native.automation.personalTaskHistory, {
@@ -264,7 +266,11 @@ export function TasksScreen({
     [projects],
   );
   const buckets = useMemo(() => taskBuckets(merged), [merged]);
-  const counts = taskListCounts(buckets, routines);
+  const questionCount = useMemo(
+    () => unansweredQuestionCount(workQuestions.data?.questions ?? [], buckets),
+    [workQuestions.data, buckets],
+  );
+  const counts = taskListCounts(buckets, routines, questionCount);
   const loadState = tasksScreenState({
     view,
     tasks: merged,
@@ -431,7 +437,10 @@ export function TasksScreen({
               label={filter.label}
               count={counts[filter.id]}
               active={filter.id === view}
-              attention={taskListCountNeedsAttention(filter.id)}
+              attention={
+                taskListCountNeedsAttention(filter.id) ||
+                (filter.id === "work" && questionCount > 0)
+              }
               onPress={() => {
                 setView(filter.id);
                 setSelection(null);

@@ -16,6 +16,8 @@ describe("describePairFailure", () => {
     const spent = new RequestFailure({ kind: "http", route: "pair", status: 401, jsonBody: true });
     const down = new RequestFailure({ kind: "network" });
     expect(describePairFailure(spent)).toContain("already used or has expired");
+    expect(describePairFailure(spent)).toContain("hbots on your laptop");
+    expect(describePairFailure(spent)).not.toContain("Settings > Connections");
     expect(describePairFailure(down)).toContain("Can't reach your laptop");
   });
 });

@@ -138,6 +138,11 @@ export function ThisPhoneScreen({
         </View>
       </Section>
 
+      <SectionNote>
+        hbots checks for updates when it opens and every six hours while open. It tells you when one
+        is ready and updates only when you tap Restart.
+      </SectionNote>
+
       {notes.length > 0 ? (
         <Section label="What's new">
           <View style={styles.notes}>
@@ -153,10 +158,6 @@ export function ThisPhoneScreen({
       ) : null}
 
       <PrimaryButton label="Sign out this phone" onPress={onSignOut} destructive />
-      <SectionNote>
-        hbots checks for updates when it opens and every six hours while open. It tells you when one
-        is ready and updates only when you tap Restart.
-      </SectionNote>
       <ChoiceSheet
         visible={choosingLock}
         title="App lock"

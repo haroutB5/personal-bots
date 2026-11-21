@@ -40,6 +40,7 @@ import {
   retryOutboxEntry,
 } from "@hbots/personal-client/composer/outbox";
 import { hidesBotPreviews } from "@hbots/personal-client/conversation/previewPrivacy";
+import { markChatOpen } from "@hbots/personal-client/bots/unreadChats";
 import { IDLE_RUN_WORK, runWork } from "@hbots/personal-client/conversation/liveWork";
 import {
   chatSettingsArchiveInput,
@@ -232,6 +233,12 @@ export function ChatScreen({
     reportFailure: false,
   });
   const refreshWorkQuestions = native.automation.useRefreshPersonalWorkQuestions(environmentId);
+  const refreshBotsList = useAtomRefresh(
+    native.bots.personalBotsList({
+      environmentId,
+      input: native.bots.personalBotsListInput(),
+    }),
+  );
   const searchMessages = native.client.useAtomCommand(native.bots.personalBotsSearchMessages, {
     reportFailure: false,
   });
@@ -513,6 +520,13 @@ export function ChatScreen({
   }, [environmentId, prewarm, thread, threadId]);
 
   useEffect(() => {
+    markChatOpen(threadId, true);
+    return () => {
+      markChatOpen(threadId, false);
+    };
+  }, [threadId]);
+
+  useEffect(() => {
     if (connection.phase !== "connected") return;
     const send = (viewing: boolean) =>
       reportViewing({
@@ -524,10 +538,20 @@ export function ChatScreen({
     return () => {
       clearInterval(timer);
       // The server hides a Work card once its chat was opened, and the leave is what
-      // stamps that. Ask for the cards again only after the stamp is written.
-      void send(false).then(() => refreshWorkQuestions());
+      // stamps that. Ask for the cards and bot list again only after the stamp is written.
+      void send(false).then(() => {
+        refreshWorkQuestions();
+        refreshBotsList();
+      });
     };
-  }, [connection.phase, environmentId, refreshWorkQuestions, reportViewing, threadId]);
+  }, [
+    connection.phase,
+    environmentId,
+    refreshBotsList,
+    refreshWorkQuestions,
+    reportViewing,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (!searchOpen) {

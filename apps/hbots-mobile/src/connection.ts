@@ -10,7 +10,7 @@ export function backoffMs(attempt: number): number {
 export function describePairFailure(cause: unknown): string {
   const failure = classifyFailure(cause);
   if (failure.kind === "authDead") {
-    return "That pairing link was already used or has expired. Make a new one in hbots Settings > Connections.";
+    return "That pairing link was already used or has expired. Make a new one in hbots on your laptop.";
   }
   if (cause instanceof RequestFailure) {
     return "Can't reach your laptop. It may be off or restarting.";

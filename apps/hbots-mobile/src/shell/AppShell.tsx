@@ -39,6 +39,7 @@ import { BotsScreen } from "./BotsScreen";
 import { createInAppBannerFeed, type InAppBannerFeed } from "./inAppBannerFeed";
 import { InAppPresence } from "./InAppPresence";
 import { BottomBar } from "./BottomBar";
+import { InlineSheetHost } from "../sheets/InlineSheetHost";
 import { ScreenHeader } from "./ScreenHeader";
 import { tokens } from "./tokens";
 import { FilesScreen } from "../files/FilesScreen";
@@ -720,43 +721,45 @@ function TabsWithBots({
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <View style={styles.tabContent}>
-        {tab === "bots" ? (
-          <BotsScreen
-            native={native}
-            chat={chat}
-            banners={banners}
-            installedVersion={installedVersion}
-            update={update}
-            onOpenInstallPermission={onOpenInstallPermission}
-            onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
-            onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
-            onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
-            onOpenTeam={() => navigation.navigate("Team")}
-            onOpenSettings={() => navigation.navigate("Settings")}
-          />
-        ) : tab === "tasks" ? (
-          <TasksScreen
-            native={native}
-            onOpenTask={(taskId) => navigation.push("Task", { taskId })}
-            onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
-            onOpenRoutine={(routineId) => navigation.push("Routine", { routineId })}
-            onNewRoutine={() => navigation.navigate("RoutineForm", {})}
-          />
-        ) : tab === "computer" ? (
-          <ComputerScreen
-            native={native}
-            onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
-          />
-        ) : (
-          <FilesScreen native={native} />
-        )}
-      </View>
-      <BottomBar
-        active={tab}
-        bottomInset={insets.bottom}
-        onSelect={(next) => navigation.setParams({ tab: next })}
-      />
+      <InlineSheetHost>
+        <View style={styles.tabContent}>
+          {tab === "bots" ? (
+            <BotsScreen
+              native={native}
+              chat={chat}
+              banners={banners}
+              installedVersion={installedVersion}
+              update={update}
+              onOpenInstallPermission={onOpenInstallPermission}
+              onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
+              onOpenChats={(botId) => navigation.navigate("Chats", { botId })}
+              onOpenGroup={(groupId) => navigation.navigate("Group", { groupId })}
+              onOpenTeam={() => navigation.navigate("Team")}
+              onOpenSettings={() => navigation.navigate("Settings")}
+            />
+          ) : tab === "tasks" ? (
+            <TasksScreen
+              native={native}
+              onOpenTask={(taskId) => navigation.push("Task", { taskId })}
+              onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
+              onOpenRoutine={(routineId) => navigation.push("Routine", { routineId })}
+              onNewRoutine={() => navigation.navigate("RoutineForm", {})}
+            />
+          ) : tab === "computer" ? (
+            <ComputerScreen
+              native={native}
+              onOpenChat={(botId, threadId) => openChat(navigation, { botId, threadId })}
+            />
+          ) : (
+            <FilesScreen native={native} />
+          )}
+        </View>
+        <BottomBar
+          active={tab}
+          bottomInset={insets.bottom}
+          onSelect={(next) => navigation.setParams({ tab: next })}
+        />
+      </InlineSheetHost>
     </View>
   );
 }

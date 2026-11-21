@@ -10,6 +10,7 @@ import {
   taskResultHeading,
   taskRowMeta,
   tasksScreenState,
+  unansweredQuestionCount,
 } from "./tasksModel";
 
 function task(
@@ -63,6 +64,29 @@ describe("taskListCounts", () => {
     const buckets = taskBuckets(new Map([["a", task("a", "running", "2026-11-05T09:00:00Z")]]));
     expect(taskListCounts(buckets, routines)).toEqual({
       work: 1,
+      scheduled: 1,
+      completed: 0,
+    });
+  });
+
+  it("includes unanswered Needs-you questions in the Work count without double-counting live task threads", () => {
+    const buckets = taskBuckets(
+      new Map([
+        ["a", task("a", "running", "2026-11-05T09:00:00Z", { threadId: "t-live" } as never)],
+      ]),
+    );
+    const questionCount = unansweredQuestionCount(
+      [
+        { threadId: "t-live" },
+        { threadId: "t-ask-1" },
+        { threadId: "t-ask-1" },
+        { threadId: "t-ask-2" },
+      ],
+      buckets,
+    );
+    expect(questionCount).toBe(2);
+    expect(taskListCounts(buckets, routines, questionCount)).toEqual({
+      work: 3,
       scheduled: 1,
       completed: 0,
     });

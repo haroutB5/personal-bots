@@ -72,13 +72,20 @@ describe("revokeRemoteSession", () => {
 
   it("explains each outcome without leaving the user stranded", () => {
     expect(describeSignOut("revoked")).toContain("removed from your laptop");
-    expect(describeSignOut("server-too-old")).toContain("Settings > Connections");
+    expect(describeSignOut("server-too-old")).toContain(
+      "Settings > This phone > Signed-in devices",
+    );
+    expect(describeSignOut("unreachable")).toContain("Settings > This phone > Signed-in devices");
     expect(describeSignOut("unreachable")).toContain("30 days");
   });
 
   it("says how many unsent messages the sign-out discards, and says nothing when there are none", () => {
     expect(signOutConfirmBody(0)).not.toContain("discarded");
-    expect(signOutConfirmBody(1)).toContain("1 message that has not been sent yet will be discarded");
-    expect(signOutConfirmBody(4)).toContain("4 messages that have not been sent yet will be discarded");
+    expect(signOutConfirmBody(1)).toContain(
+      "1 message that has not been sent yet will be discarded",
+    );
+    expect(signOutConfirmBody(4)).toContain(
+      "4 messages that have not been sent yet will be discarded",
+    );
   });
 });

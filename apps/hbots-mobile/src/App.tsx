@@ -639,9 +639,7 @@ function App() {
                 <>
                   <Text style={styles.headline}>You were signed out</Text>
                   <Text style={styles.help}>
-                    {
-                      "This phone's sign-in ended. Make a new pairing link in hbots Settings > Connections."
-                    }
+                    {"This phone's sign-in ended. Make a new pairing link in hbots on your laptop."}
                   </Text>
                   <Pressable
                     onPress={pairAgain}

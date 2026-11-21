@@ -10,13 +10,14 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconX } from "../ui/icons";
-import { useLayoutEffect, useRef } from "react";
+import { useId, useLayoutEffect, useRef } from "react";
 import type { PropsWithChildren } from "react";
 
 import { useSheetMotion } from "../motion/useSheetMotion";
 import { useWindowTouch } from "../motion/useWindowTouch";
 import { tokens } from "../shell/tokens";
 import { useKeyboardInset } from "../platform/useKeyboardInset";
+import { useInlineSheetRegistry } from "./InlineSheetHost";
 
 function settleBack(translateY: Animated.Value) {
   Animated.spring(translateY, {
@@ -45,6 +46,8 @@ export function SheetShell({
 }>) {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
+  const host = useInlineSheetRegistry();
+  const sheetId = useId();
   const keyboard = useKeyboardInset(inline && visible);
   const motion = useSheetMotion(visible);
   const attachRoot = useWindowTouch(motion.closing, motion.mounted);
@@ -126,9 +129,8 @@ export function SheetShell({
       </View>
     </>
   );
-  if (inline) {
-    if (!motion.mounted) return null;
-    return (
+  const inlineElement =
+    inline && motion.mounted ? (
       <View
         style={styles.inlineRoot}
         pointerEvents={motion.closing ? "none" : "auto"}
@@ -136,7 +138,18 @@ export function SheetShell({
       >
         {content}
       </View>
-    );
+    ) : null;
+  useLayoutEffect(() => {
+    if (!inline || host === null) return;
+    host(sheetId, inlineElement);
+  });
+  useLayoutEffect(() => {
+    if (host === null) return;
+    return () => host(sheetId, null);
+  }, [host, sheetId]);
+  if (inline) {
+    if (host !== null) return null;
+    return inlineElement;
   }
   return (
     <Modal

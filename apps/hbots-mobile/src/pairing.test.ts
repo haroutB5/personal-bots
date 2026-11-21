@@ -6,7 +6,7 @@ import * as Redacted from "effect/Redacted";
 import { createDpopProof } from "./dpop";
 import { classifyFailure, DpopRequiredError } from "./failure";
 import { failureFor } from "./onboarding/model";
-import { decodeTicket, openSocketUrl, pair } from "./pairing";
+import { decodeTicket, inspectServer, openSocketUrl, pair } from "./pairing";
 import type { StoredSession } from "./session";
 
 vi.mock("./dpop", () => ({
@@ -225,5 +225,33 @@ describe("openSocketUrl", () => {
     });
     const failure = await openSocketUrl(STORED, "1.66.113").catch(classifyFailure);
     expect(failure).toEqual({ kind: "unreachable" });
+  });
+});
+
+describe("inspectServer", () => {
+  it("uses the hbots version from client-compat instead of the upstream descriptor version", async () => {
+    routeFetch({
+      "/.well-known/t3/environment": () => json(200, { ...DESCRIPTOR, serverVersion: "0.1.9" }),
+      "/api/personal/client-compat": () => json(200, { serverVersion: "1.67.45", android: null }),
+    });
+    const identity = await inspectServer({
+      httpBaseUrl: BASE,
+      wsBaseUrl: "wss://relay.example.test/",
+      credential: "one-time",
+    });
+    expect(identity.serverVersion).toBe("1.67.45");
+  });
+
+  it("falls back to the descriptor version when client-compat is unavailable", async () => {
+    routeFetch({
+      "/.well-known/t3/environment": () => json(200, { ...DESCRIPTOR, serverVersion: "0.1.9" }),
+      "/api/personal/client-compat": () => new Response("Not Found", { status: 404 }),
+    });
+    const identity = await inspectServer({
+      httpBaseUrl: BASE,
+      wsBaseUrl: "wss://relay.example.test/",
+      credential: "one-time",
+    });
+    expect(identity.serverVersion).toBe("0.1.9");
   });
 });

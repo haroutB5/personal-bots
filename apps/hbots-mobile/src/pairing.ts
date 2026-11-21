@@ -10,6 +10,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { authorizationHeaders } from "./authorizedRequest";
+import { fetchCompat } from "./compat";
 import { createDpopProof } from "./dpop";
 import { assertSameEnvironment, DpopRequiredError } from "./failure";
 import { requestJson } from "./http";
@@ -46,18 +47,23 @@ async function fetchDescriptor(
 function identityOf(
   descriptor: ExecutionEnvironmentDescriptor,
   httpBaseUrl: string,
+  compatVersion: string | null = null,
 ): ServerIdentity {
   return {
     environmentId: descriptor.environmentId,
     label: descriptor.label,
     host: new URL(httpBaseUrl).host,
-    serverVersion: descriptor.serverVersion,
+    serverVersion: compatVersion ?? descriptor.serverVersion,
     shortId: descriptor.shortId ?? environmentShortId(descriptor.environmentId),
   };
 }
 
 export async function inspectServer(target: PairingTarget): Promise<ServerIdentity> {
-  return identityOf(await fetchDescriptor(target.httpBaseUrl), target.httpBaseUrl);
+  const [descriptor, compat] = await Promise.all([
+    fetchDescriptor(target.httpBaseUrl),
+    fetchCompat(target.httpBaseUrl),
+  ]);
+  return identityOf(descriptor, target.httpBaseUrl, compat?.serverVersion ?? null);
 }
 
 export async function mintWebSocketTicket(

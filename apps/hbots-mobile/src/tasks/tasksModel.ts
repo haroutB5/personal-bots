@@ -24,12 +24,36 @@ export function taskBuckets(tasks: ReadonlyMap<string, PersonalTask> | null): Ta
   return grouped;
 }
 
+/**
+ * Unanswered question cards on the Work screen whose chat is not already
+ * counted as an active or waiting task, so the Work badge never reads 0 while
+ * a Needs-you card is visible.
+ */
+export function unansweredQuestionCount(
+  questions: ReadonlyArray<{ readonly threadId: string }>,
+  buckets: TaskBuckets,
+): number {
+  const liveThreads = new Set<string>();
+  for (const task of buckets.active) {
+    if (task.threadId !== null) liveThreads.add(task.threadId);
+  }
+  for (const task of buckets.waiting) {
+    if (task.threadId !== null) liveThreads.add(task.threadId);
+  }
+  const seen = new Set<string>();
+  for (const question of questions) {
+    if (!liveThreads.has(question.threadId)) seen.add(question.threadId);
+  }
+  return seen.size;
+}
+
 export function taskListCounts(
   buckets: TaskBuckets,
   routines: ReadonlyArray<PersonalRoutine>,
+  questionCount = 0,
 ): Record<TaskListFilter, number> {
   return {
-    work: buckets.active.length + buckets.waiting.length,
+    work: buckets.active.length + buckets.waiting.length + questionCount,
     scheduled: routines.filter((routine) => routine.enabled).length,
     completed: buckets.completed.length,
   };

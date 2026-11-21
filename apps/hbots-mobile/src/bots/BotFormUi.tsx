@@ -143,7 +143,7 @@ export function SwitchRow({
         onValueChange={onChange}
         accessibilityLabel={label}
         trackColor={{ false: tokens.track, true: tokens.primary }}
-        thumbColor={value ? tokens.primaryText : tokens.textSecondary}
+        thumbColor={tokens.text}
       />
     </View>
   );

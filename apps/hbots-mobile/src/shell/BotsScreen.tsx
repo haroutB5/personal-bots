@@ -15,7 +15,8 @@ import {
 } from "@hbots/personal-client/bots/chatsSnapshot";
 import { formatRelativeTime } from "@hbots/personal-client/bots/relativeTime";
 import { previewOf, snapshotPreviewLabel } from "@hbots/personal-client/bots/botRowModel";
-import { unreadChatsByBot, NO_CHAT_SEEN } from "@hbots/personal-client/bots/unreadChats";
+import { unreadChatsByBot, unreadChatsLabel } from "@hbots/personal-client/bots/unreadChats";
+import { useChatSeenState } from "../bots/useThreadsClocks";
 import {
   currentProgressNote,
   currentTurnHasToolStep,
@@ -188,7 +189,7 @@ function PinnedTile({
         onPressOut={endPress}
         delayLongPress={300}
         accessibilityRole="button"
-        accessibilityLabel={`${summary.bot.name}${badge === null ? "" : `, ${status.label}`}${unread > 0 ? `, ${unread} unread chats` : ""}`}
+        accessibilityLabel={`${summary.bot.name}${badge === null ? "" : `, ${status.label}`}${unread > 0 ? `, ${unreadChatsLabel(unread)}` : ""}`}
         accessibilityHint="Long press and drag to reorder"
         accessibilityActions={[
           { name: "moveLeft", label: "Move left" },
@@ -249,7 +250,7 @@ function BotRow({
       onLongPress={onLongPress}
       delayLongPress={350}
       accessibilityRole="button"
-      accessibilityLabel={`${summary.bot.name}${summary.modelShortLabel === null ? "" : `, ${summary.modelShortLabel}`}, ${status.label}, ${previewOf(summary, () => "Task update")}${unread > 0 ? `, ${unread} unread chats` : ""}`}
+      accessibilityLabel={`${summary.bot.name}${summary.modelShortLabel === null ? "" : `, ${summary.modelShortLabel}`}, ${status.label}, ${previewOf(summary, () => "Task update")}${unread > 0 ? `, ${unreadChatsLabel(unread)}` : ""}`}
       accessibilityHint="Opens the chat"
       android_ripple={{ color: "rgba(255,255,255,0.08)" }}
       style={[styles.row, last ? styles.rowLast : null]}
@@ -603,6 +604,7 @@ export function BotsScreen({
     [baseSummaries, progress],
   );
 
+  const chatSeen = useChatSeenState();
   const unreadByBot = useMemo(
     () =>
       list.data === null
@@ -612,9 +614,9 @@ export function BotsScreen({
             links: list.data.threads,
             tasks: [],
             shells,
-            seen: NO_CHAT_SEEN,
+            seen: chatSeen,
           }),
-    [list.data, shells],
+    [list.data, shells, chatSeen],
   );
 
   const summaries = useMemo(

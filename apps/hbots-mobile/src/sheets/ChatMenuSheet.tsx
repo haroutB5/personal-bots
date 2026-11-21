@@ -259,17 +259,20 @@ export function ChatMenuSheet({
                 ))}
               </>
             ) : (
-              section.rows.map((row) => (
-                <Row
-                  key={row.id}
-                  icon={ROW_ICONS[row.id]}
-                  label={row.label}
-                  detail={row.detail}
-                  danger={row.destructive}
-                  disabled={row.disabled}
-                  onPress={() => onChatRow(row.id)}
-                />
-              ))
+              <>
+                {section.key === "destructive" ? <View style={styles.divider} /> : null}
+                {section.rows.map((row) => (
+                  <Row
+                    key={row.id}
+                    icon={ROW_ICONS[row.id]}
+                    label={row.label}
+                    detail={row.detail}
+                    danger={row.destructive}
+                    disabled={row.disabled}
+                    onPress={() => onChatRow(row.id)}
+                  />
+                ))}
+              </>
             )}
           </View>
         ))}
@@ -313,6 +316,12 @@ const styles = StyleSheet.create({
   },
   muteChoiceText: { color: tokens.text, fontSize: 14, fontWeight: "500" },
   groupGap: { marginTop: 16 },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: tokens.border,
+    marginBottom: 10,
+    marginHorizontal: 12,
+  },
   section: {
     color: tokens.textTertiary,
     fontSize: 11,

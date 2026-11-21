@@ -36,9 +36,9 @@ export function describeSignOut(outcome: RemoteSignOut): string {
     case "already-signed-out":
       return "Signed out.";
     case "server-too-old":
-      return "Signed out here. This hbots server is too old to remove the phone itself. Remove it in Settings > Connections.";
+      return "Signed out here. This hbots server is too old to remove the phone itself. Remove it in Settings > This phone > Signed-in devices.";
     case "unreachable":
-      return "Signed out here. Your laptop could not be reached, so remove this phone in Settings > Connections or let the session expire in 30 days.";
+      return "Signed out here. Your laptop could not be reached, so remove this phone in Settings > This phone > Signed-in devices or let the session expire in 30 days.";
     default:
       return outcome satisfies never;
   }
