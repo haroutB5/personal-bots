@@ -1,10 +1,10 @@
 {
   "generatedBy": "scripts/personal/parity/parity-matrix.mjs",
   "web": {
-    "ref": "personal-bots/main"
+    "ref": "HEAD"
   },
   "android": {
-    "ref": "feat/hbots-mobile-scaffold",
+    "ref": "HEAD",
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
@@ -19,8 +19,8 @@
       "rpc": 136
     },
     "byStatus": {
-      "done": 1,
-      "planned": 388,
+      "done": 389,
+      "planned": 0,
       "n/a": 54,
       "unassigned": 0
     },
@@ -494,7 +494,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Read-only bot rows from the saved cache (apps/hbots-mobile/src/App.tsx:115). No chats, taps or actions.",
       "check": "Open /bots on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -508,7 +508,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/$botId/$threadId on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -521,7 +521,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/$botId/edit on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -534,7 +534,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/$botId/ on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -547,7 +547,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/groups/$groupId on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -560,7 +560,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/groups/new on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -573,7 +573,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/new on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -586,7 +586,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -599,7 +599,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/api-keys on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -612,7 +612,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/connections on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -625,7 +625,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/memory on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -638,7 +638,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/notifications on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -651,7 +651,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/passwords on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -664,7 +664,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/providers/$instanceId on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -677,7 +677,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/providers/add on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -690,7 +690,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/providers/catalog/$catalogId on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -703,7 +703,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/settings_/removed on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -716,7 +716,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/team on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -729,7 +729,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open /bots_/teams/new on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -742,7 +742,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Open /computer on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -755,7 +755,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Open /files on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -768,7 +768,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open /tasks on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -781,7 +781,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open /tasks_/$taskId on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -794,7 +794,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open /tasks_/routines_/$routineId on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -807,7 +807,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open /tasks_/routines_/$routineId_/edit on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -820,7 +820,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open /tasks_/routines_/new on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -833,7 +833,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Shell states only: booting, connecting, \"Can't reach your laptop\", signed out, too old (apps/hbots-mobile/src/App.tsx:718). No tabs or back stack.",
       "check": "Open / on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -847,7 +847,7 @@
       "layout": false,
       "scope": "personal",
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open /work on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -908,7 +908,7 @@
       "layout": false,
       "scope": "pairing",
       "pr": "A17",
-      "status": "planned",
+      "status": "done",
       "androidToday": "Paste-a-link pairing only (apps/hbots-mobile/src/App.tsx:773). No QR scan, server confirm or device label.",
       "check": "Open /pair on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
@@ -962,7 +962,7 @@
         "direct": ["offlineBanner.ts", "outbox.ts"]
       },
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "check": "Open PersonalUnreachableScreen on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -975,7 +975,7 @@
       "layout": false,
       "logic": {
         "files": 55,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
           "packages/personal-client/src/bots/workingProgress.ts",
@@ -990,7 +990,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open WorkScreen on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -1003,11 +1003,16 @@
       "layout": false,
       "logic": {
         "files": 32,
-        "inPackage": [],
+        "inPackage": [
+          "voice/voiceCallApi.ts",
+          "voice/callState.ts",
+          "avatarMotion.ts",
+          "botSummaries.ts"
+        ],
         "direct": ["avatarMotion.ts", "voice/callState.ts", "voice/voiceCallApi.ts"]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open VoiceCallScreen on the Android build. Every row, field, empty, loading and error state the web screen shows at 360 x 785 is present with the same data from the same server. Back follows SPEC.md section 7."
     },
     {
@@ -1022,7 +1027,7 @@
         "direct": []
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Dialog in AttachmentPreview\" from its screen on Android. Same fields, buttons and confirm wording as AttachmentPreview.tsx:58. Back closes only the sheet."
     },
     {
@@ -1033,11 +1038,11 @@
       "component": "BotUsageSheet",
       "logic": {
         "files": 7,
-        "inPackage": [],
+        "inPackage": ["tokenUsagePresentation.ts"],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"BotUsageSheet\" from its screen on Android. Same fields, buttons and confirm wording as BotUsageSheet.tsx:38. Back closes only the sheet."
     },
     {
@@ -1052,7 +1057,7 @@
         "direct": ["filesModel.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Sheet in ChatFilePreview\" from its screen on Android. Same fields, buttons and confirm wording as ChatFilePreview.tsx:383. Back closes only the sheet."
     },
     {
@@ -1063,11 +1068,17 @@
       "component": "ChatSettingsSheet",
       "logic": {
         "files": 39,
-        "inPackage": [],
+        "inPackage": [
+          "chatState.ts",
+          "relativeTime.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts"
+        ],
         "direct": ["chatSettingsModel.ts", "chatState.ts"]
       },
       "pr": "A8",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"ChatSettingsSheet\" from its screen on Android. Same fields, buttons and confirm wording as ChatSettingsSheet.tsx:281. Back closes only the sheet."
     },
     {
@@ -1082,7 +1093,7 @@
         "direct": ["filesModel.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"FilePreviewSheet\" from its screen on Android. Same fields, buttons and confirm wording as FilePreviewSheet.tsx:81. Back closes only the sheet."
     },
     {
@@ -1093,11 +1104,11 @@
       "component": "GroupDeleteSheet",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Delete ?\" from its screen on Android. Same fields, buttons and confirm wording as GroupDeleteSheet.tsx:27. Back closes only the sheet."
     },
     {
@@ -1108,11 +1119,11 @@
       "component": "GroupSettingsSheet",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"GroupSettingsSheet\" from its screen on Android. Same fields, buttons and confirm wording as GroupSettingsSheet.tsx:341. Back closes only the sheet."
     },
     {
@@ -1123,11 +1134,11 @@
       "component": "NewChatDialog",
       "logic": {
         "files": 39,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "groupModel.ts", "botThreadRows.ts"],
         "direct": ["chatNames.ts", "renameChat.ts", "useBotOpenChatNames.ts", "useKeyboardInset.ts"]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"New chat with\" from its screen on Android. Same fields, buttons and confirm wording as NewChatDialog.tsx:30. Back closes only the sheet."
     },
     {
@@ -1138,11 +1149,11 @@
       "primitive": "AlertDialog",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["usagePresentation.ts"],
         "direct": ["usagePresentation.ts"]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"AlertDialog in PersonalResetCredits\" from its screen on Android. Same fields, buttons and confirm wording as PersonalResetCredits.tsx:117. Back closes only the sheet."
     },
     {
@@ -1153,7 +1164,13 @@
       "primitive": "Sheet",
       "logic": {
         "files": 37,
-        "inPackage": [],
+        "inPackage": [
+          "tokenUsagePresentation.ts",
+          "usageStrip.ts",
+          "usagePresentation.ts",
+          "usePersonalBots.ts",
+          "relativeTime.ts"
+        ],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -1165,7 +1182,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Sheet in PersonalUsageStrip\" from its screen on Android. Same fields, buttons and confirm wording as PersonalUsageStrip.tsx:571. Back closes only the sheet."
     },
     {
@@ -1176,11 +1193,11 @@
       "component": "RenameChatDialog",
       "logic": {
         "files": 17,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts", "botThreadRows.ts"],
         "direct": ["chatNames.ts", "renameChat.ts", "useKeyboardInset.ts"]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Rename chat\" from its screen on Android. Same fields, buttons and confirm wording as RenameChatDialog.tsx:143. Back closes only the sheet."
     },
     {
@@ -1191,11 +1208,11 @@
       "component": "SnoozeSheet",
       "logic": {
         "files": 2,
-        "inPackage": [],
+        "inPackage": ["chatState.ts"],
         "direct": ["chatState.ts"]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"SnoozeSheet\" from its screen on Android. Same fields, buttons and confirm wording as SnoozeSheet.tsx:57. Back closes only the sheet."
     },
     {
@@ -1206,11 +1223,11 @@
       "primitive": "Sheet",
       "logic": {
         "files": 7,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts"],
         "direct": ["teamConstellationModel.ts"]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Sheet in TeamLeadConfirm\" from its screen on Android. Same fields, buttons and confirm wording as TeamLeadConfirm.tsx:34. Back closes only the sheet."
     },
     {
@@ -1225,7 +1242,7 @@
         "direct": []
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"TeamMembersSheet\" from its screen on Android. Same fields, buttons and confirm wording as TeamMembersSheet.tsx:23. Back closes only the sheet."
     },
     {
@@ -1236,7 +1253,14 @@
       "primitive": "Sheet",
       "logic": {
         "files": 62,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "perfFlags.ts",
+          "groupModel.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "botSummaries.ts"
+        ],
         "direct": [
           "botsBackStack.ts",
           "botSummaries.ts",
@@ -1257,7 +1281,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"New team with\" from its screen on Android. Same fields, buttons and confirm wording as TeamScreen.tsx:731. Back closes only the sheet."
     },
     {
@@ -1268,7 +1292,7 @@
       "component": "DetailSheet",
       "logic": {
         "files": 55,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
           "packages/personal-client/src/bots/workingProgress.ts",
@@ -1283,7 +1307,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"DetailSheet\" from its screen on Android. Same fields, buttons and confirm wording as WorkScreen.tsx:239. Back closes only the sheet."
     },
     {
@@ -1302,7 +1326,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"ComputerActivitySheet\" from its screen on Android. Same fields, buttons and confirm wording as computer/ComputerActivityCard.tsx:188. Back closes only the sheet."
     },
     {
@@ -1317,7 +1341,7 @@
         "direct": ["useSheetDragDismiss.ts"]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"ComputerSheet\" from its screen on Android. Same fields, buttons and confirm wording as computer/ComputerSheet.tsx:19. Back closes only the sheet."
     },
     {
@@ -1328,11 +1352,11 @@
       "component": "ProviderSheet",
       "logic": {
         "files": 35,
-        "inPackage": [],
+        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"ProviderSheet\" from its screen on Android. Same fields, buttons and confirm wording as providers/ProviderSheets.tsx:13. Back closes only the sheet."
     },
     {
@@ -1343,11 +1367,11 @@
       "component": "ConfirmSheet",
       "logic": {
         "files": 35,
-        "inPackage": [],
+        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"ConfirmSheet\" from its screen on Android. Same fields, buttons and confirm wording as providers/ProviderSheets.tsx:75. Back closes only the sheet."
     },
     {
@@ -1358,11 +1382,11 @@
       "component": "InstallConfirmSheet",
       "logic": {
         "files": 35,
-        "inPackage": [],
+        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"InstallConfirmSheet\" from its screen on Android. Same fields, buttons and confirm wording as providers/ProviderSheets.tsx:144. Back closes only the sheet."
     },
     {
@@ -1373,11 +1397,11 @@
       "component": "RemapSheet",
       "logic": {
         "files": 35,
-        "inPackage": [],
+        "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"RemapSheet\" from its screen on Android. Same fields, buttons and confirm wording as providers/ProviderSheets.tsx:258. Back closes only the sheet."
     },
     {
@@ -1388,7 +1412,7 @@
       "component": "VoiceSheet",
       "logic": {
         "files": 27,
-        "inPackage": [],
+        "inPackage": ["voice/voiceCallApi.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "usePersonalBots.ts",
@@ -1398,7 +1422,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Voice\" from its screen on Android. Same fields, buttons and confirm wording as voice/VoiceSettingsSection.tsx:475. Back closes only the sheet."
     },
     {
@@ -1409,7 +1433,7 @@
       "primitive": "Sheet",
       "logic": {
         "files": 27,
-        "inPackage": [],
+        "inPackage": ["voice/voiceCallApi.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "usePersonalBots.ts",
@@ -1419,7 +1443,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Hang up when quiet\" from its screen on Android. Same fields, buttons and confirm wording as voice/VoiceSettingsSection.tsx:384. Back closes only the sheet."
     },
     {
@@ -1430,7 +1454,7 @@
       "primitive": "Sheet",
       "logic": {
         "files": 27,
-        "inPackage": [],
+        "inPackage": ["voice/voiceCallApi.ts", "usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "usePersonalBots.ts",
@@ -1440,7 +1464,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Open \"Languages I speak\" from its screen on Android. Same fields, buttons and confirm wording as voice/VoiceSettingsSection.tsx:418. Back closes only the sheet."
     },
     {
@@ -1451,11 +1475,11 @@
       "via": "menu",
       "logic": {
         "files": 23,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["botMuteModel.ts", "usePersonalBots.ts"]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Unmute notifications\" on Android. The server state changes exactly as the web action at BotMute.tsx:76 does, checked on the web app."
     },
     {
@@ -1466,11 +1490,11 @@
       "via": "menu",
       "logic": {
         "files": 23,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["botMuteModel.ts", "usePersonalBots.ts"]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Mute\" on Android. The server state changes exactly as the web action at BotMute.tsx:81 does, checked on the web app."
     },
     {
@@ -1481,11 +1505,11 @@
       "via": "menu",
       "logic": {
         "files": 23,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["botMuteModel.ts", "usePersonalBots.ts"]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"menu item\" on Android. The server state changes exactly as the web action at BotMute.tsx:86 does, checked on the web app."
     },
     {
@@ -1496,7 +1520,19 @@
       "via": "menu",
       "logic": {
         "files": 84,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "unreadChats.ts",
+          "chatState.ts",
+          "ownerChats.ts",
+          "relativeTime.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "groupModel.ts",
+          "botThreadRows.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botModelLabel.ts",
           "botThreadRows.ts",
@@ -1521,7 +1557,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:612 does, checked on the web app."
     },
     {
@@ -1532,7 +1568,19 @@
       "via": "menu",
       "logic": {
         "files": 84,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "unreadChats.ts",
+          "chatState.ts",
+          "ownerChats.ts",
+          "relativeTime.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "groupModel.ts",
+          "botThreadRows.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botModelLabel.ts",
           "botThreadRows.ts",
@@ -1557,7 +1605,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select archived chats\" on Android. The server state changes exactly as the web action at BotThreadsScreen.tsx:619 does, checked on the web app."
     },
     {
@@ -1568,7 +1616,19 @@
       "via": "menu",
       "logic": {
         "files": 87,
-        "inPackage": [],
+        "inPackage": [
+          "relativeTime.ts",
+          "perfFlags.ts",
+          "usePersonalBots.ts",
+          "botSummaries.ts",
+          "secretRequestCards.ts",
+          "groupModel.ts",
+          "unreadChats.ts",
+          "delegationModel.ts",
+          "chatState.ts",
+          "chatActivity.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "avatarMotion.ts",
           "botSummaries.ts",
@@ -1605,7 +1665,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"New bot\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:852 does, checked on the web app."
     },
     {
@@ -1616,7 +1676,19 @@
       "via": "menu",
       "logic": {
         "files": 87,
-        "inPackage": [],
+        "inPackage": [
+          "relativeTime.ts",
+          "perfFlags.ts",
+          "usePersonalBots.ts",
+          "botSummaries.ts",
+          "secretRequestCards.ts",
+          "groupModel.ts",
+          "unreadChats.ts",
+          "delegationModel.ts",
+          "chatState.ts",
+          "chatActivity.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "avatarMotion.ts",
           "botSummaries.ts",
@@ -1653,7 +1725,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"New group\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:853 does, checked on the web app."
     },
     {
@@ -1664,7 +1736,19 @@
       "via": "menu",
       "logic": {
         "files": 87,
-        "inPackage": [],
+        "inPackage": [
+          "relativeTime.ts",
+          "perfFlags.ts",
+          "usePersonalBots.ts",
+          "botSummaries.ts",
+          "secretRequestCards.ts",
+          "groupModel.ts",
+          "unreadChats.ts",
+          "delegationModel.ts",
+          "chatState.ts",
+          "chatActivity.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "avatarMotion.ts",
           "botSummaries.ts",
@@ -1701,7 +1785,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"New team\" on Android. The server state changes exactly as the web action at ChatsScreen.tsx:856 does, checked on the web app."
     },
     {
@@ -1712,7 +1796,31 @@
       "via": "menu",
       "logic": {
         "files": 142,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "delegationModel.ts",
+          "chatNotices.ts",
+          "botThreadRows.ts",
+          "previewPrivacy.ts",
+          "relativeTime.ts",
+          "chatState.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "taskPresentation.ts",
+          "perfFlags.ts",
+          "voice/voiceCallApi.ts",
+          "unreadChats.ts",
+          "memoryCards.ts",
+          "leadBotChangeCards.ts",
+          "connectionApprovalCards.ts",
+          "secretRequestCards.ts",
+          "questionCards.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -1779,7 +1887,7 @@
         ]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1491 does, checked on the web app."
     },
     {
@@ -1790,7 +1898,31 @@
       "via": "menu",
       "logic": {
         "files": 142,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "delegationModel.ts",
+          "chatNotices.ts",
+          "botThreadRows.ts",
+          "previewPrivacy.ts",
+          "relativeTime.ts",
+          "chatState.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "taskPresentation.ts",
+          "perfFlags.ts",
+          "voice/voiceCallApi.ts",
+          "unreadChats.ts",
+          "memoryCards.ts",
+          "leadBotChangeCards.ts",
+          "connectionApprovalCards.ts",
+          "secretRequestCards.ts",
+          "questionCards.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -1857,7 +1989,7 @@
         ]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Switch model...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1494 does, checked on the web app."
     },
     {
@@ -1868,7 +2000,31 @@
       "via": "menu",
       "logic": {
         "files": 142,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "delegationModel.ts",
+          "chatNotices.ts",
+          "botThreadRows.ts",
+          "previewPrivacy.ts",
+          "relativeTime.ts",
+          "chatState.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "taskPresentation.ts",
+          "perfFlags.ts",
+          "voice/voiceCallApi.ts",
+          "unreadChats.ts",
+          "memoryCards.ts",
+          "leadBotChangeCards.ts",
+          "connectionApprovalCards.ts",
+          "secretRequestCards.ts",
+          "questionCards.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -1935,7 +2091,7 @@
         ]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Chat settings...\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1505 does, checked on the web app."
     },
     {
@@ -1946,7 +2102,31 @@
       "via": "menu",
       "logic": {
         "files": 142,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "delegationModel.ts",
+          "chatNotices.ts",
+          "botThreadRows.ts",
+          "previewPrivacy.ts",
+          "relativeTime.ts",
+          "chatState.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "taskPresentation.ts",
+          "perfFlags.ts",
+          "voice/voiceCallApi.ts",
+          "unreadChats.ts",
+          "memoryCards.ts",
+          "leadBotChangeCards.ts",
+          "connectionApprovalCards.ts",
+          "secretRequestCards.ts",
+          "questionCards.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2013,7 +2193,7 @@
         ]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Call\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1517 does, checked on the web app."
     },
     {
@@ -2024,7 +2204,31 @@
       "via": "menu",
       "logic": {
         "files": 142,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "delegationModel.ts",
+          "chatNotices.ts",
+          "botThreadRows.ts",
+          "previewPrivacy.ts",
+          "relativeTime.ts",
+          "chatState.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "taskPresentation.ts",
+          "perfFlags.ts",
+          "voice/voiceCallApi.ts",
+          "unreadChats.ts",
+          "memoryCards.ts",
+          "leadBotChangeCards.ts",
+          "connectionApprovalCards.ts",
+          "secretRequestCards.ts",
+          "questionCards.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2091,7 +2295,7 @@
         ]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"New chat\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1526 does, checked on the web app."
     },
     {
@@ -2102,7 +2306,31 @@
       "via": "menu",
       "logic": {
         "files": 142,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "delegationModel.ts",
+          "chatNotices.ts",
+          "botThreadRows.ts",
+          "previewPrivacy.ts",
+          "relativeTime.ts",
+          "chatState.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "taskPresentation.ts",
+          "perfFlags.ts",
+          "voice/voiceCallApi.ts",
+          "unreadChats.ts",
+          "memoryCards.ts",
+          "leadBotChangeCards.ts",
+          "connectionApprovalCards.ts",
+          "secretRequestCards.ts",
+          "questionCards.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2169,7 +2397,7 @@
         ]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"All chats\" on Android. The server state changes exactly as the web action at ConversationScreen.tsx:1540 does, checked on the web app."
     },
     {
@@ -2180,7 +2408,7 @@
       "via": "menu",
       "logic": {
         "files": 33,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2191,7 +2419,7 @@
         ]
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Open chat\" on Android. The server state changes exactly as the web action at DelegationCard.tsx:188 does, checked on the web app."
     },
     {
@@ -2202,7 +2430,7 @@
       "via": "menu",
       "logic": {
         "files": 33,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -2214,7 +2442,7 @@
         ]
       },
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select files\" on Android. The server state changes exactly as the web action at FilesScreen.tsx:334 does, checked on the web app."
     },
     {
@@ -2225,7 +2453,13 @@
       "via": "menu",
       "logic": {
         "files": 70,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "perfFlags.ts",
+          "conversationModel.ts",
+          "chatState.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2248,7 +2482,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Group settings...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:546 does, checked on the web app."
     },
     {
@@ -2259,7 +2493,13 @@
       "via": "menu",
       "logic": {
         "files": 70,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "perfFlags.ts",
+          "conversationModel.ts",
+          "chatState.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2282,7 +2522,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Stop\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:548 does, checked on the web app."
     },
     {
@@ -2293,7 +2533,13 @@
       "via": "menu",
       "logic": {
         "files": 70,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "perfFlags.ts",
+          "conversationModel.ts",
+          "chatState.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2316,7 +2562,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Unpin group / Pin group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:559 does, checked on the web app."
     },
     {
@@ -2327,7 +2573,13 @@
       "via": "menu",
       "logic": {
         "files": 70,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "perfFlags.ts",
+          "conversationModel.ts",
+          "chatState.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2350,7 +2602,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Snooze...\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:562 does, checked on the web app."
     },
     {
@@ -2361,7 +2613,13 @@
       "via": "menu",
       "logic": {
         "files": 70,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "perfFlags.ts",
+          "conversationModel.ts",
+          "chatState.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2384,7 +2642,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Unarchive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:566 does, checked on the web app."
     },
     {
@@ -2395,7 +2653,13 @@
       "via": "menu",
       "logic": {
         "files": 70,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "perfFlags.ts",
+          "conversationModel.ts",
+          "chatState.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2418,7 +2682,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Archive group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:570 does, checked on the web app."
     },
     {
@@ -2429,7 +2693,13 @@
       "via": "menu",
       "logic": {
         "files": 70,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "groupModel.ts",
+          "perfFlags.ts",
+          "conversationModel.ts",
+          "chatState.ts"
+        ],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -2452,7 +2722,7 @@
         ]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Delete group\" on Android. The server state changes exactly as the web action at GroupConversationScreen.tsx:572 does, checked on the web app."
     },
     {
@@ -2463,11 +2733,11 @@
       "via": "menu",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Message privately\" on Android. The server state changes exactly as the web action at GroupSettingsSheet.tsx:278 does, checked on the web app."
     },
     {
@@ -2478,11 +2748,11 @@
       "via": "menu",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Edit bot\" on Android. The server state changes exactly as the web action at GroupSettingsSheet.tsx:281 does, checked on the web app."
     },
     {
@@ -2493,11 +2763,11 @@
       "via": "menu",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Remove from group\" on Android. The server state changes exactly as the web action at GroupSettingsSheet.tsx:283 does, checked on the web app."
     },
     {
@@ -2508,7 +2778,14 @@
       "via": "menu",
       "logic": {
         "files": 55,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "previewPrivacy.ts",
+          "taskPresentation.ts",
+          "relativeTime.ts",
+          "greeting.ts",
+          "conversationModel.ts"
+        ],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -2524,7 +2801,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select memories\" on Android. The server state changes exactly as the web action at MemoryScreen.tsx:536 does, checked on the web app."
     },
     {
@@ -2535,7 +2812,7 @@
       "via": "menu",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -2547,7 +2824,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select logins\" on Android. The server state changes exactly as the web action at PasswordsScreen.tsx:438 does, checked on the web app."
     },
     {
@@ -2558,7 +2835,7 @@
       "via": "menu",
       "logic": {
         "files": 32,
-        "inPackage": [],
+        "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
           "packages/personal-client/src/conversation/chatThread.ts",
@@ -2574,7 +2851,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Photos\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1310 does, checked on the web app."
     },
     {
@@ -2585,7 +2862,7 @@
       "via": "menu",
       "logic": {
         "files": 32,
-        "inPackage": [],
+        "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
           "packages/personal-client/src/conversation/chatThread.ts",
@@ -2601,7 +2878,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Camera\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1318 does, checked on the web app."
     },
     {
@@ -2612,7 +2889,7 @@
       "via": "menu",
       "logic": {
         "files": 32,
-        "inPackage": [],
+        "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
           "packages/personal-client/src/conversation/chatThread.ts",
@@ -2628,7 +2905,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Files\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1327 does, checked on the web app."
     },
     {
@@ -2639,7 +2916,7 @@
       "via": "menu",
       "logic": {
         "files": 32,
-        "inPackage": [],
+        "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
           "packages/personal-client/src/conversation/chatThread.ts",
@@ -2655,7 +2932,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Send now\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1461 does, checked on the web app."
     },
     {
@@ -2666,7 +2943,7 @@
       "via": "menu",
       "logic": {
         "files": 32,
-        "inPackage": [],
+        "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
           "packages/personal-client/src/conversation/chatThread.ts",
@@ -2682,7 +2959,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Queue after this turn\" on Android. The server state changes exactly as the web action at PersonalComposer.tsx:1470 does, checked on the web app."
     },
     {
@@ -2693,7 +2970,7 @@
       "via": "menu",
       "logic": {
         "files": 37,
-        "inPackage": [],
+        "inPackage": ["unreadChats.ts", "groupModel.ts", "botSummaries.ts", "avatarMotion.ts"],
         "direct": [
           "avatarMotion.ts",
           "botMuteModel.ts",
@@ -2705,7 +2982,7 @@
         ]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Unpin\" on Android. The server state changes exactly as the web action at PinnedStrip.tsx:442 does, checked on the web app."
     },
     {
@@ -2726,7 +3003,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Reply\" on Android. The server state changes exactly as the web action at ReplyableMessage.tsx:307 does, checked on the web app."
     },
     {
@@ -2747,7 +3024,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select text\" on Android. The server state changes exactly as the web action at ReplyableMessage.tsx:308 does, checked on the web app."
     },
     {
@@ -2768,7 +3045,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Copy text\" on Android. The server state changes exactly as the web action at ReplyableMessage.tsx:309 does, checked on the web app."
     },
     {
@@ -2779,7 +3056,7 @@
       "via": "menu",
       "logic": {
         "files": 35,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
           "useBulkDelete.ts",
@@ -2794,7 +3071,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Select routines\" on Android. The server state changes exactly as the web action at TasksScreen.tsx:389 does, checked on the web app."
     },
     {
@@ -2805,11 +3082,11 @@
       "via": "menu",
       "logic": {
         "files": 8,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts"],
         "direct": ["teamDiagramModel.ts", "teamConstellationModel.ts", "useTeamBotDrag.ts"]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Remove team / Remove team (move its bots first)\" on Android. The server state changes exactly as the web action at TeamConstellationCard.tsx:173 does, checked on the web app."
     },
     {
@@ -2820,7 +3097,7 @@
       "via": "menu",
       "logic": {
         "files": 67,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
           "useBotShells.ts",
@@ -2840,7 +3117,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Page forward\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1269 does, checked on the web app."
     },
     {
@@ -2851,7 +3128,7 @@
       "via": "menu",
       "logic": {
         "files": 67,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
           "useBotShells.ts",
@@ -2871,7 +3148,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Reload\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1270 does, checked on the web app."
     },
     {
@@ -2882,7 +3159,7 @@
       "via": "menu",
       "logic": {
         "files": 67,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
           "useBotShells.ts",
@@ -2902,7 +3179,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Escape\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1274 does, checked on the web app."
     },
     {
@@ -2913,7 +3190,7 @@
       "via": "menu",
       "logic": {
         "files": 67,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
           "useBotShells.ts",
@@ -2933,7 +3210,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Reload\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1401 does, checked on the web app."
     },
     {
@@ -2944,7 +3221,7 @@
       "via": "menu",
       "logic": {
         "files": 67,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
           "useBotShells.ts",
@@ -2964,7 +3241,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Tap \"Close browser\" on Android. The server state changes exactly as the web action at computer/ComputerScreen.tsx:1406 does, checked on the web app."
     },
     {
@@ -2975,7 +3252,19 @@
       "via": "gesture",
       "logic": {
         "files": 84,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "unreadChats.ts",
+          "chatState.ts",
+          "ownerChats.ts",
+          "relativeTime.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "groupModel.ts",
+          "botThreadRows.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botModelLabel.ts",
           "botThreadRows.ts",
@@ -3000,7 +3289,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"long press\" on Android where BotThreadsScreen.tsx:203 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3011,7 +3300,19 @@
       "via": "gesture",
       "logic": {
         "files": 84,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "unreadChats.ts",
+          "chatState.ts",
+          "ownerChats.ts",
+          "relativeTime.ts",
+          "chatChipRows.ts",
+          "chatActivity.ts",
+          "botSummaries.ts",
+          "groupModel.ts",
+          "botThreadRows.ts",
+          "botModelLabel.ts"
+        ],
         "direct": [
           "botModelLabel.ts",
           "botThreadRows.ts",
@@ -3036,7 +3337,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"swipe to delete\" on Android where BotThreadsScreen.tsx:241 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3047,11 +3348,11 @@
       "via": "gesture",
       "logic": {
         "files": 7,
-        "inPackage": [],
+        "inPackage": ["tokenUsagePresentation.ts"],
         "direct": ["tokenUsagePresentation.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A8",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a sheet down to close\" on Android where BotUsageSheet.tsx:59 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3066,7 +3367,7 @@
         "direct": ["filesModel.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a sheet down to close\" on Android where ChatFilePreview.tsx:372 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3077,7 +3378,19 @@
       "via": "gesture",
       "logic": {
         "files": 87,
-        "inPackage": [],
+        "inPackage": [
+          "relativeTime.ts",
+          "perfFlags.ts",
+          "usePersonalBots.ts",
+          "botSummaries.ts",
+          "secretRequestCards.ts",
+          "groupModel.ts",
+          "unreadChats.ts",
+          "delegationModel.ts",
+          "chatState.ts",
+          "chatActivity.ts",
+          "avatarMotion.ts"
+        ],
         "direct": [
           "avatarMotion.ts",
           "botSummaries.ts",
@@ -3114,7 +3427,7 @@
         ]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"swipe to delete\" on Android where ChatsScreen.tsx:1133 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3125,7 +3438,7 @@
       "via": "gesture",
       "logic": {
         "files": 25,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["desktopColumns.ts", "personalPreferences.ts"]
       },
       "status": "n/a",
@@ -3143,7 +3456,7 @@
         "direct": ["filesModel.ts", "useSheetDragDismiss.ts"]
       },
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a sheet down to close\" on Android where FilePreviewSheet.tsx:95 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3154,7 +3467,7 @@
       "via": "gesture",
       "logic": {
         "files": 33,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -3166,7 +3479,7 @@
         ]
       },
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"long press\" on Android where FilesScreen.tsx:174 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3177,7 +3490,7 @@
       "via": "gesture",
       "logic": {
         "files": 33,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
           "filesModel.ts",
@@ -3189,7 +3502,7 @@
         ]
       },
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"swipe to delete\" on Android where FilesScreen.tsx:177 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3200,7 +3513,14 @@
       "via": "gesture",
       "logic": {
         "files": 55,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "previewPrivacy.ts",
+          "taskPresentation.ts",
+          "relativeTime.ts",
+          "greeting.ts",
+          "conversationModel.ts"
+        ],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -3216,7 +3536,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"long press\" on Android where MemoryScreen.tsx:176 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3227,11 +3547,11 @@
       "via": "gesture",
       "logic": {
         "files": 27,
-        "inPackage": [],
+        "inPackage": ["greeting.ts", "conversationModel.ts"],
         "direct": ["messageTime.ts", "messageSwipe.ts", "useMessageSwipe.ts"]
       },
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"swipe a message to reply or see its time\" on Android where MessageSwipeTime.tsx:61 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3242,7 +3562,7 @@
       "via": "gesture",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -3254,7 +3574,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"long press\" on Android where PasswordsScreen.tsx:304 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3265,7 +3585,7 @@
       "via": "gesture",
       "logic": {
         "files": 31,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "perfFlags.ts"],
         "direct": [
           "desktopColumns.ts",
           "keptBotsList.ts",
@@ -3279,7 +3599,7 @@
         ]
       },
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"edge swipe back\" on Android where PersonalShell.tsx:93 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3290,7 +3610,7 @@
       "via": "gesture",
       "logic": {
         "files": 31,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "perfFlags.ts"],
         "direct": [
           "desktopColumns.ts",
           "keptBotsList.ts",
@@ -3314,7 +3634,13 @@
       "via": "gesture",
       "logic": {
         "files": 37,
-        "inPackage": [],
+        "inPackage": [
+          "tokenUsagePresentation.ts",
+          "usageStrip.ts",
+          "usagePresentation.ts",
+          "usePersonalBots.ts",
+          "relativeTime.ts"
+        ],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -3326,7 +3652,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a sheet down to close\" on Android where PersonalUsageStrip.tsx:482 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3347,7 +3673,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"swipe a message to reply or see its time\" on Android where ReplyableMessage.tsx:104 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3358,7 +3684,7 @@
       "via": "gesture",
       "logic": {
         "files": 35,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts", "relativeTime.ts"],
         "direct": [
           "bulkSelection.ts",
           "useBulkDelete.ts",
@@ -3373,7 +3699,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"long press\" on Android where TasksScreen.tsx:171 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3384,7 +3710,14 @@
       "via": "gesture",
       "logic": {
         "files": 62,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "perfFlags.ts",
+          "groupModel.ts",
+          "conversationModel.ts",
+          "botModelLabel.ts",
+          "botSummaries.ts"
+        ],
         "direct": [
           "botsBackStack.ts",
           "botSummaries.ts",
@@ -3405,7 +3738,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a bot between teams\" on Android where TeamScreen.tsx:467 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3420,7 +3753,7 @@
         "direct": ["useSheetDragDismiss.ts"]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"drag a sheet down to close\" on Android where computer/ComputerSheet.tsx:28 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3431,7 +3764,7 @@
       "via": "gesture",
       "logic": {
         "files": 34,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "perfFlags.ts"],
         "direct": [
           "botsBackStack.ts",
           "edgeSwipeBack.ts",
@@ -3441,7 +3774,7 @@
         ]
       },
       "pr": "A1",
-      "status": "planned",
+      "status": "done",
       "check": "Perform \"edge swipe back\" on Android where useChatSwipeBack.tsx:89 offers it. The same result appears on the web app after a refresh."
     },
     {
@@ -3451,11 +3784,11 @@
       "web": "ConnectionApprovalCard.tsx:1",
       "logic": {
         "files": 2,
-        "inPackage": [],
+        "inPackage": ["connectionApprovalCards.ts"],
         "direct": ["connectionApprovalCards.ts"]
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows ConnectionApprovalCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3465,7 +3798,12 @@
       "web": "ContextUsedPanel.tsx:1",
       "logic": {
         "files": 48,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "relativeTime.ts",
+          "greeting.ts",
+          "conversationModel.ts"
+        ],
         "direct": [
           "commandFeedback.ts",
           "contextUsed.ts",
@@ -3474,7 +3812,7 @@
         ]
       },
       "pr": "A8",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows ContextUsedPanel on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3484,11 +3822,11 @@
       "web": "ConversationRoutinesPanel.tsx:1",
       "logic": {
         "files": 28,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": ["conversationRoutinesModel.ts", "routineHook.ts", "usePersonalAutomation.ts"]
       },
       "pr": "A8",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows ConversationRoutinesPanel on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3498,7 +3836,7 @@
       "web": "ConversationSidePanel.tsx:1",
       "logic": {
         "files": 25,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["desktopColumns.ts", "personalPreferences.ts"]
       },
       "status": "n/a",
@@ -3511,7 +3849,7 @@
       "web": "DelegationCard.tsx:1",
       "logic": {
         "files": 33,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "previewPrivacy.ts", "delegationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/timeline.ts",
           "packages/personal-client/src/conversation/types.ts",
@@ -3522,7 +3860,7 @@
         ]
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows DelegationCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3532,11 +3870,11 @@
       "web": "GroupRoundCard.tsx:1",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows GroupRoundCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3546,11 +3884,11 @@
       "web": "GroupVoteCard.tsx:1",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows GroupVoteCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3560,11 +3898,11 @@
       "web": "LeadBotChangeCard.tsx:1",
       "logic": {
         "files": 3,
-        "inPackage": [],
+        "inPackage": ["leadBotChangeCards.ts"],
         "direct": ["leadBotChangeCards.ts", "leadBotTextDiff.ts"]
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows LeadBotChangeCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3578,7 +3916,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows LoginRequestCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3588,11 +3926,11 @@
       "web": "MemoryChangeCard.tsx:1",
       "logic": {
         "files": 7,
-        "inPackage": [],
+        "inPackage": ["relativeTime.ts", "greeting.ts", "memoryCards.ts"],
         "direct": ["memoryCards.ts", "memoryPresentation.ts"]
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows MemoryChangeCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3602,11 +3940,11 @@
       "web": "PersonalOfflineBanner.tsx:1",
       "logic": {
         "files": 29,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["offlineBanner.ts", "outbox.ts", "usePersonalBots.ts", "updateStatus.ts"]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows PersonalOfflineBanner on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3616,7 +3954,13 @@
       "web": "PersonalUsageStrip.tsx:1",
       "logic": {
         "files": 37,
-        "inPackage": [],
+        "inPackage": [
+          "tokenUsagePresentation.ts",
+          "usageStrip.ts",
+          "usagePresentation.ts",
+          "usePersonalBots.ts",
+          "relativeTime.ts"
+        ],
         "direct": [
           "relativeTime.ts",
           "usageRefresh.ts",
@@ -3628,7 +3972,7 @@
         ]
       },
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows PersonalUsageStrip on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3638,7 +3982,7 @@
       "web": "PinnedStrip.tsx:1",
       "logic": {
         "files": 37,
-        "inPackage": [],
+        "inPackage": ["unreadChats.ts", "groupModel.ts", "botSummaries.ts", "avatarMotion.ts"],
         "direct": [
           "avatarMotion.ts",
           "botMuteModel.ts",
@@ -3650,7 +3994,7 @@
         ]
       },
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows PinnedStrip on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3660,11 +4004,11 @@
       "web": "QuestionCard.tsx:1",
       "logic": {
         "files": 3,
-        "inPackage": [],
+        "inPackage": ["questionCards.ts"],
         "direct": ["questionCards.ts"]
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows QuestionCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3674,11 +4018,11 @@
       "web": "RulesUsageCard.tsx:1",
       "logic": {
         "files": 28,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": ["memoryPresentation.ts", "usePersonalAutomation.ts"]
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows RulesUsageCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3688,11 +4032,11 @@
       "web": "SecretRequestCard.tsx:1",
       "logic": {
         "files": 2,
-        "inPackage": [],
+        "inPackage": ["secretRequestCards.ts"],
         "direct": ["secretRequestCards.ts"]
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows SecretRequestCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3702,11 +4046,11 @@
       "web": "TeamConstellationCard.tsx:1",
       "logic": {
         "files": 8,
-        "inPackage": [],
+        "inPackage": ["perfFlags.ts"],
         "direct": ["teamDiagramModel.ts", "teamConstellationModel.ts", "useTeamBotDrag.ts"]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows TeamConstellationCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3720,7 +4064,7 @@
         "direct": []
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows WorkRecordCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3738,7 +4082,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows ComputerActivityCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3748,7 +4092,7 @@
       "web": "computer/ComputerDriverCard.tsx:1",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "computer/computerContract.ts",
           "computer/computerDrivers.ts",
@@ -3756,7 +4100,7 @@
         ]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows ComputerDriverCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3770,7 +4114,7 @@
         "direct": ["computer/computerActivity.ts", "computer/computerContract.ts"]
       },
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows ComputerHelpCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3780,11 +4124,11 @@
       "web": "voice/CallCard.tsx:1",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["voice/voiceCallApi.ts", "voice/callState.ts"],
         "direct": ["voice/callState.ts", "voice/voiceCallApi.ts"]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows CallCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3794,11 +4138,11 @@
       "web": "voice/CallWorkCard.tsx:1",
       "logic": {
         "files": 3,
-        "inPackage": [],
+        "inPackage": ["voice/callState.ts"],
         "direct": ["voice/callState.ts"]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows CallWorkCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3812,7 +4156,7 @@
         "direct": []
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "A chat or screen that shows LiveVoiceCallCard on web shows it on Android with the same text and buttons. Each button has the same server effect."
     },
     {
@@ -3823,7 +4167,7 @@
       "section": "Your name",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3837,7 +4181,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Your name (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -3848,7 +4192,7 @@
       "section": "Your name",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3862,7 +4206,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Your name / DisplayNameForm\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -3873,7 +4217,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3887,7 +4231,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -3898,7 +4242,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3912,7 +4256,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots / Team\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -3923,7 +4267,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3937,7 +4281,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots / New bot\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -3948,7 +4292,7 @@
       "section": "Bots",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3962,7 +4306,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots / Removed bots\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -3973,7 +4317,7 @@
       "section": "Appearance",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -3997,7 +4341,7 @@
       "section": "Appearance",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4021,7 +4365,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4035,7 +4379,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Chat (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4046,7 +4390,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4060,7 +4404,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Chat / Show tool steps\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4071,7 +4415,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4085,7 +4429,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Chat / Show routines in chats\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4096,7 +4440,7 @@
       "section": "Chat",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4110,7 +4454,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Chat / AutoArchiveTaskChatsRow\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4121,7 +4465,7 @@
       "section": "Voice calls",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4135,7 +4479,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Voice calls (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4146,7 +4490,7 @@
       "section": "Voice calls",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4160,7 +4504,7 @@
         ]
       },
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Voice calls / VoiceSettingsSection\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4171,7 +4515,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4185,7 +4529,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Plugins (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4196,7 +4540,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4210,7 +4554,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Plugins / Connections\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4221,7 +4565,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4235,7 +4579,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Plugins / Passwords\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4246,7 +4590,7 @@
       "section": "Plugins",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4260,7 +4604,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Plugins / API keys\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4271,7 +4615,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4285,7 +4629,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Routines, memory and notifications (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4296,7 +4640,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4310,7 +4654,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Routines, memory and notifications / Routines\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4321,7 +4665,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4335,7 +4679,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Routines, memory and notifications / Memory\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4346,7 +4690,7 @@
       "section": "Routines, memory and notifications",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4360,7 +4704,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Routines, memory and notifications / Notifications\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4371,7 +4715,7 @@
       "section": "About",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4385,7 +4729,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"About (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4396,7 +4740,7 @@
       "section": "About",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4410,7 +4754,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"About / About\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4421,7 +4765,7 @@
       "section": "Advanced",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4445,7 +4789,7 @@
       "section": "Advanced",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4469,7 +4813,7 @@
       "section": "Advanced",
       "logic": {
         "files": 36,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "relativeTime.ts", "greeting.ts"],
         "direct": [
           "commandFeedback.ts",
           "personalMode.ts",
@@ -4493,11 +4837,16 @@
       "section": "Providers",
       "logic": {
         "files": 53,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "usagePresentation.ts",
+          "conversationModel.ts",
+          "botSummaries.ts"
+        ],
         "direct": ["commandFeedback.ts", "providerRows.ts", "usePersonalBots.ts"]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Providers (section)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4508,11 +4857,11 @@
       "via": "field",
       "logic": {
         "files": 24,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalBots.ts", "useSecretRequests.ts"]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4523,11 +4872,11 @@
       "via": "field",
       "logic": {
         "files": 24,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalBots.ts", "useSecretRequests.ts"]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Label (optional)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4538,11 +4887,11 @@
       "via": "field",
       "logic": {
         "files": 24,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": ["commandFeedback.ts", "usePersonalBots.ts", "useSecretRequests.ts"]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Value\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4553,11 +4902,11 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": [],
+        "inPackage": ["botAvatarShapes.ts"],
         "direct": ["botAvatarShapes.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Shape\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4568,11 +4917,11 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": [],
+        "inPackage": ["botAvatarShapes.ts"],
         "direct": ["botAvatarShapes.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Colour\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4583,11 +4932,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Switch model when the usage limit is hit The bot keeps replying on this model until its own limit resets, then goes back.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4598,7 +4947,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4612,7 +4961,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4623,7 +4972,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4637,7 +4986,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Title (optional)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4648,7 +4997,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4662,7 +5011,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Description\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4673,7 +5022,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4687,7 +5036,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Provider\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4698,7 +5047,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4712,7 +5061,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Model\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4723,7 +5072,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4737,7 +5086,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Effort\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4748,7 +5097,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4762,7 +5111,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Context window\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4773,7 +5122,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4787,7 +5136,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Agent mode\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4798,7 +5147,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4812,7 +5161,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Team\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4823,7 +5172,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4837,7 +5186,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Team lead One per team. Making this bot the lead replaces the current one.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4848,7 +5197,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4862,7 +5211,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Pin to top Keeps this bot in the Pinned box at the top of Bots.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4873,7 +5222,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4887,7 +5236,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Save memories without asking Keeps what you tell this bot for later chats without you saying \"remember\", except in a chat that had a sensitive site open.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4898,7 +5247,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4912,7 +5261,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Hide message previews Keeps this bot's message text out of lists, cards, notifications and banners. It only shows inside the chat.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4923,7 +5272,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4937,7 +5286,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Notifications\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4948,7 +5297,7 @@
       "via": "field",
       "logic": {
         "files": 58,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
           "botModelLabel.ts",
@@ -4962,7 +5311,7 @@
         ]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Avatar\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4977,7 +5326,7 @@
         "direct": ["packages/personal-client/src/bots/instructionsField.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Instructions\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -4988,11 +5337,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"provider\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5003,11 +5352,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"model\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5018,11 +5367,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"effort\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5033,11 +5382,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"context window\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5048,11 +5397,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Use a different model at set times Every day, between these times (your laptop's clock), the bot uses this model instead.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5063,11 +5412,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"From\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5078,11 +5427,11 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"To\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5093,11 +5442,11 @@
       "via": "field",
       "logic": {
         "files": 4,
-        "inPackage": [],
+        "inPackage": ["groupModel.ts"],
         "direct": ["groupModel.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Only in this group\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5112,7 +5461,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Username or email\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5127,7 +5476,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Password\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5142,7 +5491,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Save for next time\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5153,7 +5502,14 @@
       "via": "field",
       "logic": {
         "files": 55,
-        "inPackage": [],
+        "inPackage": [
+          "usePersonalBots.ts",
+          "previewPrivacy.ts",
+          "taskPresentation.ts",
+          "relativeTime.ts",
+          "greeting.ts",
+          "conversationModel.ts"
+        ],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -5169,7 +5525,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Search memory\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5180,11 +5536,11 @@
       "via": "field",
       "logic": {
         "files": 28,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5195,11 +5551,11 @@
       "via": "field",
       "logic": {
         "files": 28,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots of\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5210,11 +5566,11 @@
       "via": "field",
       "logic": {
         "files": 28,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "groupModel.ts"],
         "direct": ["commandFeedback.ts", "usePersonalGroups.ts", "usePersonalBots.ts"]
       },
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in NewGroupScreen\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5225,7 +5581,7 @@
       "via": "field",
       "logic": {
         "files": 29,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
           "commandFeedback.ts",
@@ -5235,7 +5591,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Team name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5246,7 +5602,7 @@
       "via": "field",
       "logic": {
         "files": 29,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
           "commandFeedback.ts",
@@ -5256,7 +5612,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Leader Optional\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5267,7 +5623,7 @@
       "via": "field",
       "logic": {
         "files": 29,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
           "commandFeedback.ts",
@@ -5277,7 +5633,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"No leader for now\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5288,7 +5644,7 @@
       "via": "field",
       "logic": {
         "files": 29,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
           "commandFeedback.ts",
@@ -5298,7 +5654,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in NewTeamForm\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5309,7 +5665,7 @@
       "via": "field",
       "logic": {
         "files": 29,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
           "commandFeedback.ts",
@@ -5319,7 +5675,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bots to move into the new team\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5330,7 +5686,7 @@
       "via": "field",
       "logic": {
         "files": 29,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "botModelLabel.ts"],
         "direct": [
           "botModelLabel.ts",
           "commandFeedback.ts",
@@ -5340,7 +5696,7 @@
         ]
       },
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in NewTeamForm\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5351,7 +5707,7 @@
       "via": "field",
       "logic": {
         "files": 37,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts", "perfFlags.ts", "relativeTime.ts"],
         "direct": [
           "commandFeedback.ts",
           "relativeTime.ts",
@@ -5363,7 +5719,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in NotificationsScreen\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5374,7 +5730,7 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -5386,7 +5742,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Label\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5397,7 +5753,7 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -5409,7 +5765,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Website origin\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5420,7 +5776,7 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -5432,7 +5788,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Username\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5443,7 +5799,7 @@
       "via": "field",
       "logic": {
         "files": 30,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "bulkSelection.ts",
           "commandFeedback.ts",
@@ -5455,7 +5811,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Password\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5466,7 +5822,7 @@
       "via": "field",
       "logic": {
         "files": 32,
-        "inPackage": [],
+        "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
           "packages/personal-client/src/conversation/chatThread.ts",
@@ -5482,7 +5838,7 @@
         ]
       },
       "pr": "A5",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Message / Message x\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5493,7 +5849,7 @@
       "via": "field",
       "logic": {
         "files": 25,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "connectionsModel.ts",
@@ -5502,7 +5858,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in PersonalConnectionsScreen\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5513,7 +5869,7 @@
       "via": "field",
       "logic": {
         "files": 25,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "connectionsModel.ts",
@@ -5522,7 +5878,7 @@
         ]
       },
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Messages a day\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5533,11 +5889,11 @@
       "via": "field",
       "logic": {
         "files": 3,
-        "inPackage": [],
+        "inPackage": ["questionCards.ts"],
         "direct": ["questionCards.ts"]
       },
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Or type your own answer\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5548,7 +5904,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5557,7 +5913,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5568,7 +5924,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5577,7 +5933,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Bot\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5588,7 +5944,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5597,7 +5953,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Task each time it runs\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5608,7 +5964,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5617,7 +5973,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"What starts it\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5628,7 +5984,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5637,7 +5993,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Event name\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5648,7 +6004,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5657,7 +6013,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"When\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5668,7 +6024,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5677,7 +6033,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Days\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5688,7 +6044,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5697,7 +6053,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Every how many hours\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5708,7 +6064,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5717,7 +6073,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Date\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5728,7 +6084,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5737,7 +6093,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Time\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5748,7 +6104,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5757,7 +6113,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Time zone\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5768,7 +6124,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5777,7 +6133,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"If the laptop was asleep at run time\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5788,7 +6144,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5797,7 +6153,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in RoutineForm\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5808,7 +6164,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5817,7 +6173,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Notify me\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5828,7 +6184,7 @@
       "via": "field",
       "logic": {
         "files": 26,
-        "inPackage": [],
+        "inPackage": ["usePersonalBots.ts"],
         "direct": [
           "commandFeedback.ts",
           "routineDraft.ts",
@@ -5837,7 +6193,7 @@
         ]
       },
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in RoutineForm\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5852,7 +6208,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Allowed address\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5867,7 +6223,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Another header it may go in\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5882,7 +6238,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Also allow it in the web address and the request body A key there can end up in the API's logs.\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5897,7 +6253,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Only for paths starting with (optional)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5912,7 +6268,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Only these methods (none ticked means all)\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5927,7 +6283,7 @@
         "direct": []
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in SecretAccessFields\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5938,11 +6294,11 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": [],
+        "inPackage": ["secretRequestCards.ts"],
         "direct": ["secretRequestCards.ts"]
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in SecretRequestCard\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5953,11 +6309,11 @@
       "via": "field",
       "logic": {
         "files": 2,
-        "inPackage": [],
+        "inPackage": ["secretRequestCards.ts"],
         "direct": ["secretRequestCards.ts"]
       },
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Allow all bots to use this key\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5972,7 +6328,7 @@
         "direct": []
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Field with a data-driven label in ProviderKeyEntry\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -5983,7 +6339,12 @@
       "via": "field",
       "logic": {
         "files": 59,
-        "inPackage": [],
+        "inPackage": [
+          "botSummaries.ts",
+          "usagePresentation.ts",
+          "conversationModel.ts",
+          "usePersonalBots.ts"
+        ],
         "direct": [
           "commandFeedback.ts",
           "providerRows.ts",
@@ -5997,7 +6358,7 @@
         ]
       },
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Change \"Server address\" on Android. The web app shows the new value after a refresh, and the reverse."
     },
     {
@@ -6016,7 +6377,7 @@
       "web": "packages/contracts/src/personalPush.ts:12",
       "storage": "server",
       "pr": "N1",
-      "status": "planned",
+      "status": "done",
       "check": "\"taskCompleted\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6026,7 +6387,7 @@
       "web": "packages/contracts/src/personalPush.ts:12",
       "storage": "server",
       "pr": "N1",
-      "status": "planned",
+      "status": "done",
       "check": "\"taskNeedsInput\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6036,7 +6397,7 @@
       "web": "packages/contracts/src/personalPush.ts:13",
       "storage": "server",
       "pr": "N1",
-      "status": "planned",
+      "status": "done",
       "check": "\"taskFailed\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6046,7 +6407,7 @@
       "web": "packages/contracts/src/personalPush.ts:14",
       "storage": "server",
       "pr": "N1",
-      "status": "planned",
+      "status": "done",
       "check": "\"routineResult\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6056,7 +6417,7 @@
       "web": "packages/contracts/src/personalPush.ts:20",
       "storage": "server",
       "pr": "N1",
-      "status": "planned",
+      "status": "done",
       "check": "\"chatReply\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6066,7 +6427,7 @@
       "web": "packages/contracts/src/personalBots.ts:986",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"displayName\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6076,7 +6437,7 @@
       "web": "packages/contracts/src/personalBots.ts:987",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"teamChange\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6086,7 +6447,7 @@
       "web": "packages/contracts/src/personalBots.ts:991",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"autoArchiveTaskChats\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6096,7 +6457,7 @@
       "web": "packages/contracts/src/personalBots.ts:995",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"voiceCalls\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6106,7 +6467,7 @@
       "web": "packages/contracts/src/personalBots.ts:999",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"autoArchiveTaskChatsAfterMinutes\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6116,7 +6477,7 @@
       "web": "packages/contracts/src/personalBots.ts:1002",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"usageVisibility\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6126,7 +6487,7 @@
       "web": "packages/contracts/src/personalBots.ts:1009",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"showToolSteps\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6136,7 +6497,7 @@
       "web": "packages/contracts/src/personalBots.ts:1011",
       "storage": "server",
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "\"showRoutinesStrip\" set on one client reads the same on the other. Stored on the server."
     },
     {
@@ -6155,7 +6516,7 @@
         "computer/DesktopPane.tsx"
       ],
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBrowserActivity (subscription) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6174,7 +6535,7 @@
         "computer/DesktopPane.tsx"
       ],
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBrowserListFiles (query) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6194,7 +6555,7 @@
       ],
       "userAction": true,
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBrowserTakeControl (command) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6214,7 +6575,7 @@
       ],
       "userAction": true,
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBrowserReturnToAgent (command) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6234,7 +6595,7 @@
       ],
       "userAction": true,
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBrowserClose (command) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6254,7 +6615,7 @@
       ],
       "userAction": true,
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBrowserApproveEgress (command) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6274,7 +6635,7 @@
       ],
       "userAction": true,
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBrowserRefuseEgress (command) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6293,7 +6654,7 @@
         "computer/DesktopPane.tsx"
       ],
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalDesktopStatus (subscription) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6313,7 +6674,7 @@
       ],
       "userAction": true,
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalDesktopStop (command) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6332,7 +6693,7 @@
         "computer/DesktopPane.tsx"
       ],
       "pr": "A16",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalDesktopActivity (subscription) from ChatsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6403,7 +6764,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionApprovalsList (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6475,7 +6836,7 @@
       ],
       "userAction": true,
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionApprovalsDecide (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6546,7 +6907,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLeadBotChangesList (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6618,7 +6979,7 @@
       ],
       "userAction": true,
       "pr": "A6",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLeadBotChangesDecide (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6689,7 +7050,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginRequestsList (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6761,7 +7122,7 @@
       ],
       "userAction": true,
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginRequestsSubmit (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6833,7 +7194,7 @@
       ],
       "userAction": true,
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginRequestsCancel (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6905,7 +7266,7 @@
       ],
       "userAction": true,
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsSearchMessages (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -6976,7 +7337,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalTasksSubscribe (subscription) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7047,7 +7408,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalTasksGet (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7118,7 +7479,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalTasksRelated (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7158,7 +7519,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalTasksHistory (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7229,7 +7590,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesList (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7268,7 +7629,7 @@
         "computer/ComputerScreen.tsx"
       ],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryList (query) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7339,7 +7700,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryRulesUsage (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7410,7 +7771,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryTurnContext (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7449,7 +7810,7 @@
         "computer/ComputerScreen.tsx"
       ],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryTidyLog (query) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7520,7 +7881,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryCards (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7559,7 +7920,7 @@
         "computer/ComputerScreen.tsx"
       ],
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPushGetSettings (query) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7631,7 +7992,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalTasksCancel (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7671,7 +8032,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalTasksRetry (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7711,7 +8072,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesCreate (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7751,7 +8112,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesUpdate (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7791,7 +8152,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesDelete (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7831,7 +8192,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesPause (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7871,7 +8232,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesResume (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7911,7 +8272,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesDeleteMany (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7951,7 +8312,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesSetEnabledMany (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -7991,7 +8352,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesRunNow (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8031,7 +8392,7 @@
       ],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalRoutinesRegenerateHook (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8071,7 +8432,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryDelete (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8143,7 +8504,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryFeedback (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8183,7 +8544,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryDeleteMany (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8223,7 +8584,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryRestore (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8262,7 +8623,7 @@
         "computer/ComputerScreen.tsx"
       ],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryGet (query) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8302,7 +8663,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryUndoNote (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8342,7 +8703,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryTidySetMode (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8382,7 +8743,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryTidyRun (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8454,7 +8815,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryTidyDecide (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8494,7 +8855,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalMemoryTidyUndo (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8612,7 +8973,7 @@
       ],
       "userAction": true,
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPushTest (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8652,7 +9013,7 @@
       ],
       "userAction": true,
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPushSetPreferences (command) from BotRoutinesSection.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8724,7 +9085,7 @@
       ],
       "userAction": true,
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsPrewarmThread (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8796,7 +9157,7 @@
       ],
       "userAction": true,
       "pr": "N1",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPushReportViewing (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8868,7 +9229,7 @@
       ],
       "userAction": true,
       "pr": "N1",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPushReportForeground (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8881,7 +9242,7 @@
       "contract": null,
       "views": ["PersonalConnectionsScreen.tsx"],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsList (query) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8895,7 +9256,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsConnect (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8909,7 +9270,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsValidate (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8923,7 +9284,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsDisable (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8937,7 +9298,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsReconnect (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8951,7 +9312,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsDisconnect (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8965,7 +9326,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsRotate (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8979,7 +9340,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsBrowserConnect (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -8993,7 +9354,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsSetSettings (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9007,7 +9368,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsImportProbe (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9021,7 +9382,7 @@
       "views": ["PersonalConnectionsScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalConnectionsImportAdopt (command) from PersonalConnectionsScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9044,7 +9405,7 @@
         "OutboxFlusher.tsx"
       ],
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsList (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9067,7 +9428,7 @@
         "OutboxFlusher.tsx"
       ],
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsSubscribe (subscription) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9139,7 +9500,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsCreate (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9163,7 +9524,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsUpdate (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9187,7 +9548,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsDelete (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9211,7 +9572,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsAddMember (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9235,7 +9596,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsRemoveMember (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9259,7 +9620,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsSendMessage (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9283,7 +9644,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsContinueRound (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9307,7 +9668,7 @@
       ],
       "userAction": true,
       "pr": "A10",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalGroupsStop (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9320,7 +9681,7 @@
       "contract": null,
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginsList (query) from FilesScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9334,7 +9695,7 @@
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginsCreate (command) from FilesScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9348,7 +9709,7 @@
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginsUpdate (command) from FilesScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9362,7 +9723,7 @@
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginsDelete (command) from FilesScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9376,7 +9737,7 @@
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginsDeleteMany (command) from FilesScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9390,7 +9751,7 @@
       "views": ["FilesScreen.tsx", "MemoryScreen.tsx", "PasswordsScreen.tsx", "TasksScreen.tsx"],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalLoginsSetSensitive (command) from FilesScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9461,7 +9822,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsListRemoved (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9533,7 +9894,7 @@
       ],
       "userAction": true,
       "pr": "A11",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsRestore (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9604,7 +9965,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsListPending (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9676,7 +10037,7 @@
       ],
       "userAction": true,
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsFulfill (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9748,7 +10109,7 @@
       ],
       "userAction": true,
       "pr": "A7",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsCancel (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9766,7 +10127,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsList (query) from ApiKeysScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9785,7 +10146,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsCreate (command) from ApiKeysScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9804,7 +10165,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsSetSharing (command) from ApiKeysScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9823,7 +10184,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsSetMode (command) from ApiKeysScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9842,7 +10203,7 @@
       ],
       "userAction": true,
       "pr": "A15",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalSecretsDelete (command) from ApiKeysScreen.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9913,7 +10274,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsWorkingProgress (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9926,7 +10287,7 @@
       "contract": null,
       "views": [],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsThreadShells (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -9997,7 +10358,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsThreadFullText (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10010,7 +10371,7 @@
       "contract": null,
       "views": [],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalProjectsList (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10023,7 +10384,7 @@
       "contract": null,
       "views": [],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalProjectsHistory (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10036,7 +10397,7 @@
       "contract": null,
       "views": [],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalWorkSince (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10049,7 +10410,7 @@
       "contract": null,
       "views": [],
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalWorkQuestions (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10063,7 +10424,7 @@
       "views": [],
       "userAction": true,
       "pr": "A12",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalWorkAnswer (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10205,7 +10566,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPushInApp (subscription) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10277,7 +10638,7 @@
       ],
       "userAction": true,
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalPushAckInApp (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10348,7 +10709,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsSubscribeThreadShells (subscription) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10419,7 +10780,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsGetProfile (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10490,7 +10851,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsListFiles (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10561,7 +10922,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsTokenUsage (query) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10633,7 +10994,7 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsCreate (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10705,7 +11066,7 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsUpdate (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10777,7 +11138,7 @@
       ],
       "userAction": true,
       "pr": "A2",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsReorderPinned (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10849,7 +11210,7 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsRecheckProvider (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10921,7 +11282,7 @@
       ],
       "userAction": true,
       "pr": "A9",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsDelete (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -10993,7 +11354,7 @@
       ],
       "userAction": true,
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsCreateThread (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11065,7 +11426,7 @@
       ],
       "userAction": true,
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsArchiveThread (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11137,7 +11498,7 @@
       ],
       "userAction": true,
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsDeleteThread (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11209,7 +11570,7 @@
       ],
       "userAction": true,
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsArchiveThreads (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11281,7 +11642,7 @@
       ],
       "userAction": true,
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsDeleteThreads (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11353,7 +11714,7 @@
       ],
       "userAction": true,
       "pr": "A3",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsUpdateThreads (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11425,7 +11786,7 @@
       ],
       "userAction": true,
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalFilesDelete (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11497,7 +11858,7 @@
       ],
       "userAction": true,
       "pr": "A13",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalFilesDeleteMany (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11569,7 +11930,7 @@
       ],
       "userAction": true,
       "pr": "A14",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalBotsSetProfile (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11627,7 +11988,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsStart (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11684,7 +12045,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsList (query) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11741,7 +12102,7 @@
         "voice/VoiceSettingsSection.tsx"
       ],
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsTranscript (query) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11799,7 +12160,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSample (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11857,7 +12218,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSnapshot (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11915,7 +12276,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSend (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -11973,7 +12334,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsFinish (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12031,7 +12392,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsCheckKey (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12089,7 +12450,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsLookupMemory (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12147,7 +12508,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsRenewPass (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12205,7 +12566,7 @@
       ],
       "userAction": true,
       "pr": "X4",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalVoiceCallsSearchWeb (command) from BotAvatar.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12218,7 +12579,7 @@
       "contract": null,
       "views": [],
       "pr": "A18",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalDevicesList (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
@@ -12232,7 +12593,7 @@
       "views": [],
       "userAction": true,
       "pr": "A18",
-      "status": "planned",
+      "status": "done",
       "check": "Android calls personalDevicesRevoke (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     }
   ]
