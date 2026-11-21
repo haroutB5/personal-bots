@@ -38,3 +38,22 @@ None. Max migration is 160 in `Migrations.ts` on trunk and on the head, and `app
 Binary rollback to `a0baa48a18df` (1.67.42). No data change, so no data restore.
 
 ## Gate evidence
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=d0a643b0a93a3c31b17b34e7af1e310de86f85a0 release=d0a643b0a93a json-sha256=8dc5660f2d9d8dd598557dc060d8b7a2a112fd253401c5b8275985f4007d6be9 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/scripts/acp-mock-agent.ts, apps/server/src/mcp/McpHttpServer.test.ts, apps/server/src/mcp/McpHttpServer.ts, apps/server/src/mcp/toolkits/bots/tools.ts, ...; selected 263 test files
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, selected: e2e inputs changed: apps/server/scripts/acp-mock-agent.ts, apps/server/src/mcp/McpHttpServer.test.ts, apps/server/src/mcp/McpHttpServer.ts, apps/server/src/mcp/toolkits/bots/tools.ts, ...; selected 12 journeys
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+- not run by any gate: apps/server/src/textGeneration/AntigravityTextGeneration.test.ts
+- not run by any gate: packages/provider-acp/src/server/runtimeModel.test.ts
+
+<!-- gate-evidence:end -->
