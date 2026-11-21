@@ -7,7 +7,7 @@ import {
   type SecretAccessState,
 } from "@hbots/personal-client/settings/secretAccess";
 import { IconCheck, IconX } from "../../ui/icons";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useSecureScreen } from "../../platform/secureScreen";
@@ -15,6 +15,7 @@ import { tokens } from "../../shell/tokens";
 import { cardStyles } from "./cardStyles";
 import { passwordFieldProps } from "./passwordField";
 import { SecretAccessFields } from "./SecretAccessFields";
+import { secretCardAlert } from "./secretRequestCardModel";
 import type { CardContext } from "./types";
 
 /** A secret the bot asked for, answered in the chat. */
@@ -45,21 +46,27 @@ function Pending({
     initialSecretAccess(card.request.origins ?? []),
   );
   const [showProblem, setShowProblem] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const request = card.request;
   const responding = context.secrets.respondingIds.has(card.requestId);
+  const serverError = context.secrets.errorsById.get(card.requestId) ?? null;
   const purpose = request.purpose.trim();
   const unverified = request.unverifiedOrigins ?? [];
   const problem = secretAccessProblem(access);
+  const alert = secretCardAlert({ showProblem, problem, serverError });
   const ready = value.length > 0 && !responding;
   const maxHeight = context.cardMaxHeight ?? 0;
   const constrained = maxHeight > 0;
+  const reveal = () => context.revealCard?.(secretCardItemId(card.requestId));
 
   const save = () => {
     if (!ready) return;
     if (problem !== null) {
       setShowProblem(true);
+      scrollRef.current?.scrollToEnd({ animated: true });
       return;
     }
+    setShowProblem(false);
     const provided = value;
     setValue("");
     context.secrets.onProvide(card.requestId, provided, shared, secretAccessChoice(access));
@@ -71,6 +78,7 @@ function Pending({
       accessibilityLabel={`${context.botName} needs a secret`}
     >
       <ScrollView
+        ref={scrollRef}
         style={styles.body}
         scrollEnabled={constrained}
         nestedScrollEnabled
@@ -94,8 +102,11 @@ function Pending({
           editable={!responding}
           {...passwordFieldProps(false)}
           autoCapitalize="none"
-          onFocus={() => context.revealCard?.(secretCardItemId(card.requestId))}
-          onChangeText={setValue}
+          onFocus={reveal}
+          onChangeText={(next) => {
+            setValue(next);
+            if (serverError !== null) context.secrets.onClearError(card.requestId);
+          }}
           style={styles.input}
         />
         <Text style={styles.help}>
@@ -106,11 +117,16 @@ function Pending({
         <View style={{ marginTop: 12 }}>
           <SecretAccessFields
             state={access}
-            onChange={setAccess}
+            onChange={(next) => {
+              setAccess(next);
+              if (serverError !== null) context.secrets.onClearError(card.requestId);
+            }}
             disabled={responding}
             showProblem={showProblem}
+            showProblemText={false}
             botName={context.botName}
             showPlacement
+            onInputFocus={reveal}
           />
         </View>
 
@@ -127,6 +143,12 @@ function Pending({
           <Text style={styles.sharedLabel}>Allow all bots to use this key</Text>
         </Pressable>
       </ScrollView>
+
+      {alert !== null ? (
+        <Text accessibilityRole="alert" style={cardStyles.error}>
+          {alert}
+        </Text>
+      ) : null}
 
       <View style={cardStyles.row}>
         <Pressable

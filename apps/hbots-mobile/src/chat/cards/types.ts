@@ -35,6 +35,7 @@ export interface CardContext {
   readonly cardMaxHeight?: number | null;
   readonly secrets: {
     readonly respondingIds: ReadonlySet<string>;
+    readonly errorsById: ReadonlyMap<string, string>;
     readonly onProvide: (
       requestId: string,
       value: string,
@@ -42,6 +43,7 @@ export interface CardContext {
       access: SecretAccessChoice,
     ) => void;
     readonly onDecline: (requestId: string) => void;
+    readonly onClearError: (requestId: string) => void;
   };
   readonly connectionApprovals: {
     readonly respondingIds: ReadonlySet<string>;

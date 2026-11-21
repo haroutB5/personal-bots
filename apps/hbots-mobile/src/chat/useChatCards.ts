@@ -41,6 +41,7 @@ import { useMemo, useState } from "react";
 
 import type { ChatEnvironment } from "./chatEnvironment";
 import type { CardContext } from "./cards/types";
+import { secretCommandError, withSecretError } from "./cards/secretRequestCardModel";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { appendSecretOutcome } from "./secretOutcomeModel";
 import { useVoiceCallCards } from "../voice/useVoiceCallCards";
@@ -137,6 +138,7 @@ export function useChatCards(input: {
   const [respondingSecretIds, setRespondingSecretIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [secretErrors, setSecretErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
   if (pendingSecrets.some((request) => !seenSecrets.has(request.requestId))) {
     const next = new Map(seenSecrets);
     for (const request of pendingSecrets) next.set(request.requestId, request);
@@ -186,8 +188,12 @@ export function useChatCards(input: {
     [loginQuery.data, threadId],
   );
 
+  // Neither failures nor defects are reported to the console for fulfill:
+  // the card shows the server's message, and a defect cause could carry a
+  // client-side encode error for the payload.
   const fulfillSecret = native.client.useAtomCommand(native.bots.personalSecretsFulfill, {
     reportFailure: false,
+    reportDefect: false,
   });
   const cancelSecret = native.client.useAtomCommand(native.bots.personalSecretsCancel, {
     reportFailure: false,
@@ -197,6 +203,10 @@ export function useChatCards(input: {
     { reportFailure: false },
   );
 
+  const clearSecretError = (requestId: string) => {
+    setSecretErrors((current) => withSecretError(current, requestId, null));
+  };
+
   const provideSecret = (
     requestId: string,
     value: string,
@@ -204,6 +214,7 @@ export function useChatCards(input: {
     access: SecretAccessChoice,
   ) => {
     if (environmentId === null) return;
+    setSecretErrors((current) => withSecretError(current, requestId, null));
     setRespondingSecretIds((current) => new Set(current).add(requestId));
     void fulfillSecret({
       environmentId,
@@ -219,6 +230,12 @@ export function useChatCards(input: {
       if (result._tag === "Success") {
         setSecretOutcomes((current) => new Map(current).set(requestId, "provided"));
         rememberSecretOutcome(requestId, "provided");
+        setSecretErrors((current) => withSecretError(current, requestId, null));
+      } else {
+        const message = secretCommandError(result, "Couldn't save this secret. Try again.");
+        if (message !== null) {
+          setSecretErrors((current) => withSecretError(current, requestId, message));
+        }
       }
       setRespondingSecretIds((current) => {
         const next = new Set(current);
@@ -249,6 +266,7 @@ export function useChatCards(input: {
 
   const declineSecret = (requestId: string) => {
     if (environmentId === null) return;
+    setSecretErrors((current) => withSecretError(current, requestId, null));
     setRespondingSecretIds((current) => new Set(current).add(requestId));
     void cancelSecret({
       environmentId,
@@ -257,6 +275,12 @@ export function useChatCards(input: {
       if (result._tag === "Success") {
         setSecretOutcomes((current) => new Map(current).set(requestId, "declined"));
         rememberSecretOutcome(requestId, "declined");
+        setSecretErrors((current) => withSecretError(current, requestId, null));
+      } else {
+        const message = secretCommandError(result, "Couldn't decline this request. Try again.");
+        if (message !== null) {
+          setSecretErrors((current) => withSecretError(current, requestId, message));
+        }
       }
       setRespondingSecretIds((current) => {
         const next = new Set(current);
@@ -359,8 +383,10 @@ export function useChatCards(input: {
       cardMaxHeight: input.cardMaxHeight ?? null,
       secrets: {
         respondingIds: respondingSecretIds,
+        errorsById: secretErrors,
         onProvide: provideSecret,
         onDecline: declineSecret,
+        onClearError: clearSecretError,
       },
       connectionApprovals: {
         respondingIds: respondingApprovalIds,
@@ -369,6 +395,7 @@ export function useChatCards(input: {
     }),
     [
       botsById,
+      clearSecretError,
       decideConnectionApproval,
       declineSecret,
       environmentId,
@@ -384,6 +411,7 @@ export function useChatCards(input: {
       provideSecret,
       respondingApprovalIds,
       respondingSecretIds,
+      secretErrors,
       threadId,
       waitingLabels,
     ],
