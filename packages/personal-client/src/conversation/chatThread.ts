@@ -1,12 +1,14 @@
 import type {
   EnvironmentId,
   EventId,
+  OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   TurnId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import type { EnvironmentThreadShell, OrchestrationLatestTurn } from "../bots/threadShell.ts";
+import { USER_MESSAGE_DELIVERED_KIND } from "../feed/messageReadStatus.ts";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
@@ -98,11 +100,24 @@ function activitySummary(item: OrchestrationV2TurnItem): string {
     .join(" ");
 }
 
+function isUserMessageDelivered(
+  item: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }>,
+  runsById: ReadonlyMap<string, OrchestrationV2Run>,
+): boolean {
+  if (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer") {
+    return item.status === "completed";
+  }
+  if (item.runId === null) return false;
+  const run = runsById.get(item.runId);
+  return run !== undefined && run.startedAt !== null;
+}
+
 export function toChatThread(
   environmentId: EnvironmentId,
   projection: OrchestrationV2ThreadProjection,
 ): ChatThread {
   const thread = projection.thread;
+  const runsById = new Map<string, OrchestrationV2Run>(projection.runs.map((run) => [run.id, run]));
   const messages: ReadonlyArray<OrchestrationMessage> = projection.messages.map((message) => ({
     id: message.id,
     role: message.role,
@@ -125,10 +140,26 @@ export function toChatThread(
       createdAt: DateTime.formatIso(thread.createdAt),
       updatedAt: DateTime.formatIso(thread.updatedAt),
     }));
-  const activities: ReadonlyArray<OrchestrationThreadActivity> = projection.visibleTurnItems
-    .map((row) => row.item)
-    .filter((item) => !MESSAGE_ITEM_TYPES.has(item.type))
-    .map((item) => ({
+  const activities: Array<OrchestrationThreadActivity> = [];
+  for (const row of projection.visibleTurnItems) {
+    const item = row.item;
+    if (item.type === "user_message") {
+      if (isUserMessageDelivered(item, runsById)) {
+        activities.push({
+          id: `${item.id}:delivered` as unknown as EventId,
+          tone: "info",
+          kind: USER_MESSAGE_DELIVERED_KIND,
+          summary: "Message read",
+          payload: { messageId: item.messageId },
+          turnId: item.runId as unknown as TurnId | null,
+          sequence: item.ordinal,
+          createdAt: DateTime.formatIso(item.completedAt ?? item.updatedAt),
+        });
+      }
+      continue;
+    }
+    if (MESSAGE_ITEM_TYPES.has(item.type)) continue;
+    activities.push({
       id: item.id as unknown as EventId,
       tone: activityTone(item),
       kind: item.type,
@@ -137,7 +168,8 @@ export function toChatThread(
       turnId: item.runId as unknown as TurnId | null,
       sequence: item.ordinal,
       createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
-    }));
+    });
+  }
   const latestRun = projection.runs.at(-1) ?? null;
   const latestAssistant = messages.findLast((message) => message.role === "assistant") ?? null;
   const latestTurn: OrchestrationLatestTurn | null =

@@ -9824,7 +9824,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : {}),
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(
             function* (turnInput) {
-              if (steersWithPrompt) return yield* steerWithPrompt(turnInput);
+              if (steersWithPrompt) {
+                const emitSteerStatus = (status: "pending" | "completed" | "cancelled") =>
+                  emitProviderEvent({
+                    type: "steer.updated",
+                    driver,
+                    threadId: turnInput.threadId,
+                    runId: turnInput.runId,
+                    messageId: turnInput.message.messageId,
+                    status,
+                  });
+                yield* emitSteerStatus("pending");
+                return yield* steerWithPrompt(turnInput).pipe(
+                  Effect.tap(() => emitSteerStatus("completed")),
+                  Effect.tapError(() => emitSteerStatus("cancelled")),
+                );
+              }
               const steering = flavor.steering;
               // The agent takes text only, so a steer with attachments waits for the next turn.
               if (steering === undefined || turnInput.message.attachments.length > 0) {

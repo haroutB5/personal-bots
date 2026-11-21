@@ -337,4 +337,58 @@ describe("toChatThread", () => {
       updatedAt: "2026-06-20T00:00:02.000Z",
     });
   });
+
+  it("emits user-message.delivered for started turns and completed steers, but not pending steers or queued runs", () => {
+    const userItem = (
+      id: string,
+      messageId: string,
+      runId: string,
+      inputIntent: "turn_start" | "queued_turn" | "steer" | "promoted_queued_to_steer",
+      status: "pending" | "completed" | "cancelled",
+      ordinal: number,
+    ): OrchestrationV2TurnItem => ({
+      ...itemBase,
+      id: TurnItemId.make(id),
+      runId: RunId.make(runId),
+      ordinal,
+      status,
+      completedAt: status === "completed" ? t2 : null,
+      type: "user_message",
+      createdBy: "user",
+      creationSource: "web",
+      messageId: MessageId.make(messageId),
+      inputIntent,
+      text: `msg ${messageId}`,
+      attachments: [],
+    });
+
+    const chat = toChatThread(
+      environmentId,
+      projection({
+        runs: [
+          run("run-1", "running", 1),
+          { ...run("run-2", "queued", 2), startedAt: null, completedAt: null },
+        ],
+        visibleTurnItems: visible([
+          userItem("u-start", "m-start", "run-1", "turn_start", "completed", 1),
+          userItem("u-steer-pending", "m-steer-pending", "run-1", "steer", "pending", 2),
+          userItem("u-steer-done", "m-steer-done", "run-1", "steer", "completed", 3),
+          userItem(
+            "u-steer-cancelled",
+            "m-steer-cancelled",
+            "run-1",
+            "promoted_queued_to_steer",
+            "cancelled",
+            4,
+          ),
+          userItem("u-queued", "m-queued", "run-2", "queued_turn", "completed", 5),
+        ]),
+      }),
+    );
+
+    const delivered = chat.activities
+      .filter((activity) => activity.kind === "user-message.delivered")
+      .map((activity) => (activity.payload as { messageId?: string }).messageId);
+    expect(delivered).toEqual(["m-start", "m-steer-done"]);
+  });
 });

@@ -1100,4 +1100,112 @@ describe("PersonalEngineV2 events", () => {
       }),
     );
   });
+
+  it.effect(
+    "a failed usage-limit run projects providerRetry.kind=rate_limited on events and thread reads",
+    () => {
+      const harness = makeHarness();
+      return withEngine(harness, (engine) =>
+        Effect.gen(function* () {
+          yield* seedThread(harness);
+          yield* seedRun(harness, "thread-1", "run-1", "failed");
+          const record = harness.threads.get("thread-1")!;
+          record.shell = {
+            ...record.shell,
+            status: "failed",
+            lastError: "You've hit your usage limit",
+            lastErrorClass: "usage_limit",
+            usageLimitResetAt: "2026-11-21T16:00:00.000Z",
+          };
+
+          const thread = yield* engine.getThread(ThreadId.make("thread-1"));
+          expect(Option.getOrThrow(thread).session?.providerRetry).toMatchObject({
+            kind: "rate_limited",
+            retryAt: "2026-11-21T16:00:00.000Z",
+            reason: "You've hit your usage limit",
+          });
+
+          const collected = yield* Effect.forkChild(
+            Stream.runCollect(Stream.take(engine.events, 2)),
+          );
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          yield* PubSub.publish(harness.pubsub, {
+            id: EventId.make("event-limit-1"),
+            threadId: ThreadId.make("thread-1"),
+            occurredAt: AT,
+            type: "run.updated",
+            payload: runFor({
+              threadId: ThreadId.make("thread-1"),
+              runId: RunId.make("run-1"),
+              status: "failed",
+              ordinal: 1,
+            }),
+          } as OrchestrationV2DomainEvent);
+
+          const events = Array.from(yield* Fiber.join(collected)) as Array<PersonalThreadEvent>;
+          expect(events[0]).toMatchObject({
+            _tag: "StatusChanged",
+            session: {
+              status: "error",
+              providerRetry: {
+                kind: "rate_limited",
+                retryAt: "2026-11-21T16:00:00.000Z",
+                reason: "You've hit your usage limit",
+              },
+              usageLimit: { resetAt: "2026-11-21T16:00:00.000Z" },
+            },
+          });
+          expect(events[1]).toMatchObject({
+            _tag: "TurnEnded",
+            outcome: {
+              _tag: "Failed",
+              failure: {
+                message: "You've hit your usage limit",
+                providerRetry: {
+                  kind: "rate_limited",
+                  retryAt: "2026-11-21T16:00:00.000Z",
+                },
+              },
+            },
+          });
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    "capacity errors project rate_limited while transient 503/529 errors stay unflagged for turn retry",
+    () => {
+      const harness = makeHarness();
+      return withEngine(harness, (engine) =>
+        Effect.gen(function* () {
+          yield* seedThread(harness);
+          yield* seedRun(harness, "thread-1", "run-1", "failed");
+          const record = harness.threads.get("thread-1")!;
+          record.shell = {
+            ...record.shell,
+            status: "failed",
+            lastError: "Selected model is at capacity. Please try a different model.",
+            lastErrorClass: "provider_error",
+          };
+          const cap = yield* engine.getThread(ThreadId.make("thread-1"));
+          expect(Option.getOrThrow(cap).session?.providerRetry).toMatchObject({
+            kind: "rate_limited",
+            reason: "Selected model is at capacity. Please try a different model.",
+          });
+
+          record.shell = {
+            ...record.shell,
+            status: "failed",
+            lastError: "HTTP 503 Service Unavailable",
+            lastErrorClass: "provider_error",
+          };
+          const transient = yield* engine.getThread(ThreadId.make("thread-1"));
+          expect(Option.getOrThrow(transient).session?.providerRetry).toBeUndefined();
+        }),
+      );
+    },
+  );
 });

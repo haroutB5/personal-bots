@@ -15,8 +15,10 @@ import type {
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
+import { classifyTurnFailure, isTransientTurnFailure } from "@t3tools/shared/turnFailure";
 import * as DateTime from "effect/DateTime";
 
+import { isProviderCapacityError } from "../personalModelFallbackPolicy.ts";
 import type { PersonalProviderRetryView, PersonalThreadStatus } from "./PersonalEngine.ts";
 
 type SessionStatus = OrchestrationSession["status"];
@@ -114,11 +116,39 @@ const pendingApprovalOf = (shell: OrchestrationV2ThreadShell): boolean => {
 const pendingUserInputOf = (shell: OrchestrationV2ThreadShell): boolean =>
   shell.pendingRuntimeRequest?.kind === "user_input";
 
+/**
+ * Resolves the session's provider retry view: an explicit personal auto-retry
+ * marker takes precedence; otherwise a failed usage-limit or capacity turn
+ * projects as `rate_limited` so chat fallback, resume, and retry-skip all fire.
+ */
+export const effectiveProviderRetry = (
+  shell: OrchestrationV2ThreadShell,
+  extras: PersonalShellExtras,
+): PersonalProviderRetryView | null => {
+  if (extras.providerRetry !== null) return extras.providerRetry;
+  if (shell.status !== "failed") return null;
+  const isUsageLimit = shell.lastErrorClass === "usage_limit";
+  const isRateLimitText =
+    !isUsageLimit &&
+    shell.lastError != null &&
+    (classifyTurnFailure(shell.lastError) === "usage_limit" ||
+      (isProviderCapacityError(shell.lastError) && !isTransientTurnFailure(shell.lastError)));
+  if (!isUsageLimit && !isRateLimitText) return null;
+  return {
+    kind: "rate_limited",
+    ...(shell.usageLimitResetAt != null ? { retryAt: shell.usageLimitResetAt } : {}),
+    ...(shell.lastError != null ? { reason: shell.lastError } : {}),
+    provider: extras.providerName ?? "unknown",
+    observedAt: DateTime.formatIso(shell.latestRunCompletedAt ?? shell.updatedAt),
+  };
+};
+
 const sessionOf = (
   shell: OrchestrationV2ThreadShell,
   extras: PersonalShellExtras,
 ): OrchestrationSession | null => {
   if (shell.latestRunId === null && shell.status === "idle") return null;
+  const providerRetry = effectiveProviderRetry(shell, extras);
   return {
     threadId: shell.id,
     status: sessionStatusOf(shell.status),
@@ -127,7 +157,7 @@ const sessionOf = (
     runtimeMode: shell.runtimeMode,
     activeTurnId: shell.activeRunId === null ? null : TurnId.make(shell.activeRunId),
     lastError: shell.lastError ?? null,
-    ...(extras.providerRetry === null ? {} : { providerRetry: extras.providerRetry }),
+    ...(providerRetry === null ? {} : { providerRetry }),
     ...(shell.status === "failed" && shell.lastErrorClass === "usage_limit"
       ? {
           usageLimit: shell.usageLimitResetAt == null ? {} : { resetAt: shell.usageLimitResetAt },

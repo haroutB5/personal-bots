@@ -24,6 +24,8 @@ import type {
   PersonalTurnFailure,
 } from "./PersonalEngine.ts";
 import {
+  effectiveProviderRetry,
+  EMPTY_SHELL_EXTRAS,
   personalStatusOf,
   sessionStatusOf,
   type PersonalShellExtras,
@@ -92,23 +94,34 @@ const viewOf = (
   lastError: shell.lastError ?? null,
   providerInstanceId: shell.providerInstanceId,
   providerName: extras.providerName,
-  providerRetry: extras.providerRetry,
+  providerRetry: effectiveProviderRetry(shell, extras),
+  ...(shell.status === "failed" && shell.lastErrorClass === "usage_limit"
+    ? {
+        usageLimit: shell.usageLimitResetAt == null ? {} : { resetAt: shell.usageLimitResetAt },
+      }
+    : {}),
   updatedAt: DateTime.formatIso(shell.updatedAt),
 });
 
 const failureOf = (
   shell: OrchestrationV2ThreadShell | null,
   extras: PersonalShellExtras | null,
-): PersonalTurnFailure => ({
-  message: shell?.lastError ?? null,
-  providerRetry:
-    extras?.providerRetry === null || extras?.providerRetry === undefined
-      ? null
-      : {
-          kind: extras.providerRetry.kind,
-          retryAt: extras.providerRetry.retryAt ?? null,
-        },
-});
+): PersonalTurnFailure => {
+  const retry =
+    shell !== null
+      ? effectiveProviderRetry(shell, extras ?? EMPTY_SHELL_EXTRAS)
+      : (extras?.providerRetry ?? null);
+  return {
+    message: shell?.lastError ?? null,
+    providerRetry:
+      retry === null
+        ? null
+        : {
+            kind: retry.kind,
+            retryAt: retry.retryAt ?? null,
+          },
+  };
+};
 
 const readSession = (
   threadId: ThreadId,
