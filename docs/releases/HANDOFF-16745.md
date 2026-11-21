@@ -12,7 +12,7 @@ Based on 1.67.44 (`de8ab043ca3a`, trunk `9d370e5375`). Branch `rc/1.67.45` stays
 - **Codex (`apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`).** Merged `personal.secretEnvironment` into `effectiveEnvironment` via `McpProviderSession.withProviderSessionEnvironment` and into `shell_environment_policy.set.<KEY>` on `thread/start` and `thread/resume` for the session's own thread (ordered before `T3CODE_THREAD_ID`, never on `thread/fork`) so Codex's default `*SECRET*` filter does not strip `PB_SECRET_*`.
 - **Muse & Pi (`packages/provider-muse/src/server/adapter.ts`, `packages/provider-pi/src/server/adapter.ts`).** Wired `input.personal.secretEnvironment` through `McpProviderSession.withProviderSessionEnvironment`.
 - **Tests.** Added unit tests in `apps/server/src/provider/Drivers/AntigravityDriver.test.ts` and `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts` covering `PB_SECRET_*` forwarding, non-shadowing of `T3CODE_THREAD_ID`, and isolation from non-thread launches.
-- **Version.** `scripts/personal/app-version.txt` moves to `1.67.45`.
+- **Version.** `scripts/personal/app-version.txt` and `apps/hbots-mobile/package.json` move to `1.67.45`.
 
 ## Release notes for the phone
 
