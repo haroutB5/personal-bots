@@ -1436,6 +1436,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    personal?: ProviderAdapter.ProviderAdapterV2PersonalSession,
+    onOpenClient?: (environment: NodeJS.ProcessEnv) => void,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1452,7 +1454,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
-          Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+          Effect.sync(() => {
+            onOpenClient?.(openInput.environment);
+          }).pipe(
+            Effect.andThen(Layer.build(CodexReplay.layerReplayWithDriver(driver))),
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -1519,6 +1524,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
         promptSuggestions,
+        ...(personal === undefined ? {} : { personal }),
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -1930,6 +1936,94 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "forwards personal env-mode PB_SECRET_* variables into Codex process env and thread shell policy without shadowing T3CODE_THREAD_ID",
+    () =>
+      Effect.gen(function* () {
+        const scenario = "personal-secrets-env";
+        const requests: Array<{ readonly config?: Record<string, unknown> }> = [];
+        let openedEnvironment: NodeJS.ProcessEnv | undefined;
+        const preamble = codexReplayPreamble({
+          nativeThreadId: "personal-secrets-thread",
+          nativeTurnId: "unused",
+          prompt: "unused",
+        }).slice(0, 5);
+        const entries = preamble.map((entry) =>
+          entry.type === "expect_outbound" &&
+          entry.label === "thread/start" &&
+          Predicate.isObject(entry.frame)
+            ? {
+                ...entry,
+                frame: {
+                  ...entry.frame,
+                  params: {
+                    cwd: "/workspace",
+                    model: "gpt-5.4",
+                    config: {
+                      "tools.update_plan.enabled": true,
+                      mcp_optional_startup_grace_ms: 10_000,
+                      "features.concurrent_reasoning_summaries": true,
+                      "shell_environment_policy.set.PB_SECRET_COOLIFY_API_TOKEN":
+                        "coolify-codex-token",
+                      "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+                    },
+                  },
+                },
+              }
+            : entry,
+        );
+        yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries,
+          }),
+          () => Effect.void,
+          (method, params) =>
+            Effect.sync(() => {
+              if (method === "thread/start") {
+                requests.push(params as { readonly config?: Record<string, unknown> });
+              }
+            }),
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed(false),
+          () => Effect.void,
+          undefined,
+          {
+            personalBot: true,
+            personalTaskChat: false,
+            secretEnvironment: {
+              PB_SECRET_COOLIFY_API_TOKEN: "coolify-codex-token",
+              T3CODE_THREAD_ID: "should-not-override-thread-id",
+            },
+          },
+          (env) => {
+            openedEnvironment = env;
+          },
+        );
+        assert.equal(openedEnvironment?.PB_SECRET_COOLIFY_API_TOKEN, "coolify-codex-token");
+        assert.equal(
+          requests[0]?.config?.["shell_environment_policy.set.PB_SECRET_COOLIFY_API_TOKEN"],
+          "coolify-codex-token",
+        );
+        assert.equal(
+          requests[0]?.config?.["shell_environment_policy.set.T3CODE_THREAD_ID"],
+          `thread-${scenario}`,
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   // regression: #15839 launch-arg MCP servers survive the thread's t3-code server

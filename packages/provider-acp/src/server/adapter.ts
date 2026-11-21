@@ -992,9 +992,17 @@ function acpMcpContext(
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
   deferMcpTools: boolean | undefined,
+  personalSecretEnvironment?: Readonly<Record<string, string>>,
 ): AcpMcpContext {
+  const secrets = personalSecretEnvironment ?? session?.personalSecretEnvironment;
+  const hasSecrets = secrets !== undefined && Object.keys(secrets).length > 0;
   if (session === undefined) {
-    return { servers: [], acpServers: [], httpServers: [] };
+    return {
+      servers: [],
+      acpServers: [],
+      httpServers: [],
+      ...(hasSecrets ? { processEnvironment: { ...secrets } } : {}),
+    };
   }
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
@@ -1030,6 +1038,8 @@ function acpMcpContext(
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
+      // Env-mode personal secrets (`PB_SECRET_*`) ride first so T3's own thread/MCP variables win.
+      ...(hasSecrets ? secrets : {}),
       // The thread id every process the agent starts inherits, so a tool run
       // from its shell can find its T3 thread. Claude and Codex sessions set
       // the same variable (PortScanner.AGENT_THREAD_ENV; a string literal here
@@ -1966,14 +1976,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
-  const readMcpContext = (threadId: ThreadId | null) =>
+  const readBaseMcpContext = (
+    threadId: ThreadId | null,
+    personalSecretEnvironment?: Readonly<Record<string, string>>,
+  ) =>
     threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools))
+      ? Effect.succeed(
+          acpMcpContext(
+            undefined,
+            self,
+            flavor.mcpOverHttp,
+            flavor.deferMcpTools,
+            personalSecretEnvironment,
+          ),
+        )
       : mcpSessions
           .read(threadId)
           .pipe(
             Effect.map((session) =>
-              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools),
+              acpMcpContext(
+                session,
+                self,
+                flavor.mcpOverHttp,
+                flavor.deferMcpTools,
+                personalSecretEnvironment,
+              ),
             ),
           );
   const driver = flavor.driver;
@@ -2002,6 +2029,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        const readMcpContext = (threadId: ThreadId | null) =>
+          readBaseMcpContext(
+            threadId,
+            threadId === input.threadId ? input.personal?.secretEnvironment : undefined,
+          );
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);

@@ -1485,6 +1485,7 @@ function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly personalSecretEnvironment?: Readonly<Record<string, string>>;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1499,11 +1500,18 @@ function codexThreadRuntimeParams(input: {
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
+  const secretEntries =
+    input.personalSecretEnvironment === undefined
+      ? []
+      : Object.entries(input.personalSecretEnvironment).map(
+          ([key, value]) => [`shell_environment_policy.set.${key}`, value] as const,
+        );
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...Object.fromEntries(secretEntries),
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
@@ -1981,8 +1989,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const personal = input.personal;
         const personalBot = personal?.personalBot === true;
         const personalTaskChat = personal?.personalTaskChat === true;
+        const personalSecretEnvironment = personal?.secretEnvironment;
         const effectiveSettings = resolvedRuntime?.config ?? adapterOptions.settings;
-        const effectiveEnvironment = resolvedRuntime?.environment ?? adapterOptions.environment;
+        const effectiveEnvironment = McpProviderSession.withProviderSessionEnvironment(
+          resolvedRuntime?.environment ?? adapterOptions.environment,
+          personalSecretEnvironment === undefined ? undefined : { personalSecretEnvironment },
+        );
         const personalSkillRoots =
           personalBot && personalBotCodexSkillsSwitchOn(adapterOptions.environment)
             ? yield* resolvePersonalBotPluginSkillDirs({
@@ -7836,6 +7848,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
+                    ...(threadInput.threadId === input.threadId &&
+                    personalSecretEnvironment !== undefined
+                      ? { personalSecretEnvironment }
+                      : {}),
                   }),
                 ),
               ),
@@ -7873,6 +7889,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  ...(appThreadId === input.threadId && personalSecretEnvironment !== undefined
+                    ? { personalSecretEnvironment }
+                    : {}),
                 }),
               });
               const response = yield* ensureInitialized.pipe(

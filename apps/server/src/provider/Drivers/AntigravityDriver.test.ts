@@ -536,6 +536,67 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
+    "forwards personal env-mode PB_SECRET_* variables to the Antigravity thread process without shadowing T3 variables",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const endpoint = "http://127.0.0.1:43127/mcp";
+        const threadId = ThreadId.make("thread-antigravity-personal-secrets");
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-antigravity-personal-secrets"),
+          threadId,
+          providerSessionId: "mcp-session-antigravity-personal-secrets",
+          providerInstanceId: h.instance.instanceId,
+          endpoint,
+          authorizationHeader: "Bearer antigravity-secret-thread-token",
+          browserToolsAvailable: false,
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-secrets-" });
+            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+            const session = yield* h.instance.orchestrationAdapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make(
+                "provider-session-antigravity-personal-secrets",
+              ),
+              modelSelection,
+              runtimePolicy,
+              personal: {
+                personalBot: true,
+                personalTaskChat: false,
+                secretEnvironment: {
+                  PB_SECRET_COOLIFY_API_TOKEN: "coolify-test-token",
+                  T3CODE_THREAD_ID: "should-not-override-thread-id",
+                },
+              },
+            });
+            yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+          }),
+        );
+
+        const agentLaunches = h.launches.filter(
+          (launch) => launch.command === h.first.executablePath,
+        );
+        expect(agentLaunches).toHaveLength(2);
+        expect(agentLaunches[0]?.environment?.PB_SECRET_COOLIFY_API_TOKEN).toBeUndefined();
+        expect(agentLaunches[1]?.environment).toMatchObject({
+          PB_SECRET_COOLIFY_API_TOKEN: "coolify-test-token",
+          T3CODE_THREAD_ID: threadId,
+          T3_ACP_MCP_ENDPOINT: endpoint,
+          T3_ACP_MCP_AUTHORIZATION: "Bearer antigravity-secret-thread-token",
+        });
+        yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "closes refresh processes and clears account metadata when Google sign-in is required",
     () =>
       Effect.gen(function* () {
