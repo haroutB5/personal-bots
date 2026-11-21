@@ -33,3 +33,20 @@ None. Max migration is 160 in `Migrations.ts` on trunk and on the head, and `app
 Binary rollback to `de8ab043ca3a` (1.67.44). No data change, so no data restore.
 
 ## Gate evidence
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=b68851bf1afecc2a76211ddcf48818d4c5af4ede release=b68851bf1afe json-sha256=35190d1d4eaab9817ae1735aebf600dd8631be11984c9902ad972c364b310416 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts, apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts, apps/server/src/provider/Drivers/AntigravityDriver.test.ts, packages/provider-acp/src/server/adapter.ts, ...; selected 232 test files
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, selected: e2e inputs changed: apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts, apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts, apps/server/src/provider/Drivers/AntigravityDriver.test.ts, packages/provider-acp/src/server/adapter.ts, ...; selected 12 journeys
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: SKIPPED, skip: no changed path is an input of parity: apps/web, apps/hbots-mobile, packages/personal-client, scripts/personal/parity (not apps/hbots-mobile/package.json, scripts/personal/parity/parity.json)
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+
+<!-- gate-evidence:end -->
