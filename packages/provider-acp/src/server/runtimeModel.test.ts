@@ -1315,6 +1315,28 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers server, tool, and arguments from Antigravity call_mcp_tool calls", () => {
+    // agy 1.5.12 reaches MCP tools its context budget left out through call_mcp_tool.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_13347576314095519317",
+      kind: "execute",
+      title: "MCP Tool navigate_page",
+      status: "in_progress",
+      rawInput: {
+        ServerName: "chrome-devtools",
+        ToolName: "navigate_page",
+        Arguments: { url: "https://example.com" },
+      },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "chrome-devtools",
+      tool: "navigate_page",
+      input: { url: "https://example.com" },
+    });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
@@ -1376,6 +1398,7 @@ describe("extractMcpToolCallIdentity", () => {
     });
     const merged = mergeToolCallState(created, completed);
 
+    expect(merged.title).toBe(created.title);
     expect(extractMcpToolCallIdentity(merged)).toEqual({
       server: "t3-code",
       tool: "orchestrator_capabilities",
@@ -1395,6 +1418,10 @@ describe("extractMcpToolCallIdentity", () => {
       // Kimi retitles with partial JSON and middle-truncates args over 50 characters.
       'delegate_task: {"mode":"async","task":"Ru',
       'delegate_task: {"mode":"async","task":"Ru...cho child-result-42\'"}',
+      // Antigravity: "Running <tool>" before agy 1.5.8, "Run mcp_<server>_<tool>" since, "?" on prompts.
+      "Running delegate_task",
+      "Run mcp_t3-code_delegate_task",
+      "Run mcp_t3-code_delegate_task?",
     ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
@@ -1612,7 +1639,12 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("does not brand path-like or unknown-tool titles", () => {
-    for (const title of ["t3-code/README.md", "t3-code_not_a_real_tool"]) {
+    for (const title of [
+      "t3-code/README.md",
+      "t3-code_not_a_real_tool",
+      "Run mcp_t3-code_not_a_real_tool",
+      "Run manage_task",
+    ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
         toolCallId: "path-1",

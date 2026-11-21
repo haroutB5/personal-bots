@@ -21,11 +21,16 @@ function deliveredMessageId(activity: OrchestrationThreadActivity): string | nul
 }
 
 /**
- * Providers backed by the generic ACP adapter (such as Antigravity) cannot take
- * a steering message mid-turn; the server queues follow-up messages until the
- * active turn finishes.
+ * Providers that do not accept a steering message mid-turn; the server queues
+ * follow-up messages until the active turn finishes. Antigravity 1.5+ steers
+ * natively via prompt steering.
  */
-const NON_STEERING_DRIVERS: ReadonlySet<string> = new Set(["antigravity"]);
+const NON_STEERING_DRIVERS: ReadonlySet<string> = new Set([
+  "acp-registry",
+  "cursor",
+  "opencode",
+  "pi",
+]);
 
 export function driverSupportsActiveSteering(driver: string | null | undefined): boolean {
   return driver == null || !NON_STEERING_DRIVERS.has(driver);

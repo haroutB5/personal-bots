@@ -91,7 +91,7 @@ describe("Antigravity process environment", () => {
     expect(baseEnv).toEqual(original);
     expect(spawn).toEqual({
       command: "/release/acp",
-      args: ["--uid="],
+      args: ["--uid=", "--alsologtostderr"],
       cwd: "/project",
       extendEnv: false,
       env: {
@@ -393,6 +393,37 @@ describe("Antigravity stdout compatibility", () => {
 });
 
 describe("Antigravity stderr compatibility", () => {
+  it.effect.each([
+    "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2",
+    "E1022 11:04:37.910207 1865358 server.py:5275] Failed to rebuild agent for session native-session; connection unrecoverable",
+    "E1022 11:04:37.910207 1865358 server.py:5266] Agent connection lost for session native-session after rebuild retry",
+  ])("retires the transport on a native harness failure: %s", (line) =>
+    Effect.gen(function* () {
+      const handleStderr = makeAntigravityStderrHandler();
+      yield* handleStderr(line.slice(0, 70));
+      const error = yield* handleStderr(`${line.slice(70)}\r\n`).pipe(Effect.flip);
+      expect(error._tag).toBe("AcpTransportError");
+      expect(error.message).not.toContain("native-session");
+      expect(error.message).not.toContain("hook_request_2");
+    }),
+  );
+
+  it.effect(
+    "does not classify task prose or unrelated native warnings as a transport failure",
+    () =>
+      Effect.gen(function* () {
+        const handleStderr = makeAntigravityStderrHandler();
+        yield* handleStderr("Agent run failed: example from a task\n");
+        yield* handleStderr("Agent connection was lost and could not be re-established\n");
+        yield* handleStderr(
+          "I1022 11:04:37.910207 1865358 server.py:5142] Agent connection closed for session native-session; rebuilding agent and retrying the turn once.\n",
+        );
+        yield* handleStderr(
+          "W1022 11:04:37.910207 1865358 telemetry.py:431] No business auth manager configured\n",
+        );
+      }),
+  );
+
   it.effect("forwards fragmented native sign-in URLs from runtime 1.1.1", () =>
     Effect.gen(function* () {
       const urls: string[] = [];
@@ -653,6 +684,88 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* isLink(cliLink)).toBe(false);
       }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links the user's global rule files and never replaces the profile's own",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const userGemini = path.join(userHome, ".gemini");
+        yield* fs.makeDirectory(path.join(userGemini, "config"), { recursive: true });
+        yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "global agents rule");
+        yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+        yield* fs.writeFileString(
+          path.join(userGemini, "config", "skills.json"),
+          JSON.stringify({ entries: [{ path: "/tmp/shared-skills" }] }),
+        );
+
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(path.join(profileDirectory, "AGENTS.md"))).toBe(
+          path.join(userGemini, "AGENTS.md"),
+        );
+        expect(yield* fs.readLink(path.join(profileDirectory, "GEMINI.md"))).toBe(
+          path.join(userGemini, "GEMINI.md"),
+        );
+        expect(yield* fs.readLink(path.join(profileDirectory, "config", "skills.json"))).toBe(
+          path.join(userGemini, "config", "skills.json"),
+        );
+
+        yield* fs.remove(path.join(userGemini, "AGENTS.md"));
+        yield* fs.remove(path.join(userGemini, "config", "skills.json"));
+        yield* fs.remove(path.join(profileDirectory, "GEMINI.md"));
+        yield* fs.writeFileString(path.join(profileDirectory, "GEMINI.md"), "profile's own rule");
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.exists(path.join(profileDirectory, "AGENTS.md"))).toBe(false);
+        expect(yield* fs.exists(path.join(profileDirectory, "config", "skills.json"))).toBe(false);
+        expect(yield* fs.readFileString(path.join(profileDirectory, "GEMINI.md"))).toBe(
+          "profile's own rule",
+        );
+      }),
+  );
+
+  it.effect("copies the user's global rule files on Windows and keeps the profile's own", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      const userHome = path.join(temporaryDirectory, "home");
+      const profileDirectory = path.join(temporaryDirectory, "profile");
+      const userGemini = path.join(userHome, ".gemini");
+      const prepare = prepareAntigravityProfile({ profileDirectory, userHome, platform: "win32" });
+      const profileAgents = path.join(profileDirectory, "AGENTS.md");
+      const profileGemini = path.join(profileDirectory, "GEMINI.md");
+      const profileSkillsJson = path.join(profileDirectory, "config", "skills.json");
+      const userSkillsJson = path.join(userGemini, "config", "skills.json");
+      yield* fs.makeDirectory(path.join(userGemini, "config"), { recursive: true });
+      yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "global agents rule");
+      yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+      yield* fs.writeFileString(userSkillsJson, '{"entries":[]}');
+
+      yield* prepare;
+      expect(yield* fs.readFileString(profileAgents)).toBe("global agents rule");
+      expect(yield* fs.readFileString(profileGemini)).toBe("global gemini rule");
+      expect(yield* fs.readFileString(profileSkillsJson)).toBe('{"entries":[]}');
+
+      yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "edited agents rule");
+      yield* fs.remove(path.join(userGemini, "GEMINI.md"));
+      yield* fs.writeFileString(userSkillsJson, '{"entries":[{"path":"/skills"}]}');
+      yield* prepare;
+      expect(yield* fs.readFileString(profileAgents)).toBe("edited agents rule");
+      expect(yield* fs.exists(profileGemini)).toBe(false);
+      expect(yield* fs.readFileString(profileSkillsJson)).toBe('{"entries":[{"path":"/skills"}]}');
+
+      yield* fs.writeFileString(profileGemini, "profile's own rule");
+      yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+      yield* fs.remove(userSkillsJson);
+      yield* prepare;
+      expect(yield* fs.readFileString(profileGemini)).toBe("profile's own rule");
+      expect(yield* fs.exists(profileSkillsJson)).toBe(false);
+    }),
   );
 
   it.effect("rewrites the GCP block on every launch and never stores the API key", () =>

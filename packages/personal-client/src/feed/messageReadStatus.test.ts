@@ -217,7 +217,9 @@ describe("deriveLatestMessageReadStatus", () => {
   });
 
   it("shows Queued instead of Steering on providers without active steering", () => {
-    expect(driverSupportsActiveSteering("antigravity")).toBe(false);
+    expect(driverSupportsActiveSteering("pi")).toBe(false);
+    expect(driverSupportsActiveSteering("opencode")).toBe(false);
+    expect(driverSupportsActiveSteering("antigravity")).toBe(true);
     expect(driverSupportsActiveSteering("claudeAgent")).toBe(true);
     expect(driverSupportsActiveSteering(null)).toBe(true);
 
