@@ -520,138 +520,82 @@ export const CastVoteResult = Schema.Struct({
 export type CastVoteResult = typeof CastVoteResult.Type;
 
 const LEAD_ONLY = "Team leads only.";
-const NOT_SETTABLE = "Not settable by a lead: any value is refused.";
+const NOT_SETTABLE = "Not settable by a lead (refused).";
 const USER_MADE_RULE =
-  "A bot you created is yours to manage while it stays on your team. For any other bot (user-made, another lead's, or moved since), removing it or changing its name, instructions, description, model, effort, fallback or schedule posts a Yes/No card in this chat and nothing changes until Harout taps Yes. The call returns pending: tell him in one line what you asked for and end your turn; his answer arrives as a follow-up message. Only from a chat turn Harout started (routine, task and group turns are refused: ask him to request it in chat). Title, avatar, mute and memory auto-save stay open. Built-in system bots (Updates, Sync reports, seeded defaults) are never yours to change.";
+  "Bots you created are directly editable while on your team. For other bots, removing or changing name/instructions/description/model/effort/fallback/schedule posts a Yes/No card in Harout's chat (only from a chat turn Harout started) and returns pending: tell him in one line and end your turn. Title, avatar, mute and memoryAutoSave stay open; built-in bots cannot be edited.";
 
 /** The fields create_bot and update_bot share. Every one is optional. */
 const BotFieldsShape = {
-  title: Schema.optional(
-    Schema.String.annotate({
-      description: "Short role label under the name, at most 60 characters.",
-    }),
-  ),
+  title: Schema.optional(Schema.String.annotate({ description: "Role label (max 60 chars)." })),
   description: Schema.optional(
-    Schema.String.annotate({
-      description: "What the bot is for, at most 500 characters.",
-    }),
+    Schema.String.annotate({ description: "Bot purpose (max 500 chars)." }),
   ),
   instructions: Schema.optional(
     Schema.String.annotate({
-      description:
-        "Standing instructions, at most 20000 characters. Never put a secret, key or password in them.",
+      description: "Standing instructions (max 20000 chars; no secrets).",
     }),
   ),
   avatarShape: Schema.optional(BotAvatarShape.annotate({ description: "Avatar shape." })),
   avatarColor: Schema.optional(
-    BotAvatarColor.annotate({ description: "Avatar colour as a hex value such as #1A73E8." }),
+    BotAvatarColor.annotate({ description: "Hex colour, e.g. #1A73E8." }),
   ),
   provider: Schema.optional(
-    Schema.String.annotate({
-      description:
-        "Provider instance, as list_bots shows. Default: the bot's current one, or yours for a new bot.",
-    }),
+    Schema.String.annotate({ description: "Provider instance from list_bots." }),
   ),
   model: Schema.optional(
     Schema.String.annotate({
-      description:
-        "A model slug that provider offers, e.g. claude-sonnet-5-5. Fable and Mythos are refused. New bot default: Opus 5.5, medium effort.",
+      description: "Model slug for provider (Fable/Mythos refused).",
     }),
   ),
-  effort: Schema.optional(
-    Schema.String.annotate({
-      description: "An effort the model offers.",
-    }),
-  ),
+  effort: Schema.optional(Schema.String.annotate({ description: "Model effort." })),
   notificationsMute: Schema.optional(
     PersonalBotNotificationMute.annotate({
-      description: '"indefinitely", { "forMinutes": n }, or "on" to unmute.',
+      description: '"indefinitely", { "forMinutes": n }, or "on".',
     }),
   ),
   memoryAutoSave: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "Let the bot save memories unasked.",
-    }),
+    Schema.Boolean.annotate({ description: "Allow saving memories unasked." }),
   ),
   fallbackEnabled: Schema.optional(
-    Schema.Boolean.annotate({
-      description:
-        "Switch to the fallback model on a usage limit (default on). false: the bot waits for the reset.",
-    }),
+    Schema.Boolean.annotate({ description: "Use fallback on usage limit (default true)." }),
   ),
   fallbackModel: Schema.optional(
     Schema.Struct({
-      provider: Schema.optional(
-        Schema.String.annotate({
-          description:
-            "Fallback provider instance, as list_bots shows. Default: current (Claude for a new bot).",
-        }),
-      ),
+      provider: Schema.optional(Schema.String.annotate({ description: "Provider instance." })),
       model: Schema.optional(
-        Schema.String.annotate({
-          description:
-            "A model slug that provider offers. Fable and Mythos are refused. Default: current (new bot: Sonnet 5.5).",
-        }),
+        Schema.String.annotate({ description: "Model slug (Fable/Mythos refused)." }),
       ),
-      effort: Schema.optional(
-        Schema.String.annotate({
-          description: "An effort the fallback model offers.",
-        }),
-      ),
+      effort: Schema.optional(Schema.String.annotate({ description: "Effort." })),
       context: Schema.optional(
-        Schema.String.annotate({
-          description: 'A context window the model offers, e.g. "1m". Only some offer a choice.',
-        }),
+        Schema.String.annotate({ description: 'Context window, e.g. "1m".' }),
       ),
     }).annotate({
-      description:
-        "Model used on a usage limit. Omitted fields stay as they are (new bot: Sonnet 5.5, high effort, 1M context).",
+      description: "Usage-limit fallback model (new bot default: Sonnet 5.5, high, 1M).",
     }),
   ),
   scheduleEnabled: Schema.optional(
     Schema.Boolean.annotate({
-      description:
-        "Run a different model daily between scheduleFrom and scheduleTo, the bot's own model otherwise. false turns it off, keeping times and model. A usage-limit fallback takes priority. On when you give scheduleFrom and scheduleTo.",
+      description: "Run scheduleModel daily between scheduleFrom and scheduleTo.",
     }),
   ),
   scheduleFrom: Schema.optional(
-    Schema.String.annotate({
-      description:
-        'Start, 24 hour "HH:MM" local time on the laptop, e.g. "22:00". Overnight ranges are fine; From and To cannot be equal.',
-    }),
+    Schema.String.annotate({ description: 'Start local 24h "HH:MM" (cannot equal scheduleTo).' }),
   ),
-  scheduleTo: Schema.optional(
-    Schema.String.annotate({
-      description: 'End, 24 hour "HH:MM".',
-    }),
-  ),
+  scheduleTo: Schema.optional(Schema.String.annotate({ description: 'End local 24h "HH:MM".' })),
   scheduleModel: Schema.optional(
     Schema.Struct({
-      provider: Schema.optional(
-        Schema.String.annotate({
-          description:
-            "Scheduled provider instance, as list_bots shows. Default: current (Claude for a new schedule).",
-        }),
-      ),
+      provider: Schema.optional(Schema.String.annotate({ description: "Provider instance." })),
       model: Schema.optional(
         Schema.String.annotate({
-          description:
-            "A model slug that provider offers. Fable and Mythos are refused; must differ from the bot's own model. Default: current (new schedule: Sonnet 5.5).",
+          description: "Model slug (differs from bot model; Fable/Mythos refused).",
         }),
       ),
-      effort: Schema.optional(
-        Schema.String.annotate({
-          description: "An effort the scheduled model offers.",
-        }),
-      ),
+      effort: Schema.optional(Schema.String.annotate({ description: "Effort." })),
       context: Schema.optional(
-        Schema.String.annotate({
-          description: 'A context window the model offers, e.g. "1m". Only some offer a choice.',
-        }),
+        Schema.String.annotate({ description: 'Context window, e.g. "1m".' }),
       ),
     }).annotate({
-      description:
-        "Model used between scheduleFrom and scheduleTo. Omitted fields stay as they are (new schedule: Sonnet 5.5, high effort, 1M context).",
+      description: "Daily scheduled model (new schedule default: Sonnet 5.5, high, 1M).",
     }),
   ),
   team: Schema.optional(Schema.Unknown.annotate({ description: NOT_SETTABLE })),
@@ -967,7 +911,7 @@ const CastVoteTool = Tool.make("cast_vote", {
   .annotate(Tool.OpenWorld, false);
 
 const CreateBotTool = Tool.make("create_bot", {
-  description: `${LEAD_ONLY} Create a new bot on your own team, always as an ordinary member: never a lead, never pinned, never on another team. It appears in list_bots at once, so you can delegate to it. Give it a clear name, description and instructions, and a model and effort that fit the work (cheaper for simple jobs). It falls back to Sonnet 5.5, high effort, 1M context on a usage limit unless you set fallbackEnabled or fallbackModel, and can run another model at set daily times (scheduleFrom, scheduleTo, scheduleModel). Only models a provider offers are accepted, never Fable or Mythos. The new bot gets no secrets or connections; the user grants those. Limit 5 new bots per rolling 24 hours. Each create is posted in your chat and notified to the user. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Create an ordinary member bot on your team (never lead/pinned, no secrets/connections; appears in list_bots at once). Defaults: Opus 5.5 medium; fallback Sonnet 5.5 high 1M (Fable/Mythos refused). Limit 5 per 24h; posted in chat and notified.`,
   parameters: CreateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,
@@ -980,7 +924,7 @@ const CreateBotTool = Tool.make("create_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const UpdateBotTool = Tool.make("update_bot", {
-  description: `${LEAD_ONLY} Change a bot on your own team (name, title, description, instructions, avatar, model, effort, fallback, daily model schedule, notification mute, memory auto-save). Only the fields you pass change. You cannot edit yourself, another lead or a bot on another team, or anyone's team, lead flag or pinned state. ${USER_MADE_RULE} Ask the user before a large change to the instructions of a bot you created (rewriting them, or changing what it may do); small tweaks are fine. Names need at least 3 characters with a letter, one alphabet only, no invisible characters. A Fable or Mythos bot keeps its model and effort. Each edit is posted in your chat and notified to the user. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Update a member bot on your team (only passed fields change; never yourself, another lead, or team/lead/pinned). ${USER_MADE_RULE} Ask the user before major instruction rewrites. Fable/Mythos bots keep their model/effort. Posted in chat and notified.`,
   parameters: UpdateBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,
@@ -993,7 +937,7 @@ const UpdateBotTool = Tool.make("update_bot", {
   .annotate(Tool.OpenWorld, false);
 
 const RemoveBotTool = Tool.make("remove_bot", {
-  description: `${LEAD_ONLY} Remove a bot on your own team. Soft delete: it leaves every list, but chats and memories are kept and the user can restore it. Ask the user before removing a bot. ${USER_MADE_RULE} Give the reason in one line. Refused while the bot has an unfinished task (stop_task it first), a turn in progress or a routine switched on, and for yourself, another lead or a bot on another team. Posted in your chat and notified to the user. Refused unless you are a team lead right now.`,
+  description: `${LEAD_ONLY} Soft-delete a member bot on your team (chats/memories kept, restorable). Ask the user first. ${USER_MADE_RULE} Refused if it has an unfinished task, active turn, or enabled routine. Give a one-line reason; posted in chat and notified.`,
   parameters: RemoveBotInput,
   success: LeadBotResult,
   failure: BotsToolFailure,

@@ -77,8 +77,16 @@ export function limitPool(reason: string | null | undefined): "opus" | "sonnet" 
 /** A usage window counts for a model when it is not another model family's or model's own window. */
 export function windowAppliesToModel(windowId: string, model: string): boolean {
   const pool = limitPool(windowId);
-  if (pool === "shared") return windowLimitsModel({ id: windowId }, model);
-  return modelFamily(model) === pool;
+  if (pool !== "shared") return modelFamily(model) === pool;
+  const agyWindowPool = windowId.toLowerCase().match(/^(gemini|claude|gpt|3p)-/)?.[1];
+  const agyModelFamily = model.toLowerCase().match(/^(gemini|claude|gpt)-/)?.[1];
+  if (agyWindowPool !== undefined && agyModelFamily !== undefined) {
+    const familyMatches =
+      agyWindowPool === agyModelFamily ||
+      (agyWindowPool === "3p" && (agyModelFamily === "claude" || agyModelFamily === "gpt"));
+    if (!familyMatches) return false;
+  }
+  return windowLimitsModel({ id: windowId }, model);
 }
 
 export interface UsageRoom {

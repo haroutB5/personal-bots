@@ -1506,11 +1506,20 @@ const TEAM_LEAD_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set([
 
 const GROUP_CHAT_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set(["call_vote", "cast_vote"]);
 
+const DEVICE_MCP_TOOLS: ReadonlySet<string> = new Set([
+  "device_list",
+  "device_open",
+  "device_close",
+  "device_screenshot",
+]);
+
 export const isToolListedForPersonalBot = (
   toolName: string,
   bot: McpInvocationContext.McpPersonalBotScope,
+  options?: { readonly hasDevice?: boolean },
 ): boolean => {
   if (PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS.has(toolName)) return false;
+  if (options?.hasDevice !== true && DEVICE_MCP_TOOLS.has(toolName)) return false;
   if (!bot.isLead && TEAM_LEAD_ONLY_MCP_TOOLS.has(toolName)) return false;
   if (!bot.isGroup && GROUP_CHAT_ONLY_MCP_TOOLS.has(toolName)) return false;
   return true;
@@ -1520,8 +1529,8 @@ export const isToolListedForPersonalBot = (
  * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
  * the direct tools and what its `tool_search` calls loaded. Calls are never
  * gated, and every other client lists everything but `tool_search`. Personal bot
- * threads also omit T3 desktop IDE tools and inapplicable lead/group tools from
- * `tools/list` so eager MCP clients keep `save_memory` and personal tools in budget.
+ * threads also omit T3 desktop IDE tools and inapplicable lead/group/device tools from
+ * `tools/list` so eager MCP clients keep all personal and team-lead tools in budget.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
@@ -1533,7 +1542,12 @@ const layerDeferredListing = McpServer.visibility(
         yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
       );
       const personalBot = scope?.personalBot;
-      if (personalBot !== undefined && !isToolListedForPersonalBot(target, personalBot)) {
+      if (
+        personalBot !== undefined &&
+        !isToolListedForPersonalBot(target, personalBot, {
+          hasDevice: scope?.capabilities.has("device") === true,
+        })
+      ) {
         return false;
       }
       const providerSessionId = scope?.thread?.providerSessionId;

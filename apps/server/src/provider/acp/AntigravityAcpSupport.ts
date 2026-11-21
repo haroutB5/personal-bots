@@ -24,6 +24,14 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  acpPermissionDisposition,
+  type AcpRuntimePolicy,
+} from "@t3tools/provider-acp/server/clientPolicy";
+import {
+  collectSessionConfigOptionValues,
+  type AcpSessionModeState,
+} from "@t3tools/provider-acp/server/runtimeModel";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
@@ -187,18 +195,36 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "auto-accept-edits":
       return "auto_edit";
     case "auto":
+      return "auto";
     case "approval-required":
       return "default";
   }
 }
 
 /**
- * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
- * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`.
+ * Those stay in `default`, where it asks before acting and T3 answers from the live runtime
+ * policy, so permission changes apply on the next turn without a restart.
  */
-export function antigravityCliSessionMode(modeId: string): string {
+export function antigravitySessionMode(
+  modeId: string,
+  modeState: AcpSessionModeState | undefined,
+): string {
+  if (modeId === "auto") {
+    return modeState?.availableModes.some((mode) => mode.id === "auto") === true
+      ? "auto"
+      : "default";
+  }
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+}
+
+export function antigravityPermissionDisposition(
+  policy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+) {
+  const disposition = acpPermissionDisposition(policy, request);
+  // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
+  return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
@@ -208,6 +234,8 @@ export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMod
       return "full-access";
     case "auto_edit":
       return "auto-accept-edits";
+    case "auto":
+      return "auto";
     case "default":
       return "approval-required";
     default:
@@ -269,6 +297,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       "getConfigOptions" | "setModel" | "setConfigOption"
     >;
     readonly model: string | null | undefined;
+    readonly options?: ReadonlyArray<{ readonly id: string; readonly value: unknown }> | undefined;
     readonly defaultModel?: string | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
@@ -281,28 +310,63 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       defaultModel: input.defaultModel,
     });
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
-    if (resolved === undefined || (!explicit && resolved === current)) return current;
-    const options = antigravityModelOptions(configOptions);
-    const legacyFamily = options.some((option) => option.value === resolved)
-      ? undefined
-      : legacyAntigravityFamily(configOptions, resolved);
-    if (legacyFamily !== undefined) {
-      yield* input.runtime
-        .setConfigOption("model", resolved, { allowUnlistedValue: true })
-        .pipe(Effect.mapError(input.mapError));
-      return legacyFamily;
+    let applied: string | undefined;
+    if (resolved === undefined || (!explicit && resolved === current)) {
+      applied = current;
+    } else {
+      const options = antigravityModelOptions(configOptions);
+      const legacyFamily = options.some((option) => option.value === resolved)
+        ? undefined
+        : legacyAntigravityFamily(configOptions, resolved);
+      if (legacyFamily !== undefined) {
+        yield* input.runtime
+          .setConfigOption("model", resolved, { allowUnlistedValue: true })
+          .pipe(Effect.mapError(input.mapError));
+        applied = legacyFamily;
+      } else {
+        if (!options.some((option) => option.value === resolved)) {
+          return yield* Effect.fail(
+            input.mapError(
+              EffectAcpErrors.AcpRequestError.invalidParams(
+                `Antigravity model '${resolved}' is unavailable for this Google account. Select an available model.`,
+              ),
+            ),
+          );
+        }
+        yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
+        applied = resolved;
+      }
     }
-    if (!options.some((option) => option.value === resolved)) {
-      return yield* Effect.fail(
-        input.mapError(
-          EffectAcpErrors.AcpRequestError.invalidParams(
-            `Antigravity model '${resolved}' is unavailable for this Google account. Select an available model.`,
-          ),
-        ),
-      );
+    // AntigravityProvider exposes ACP's thought_level option (e.g. `thinking_level`) under
+    // the shared `effort` descriptor id; translate it back after model selection updates options.
+    if (input.options?.length) {
+      const latestConfigOptions = yield* input.runtime.getConfigOptions;
+      const thinking = antigravityThinkingConfig(latestConfigOptions);
+      if (thinking !== undefined) {
+        const selected = input.options.find(
+          (option) => option.id === thinking.id || option.id === "effort",
+        )?.value;
+        if (
+          typeof selected === "string" &&
+          selected !== thinking.currentValue &&
+          collectSessionConfigOptionValues(thinking).includes(selected)
+        ) {
+          yield* input.runtime.setConfigOption(thinking.id, selected).pipe(
+            Effect.catchTags({
+              AcpRequestError: (error) =>
+                error.code === -32602
+                  ? Effect.logDebug("Antigravity rejected the requested thinking level", {
+                      optionId: thinking.id,
+                      value: selected,
+                    })
+                  : Effect.fail(error),
+            }),
+            Effect.mapError(input.mapError),
+          );
+        }
+      }
     }
-    yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
-    return resolved;
+    return applied;
   },
 );
 

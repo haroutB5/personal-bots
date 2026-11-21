@@ -13,6 +13,7 @@ import type {
   OrchestrationThreadActivity,
 } from "./wireTypes.ts";
 import type { OrchestrationSession } from "@t3tools/contracts";
+import { humanizeToolName } from "./liveWork.ts";
 
 /**
  * The chat shapes Main's phone screens render. The merged server sends the v2
@@ -87,6 +88,10 @@ function activityTone(item: OrchestrationV2TurnItem): OrchestrationThreadActivit
 
 function activitySummary(item: OrchestrationV2TurnItem): string {
   if (item.title !== null && item.title.trim().length > 0) return item.title;
+  if (item.type === "dynamic_tool" && item.toolName !== null && item.toolName.trim().length > 0) {
+    const label = humanizeToolName(item.toolName);
+    if (label.length > 0) return label;
+  }
   return item.type
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))

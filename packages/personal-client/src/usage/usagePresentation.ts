@@ -378,12 +378,23 @@ function pickSession(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
   now: number,
 ): UsageWindowRow | null {
-  const direct = windows.find((usageWindow) => usageWindow.kind === "session");
+  const direct = windows.filter((usageWindow) => usageWindow.kind === "session");
+  if (direct.length > 0) {
+    const ordered = [...direct].sort((a, b) =>
+      b.usedPercent !== a.usedPercent
+        ? b.usedPercent - a.usedPercent
+        : a.id === "gemini-5h"
+          ? -1
+          : b.id === "gemini-5h"
+            ? 1
+            : 0,
+    );
+    return toRow(ordered[0]!, now);
+  }
   const fallback = windows.find((usageWindow) =>
     usageWindow.id.toLowerCase().includes("five_hour"),
   );
-  const match = direct ?? fallback;
-  return match ? toRow(match, now) : null;
+  return fallback ? toRow(fallback, now) : null;
 }
 
 /**
@@ -538,7 +549,7 @@ export function selectUsageCards(
         resetSinceReading: usageResetSinceReading(limits, now),
         session: pickSession(stripWindows, now),
         weeklies: orderedWeeklies,
-        windows: limits.windows.map((w) => toRow(w, now)),
+        windows: stripWindows.map((w) => toRow(w, now)),
         checkedAt: parseCheckedAt(limits.checkedAt),
         resetCredits: limits.resetCredits
           ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }

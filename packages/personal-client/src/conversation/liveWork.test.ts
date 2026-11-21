@@ -12,7 +12,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupRunWork, runWork, workStepLabel } from "./liveWork.ts";
+import { groupRunWork, humanizeToolName, runWork, workStepLabel } from "./liveWork.ts";
 
 const threadId = ThreadId.make("thread-1");
 const instanceId = ProviderInstanceId.make("codex");
@@ -609,5 +609,24 @@ describe("runWork", () => {
 
       expect(work.phase).toBe("idle");
     });
+  });
+
+  it("strips server prefixes on dot-separated MCP tool names and keeps subagent titles", () => {
+    expect(humanizeToolName("t3-code.html_render")).toBe("html render");
+    expect(humanizeToolName("chrome-devtools.navigate_page")).toBe("navigate page");
+    const subagent = {
+      ...itemBase,
+      id: TurnItemId.make("sub-1"),
+      ordinal: 2,
+      status: "running" as const,
+      type: "subagent" as const,
+      title: "Audit Android UI",
+      subagentId: "sub-agent-1" as never,
+      subagentName: "research",
+    } as unknown as OrchestrationV2TurnItem;
+    const work = runWork(projection([run("running")], [subagent]));
+    expect(work.phase).toBe("working");
+    if (work.phase !== "working") return;
+    expect(work.current).toMatchObject({ kind: "tool", label: "Audit Android UI" });
   });
 });

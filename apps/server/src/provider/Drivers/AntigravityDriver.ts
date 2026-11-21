@@ -45,8 +45,8 @@ import {
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
-  antigravityCliSessionMode,
   antigravityModelOptions,
+  antigravitySessionMode,
   antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
@@ -305,9 +305,12 @@ export const AntigravityDriver: ProviderDriver<
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
-        ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
-          : {}),
+        setMode: (modeId: string) =>
+          runtime.getModeState.pipe(
+            Effect.flatMap((modeState) =>
+              runtime.setMode(antigravitySessionMode(modeId, modeState)),
+            ),
+          ),
         start: () =>
           runtime
             .start()
@@ -374,6 +377,7 @@ export const AntigravityDriver: ProviderDriver<
       >,
     ) {
       yield* provider.onSessionStarted(started);
+      yield* authFlow.onSignedInElsewhere;
       yield* Stream.runForEach(runtime.getEvents(), (event) => {
         if (event._tag === "EventStreamBarrier") {
           return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
@@ -616,7 +620,8 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
-      onSessionStarted: provider.onSessionStarted,
+      onSessionStarted: (started) =>
+        provider.onSessionStarted(started).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
       onSessionEvent: (event) => {
         if (event._tag === "ConfigOptionsUpdated") {
           return provider.onConfigOptionsUpdated(event.configOptions);

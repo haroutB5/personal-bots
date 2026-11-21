@@ -284,6 +284,7 @@ export function useNativeOutboxFlusher(native: NativePersonal, chat: ChatEnviron
           ...(entry.turn.followUp === "steer" || entry.turn.followUp === "queue"
             ? { followUp: entry.turn.followUp }
             : {}),
+          ...(entry.turn.followUp === "queue" ? { dispatchMode: "queue" as const } : {}),
           createdAt: entry.createdAt,
         },
       });

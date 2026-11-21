@@ -159,12 +159,14 @@ function isEmptyToolCall(text: string): boolean {
   return /^[\w.-]+:\s*(?:\{\s*\}|\[\s*\])$/u.test(text.trim());
 }
 
-/** `mcp__t3-code__update_work_record` reads as "update work record". */
+/** `mcp__t3-code__update_work_record` or `t3-code.html_render` reads as "update work record" / "html render". */
 export function humanizeToolName(name: string): string {
   const trimmed = name.trim();
   const withoutServer = trimmed.startsWith("mcp__")
     ? trimmed.split("__").slice(2).join("__")
-    : trimmed;
+    : /^[a-z0-9_-]+\.[a-z0-9_]+$/iu.test(trimmed)
+      ? trimmed.slice(trimmed.indexOf(".") + 1)
+      : trimmed;
   return (withoutServer || trimmed).replace(/_+/gu, " ").trim();
 }
 
@@ -220,6 +222,15 @@ function stepForItem(item: OrchestrationV2TurnItem): WorkStep | null {
       return isPlaceholderLine(label)
         ? null
         : { kind: "file", id: item.id, label, status: stepStatus(item.status) };
+    }
+    case "subagent": {
+      const title = item.title?.trim() ?? "";
+      return {
+        kind: "tool",
+        id: item.id,
+        label: title.length > 0 && !isPlaceholderLine(title) ? title : "Subagent",
+        status: stepStatus(item.status),
+      };
     }
     default: {
       if (NON_STEP_ITEM_TYPES.has(item.type)) return null;

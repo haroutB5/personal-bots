@@ -17,7 +17,9 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
   antigravityClientInfo,
+  antigravityPermissionDisposition,
   antigravitySessionMeta,
+  antigravitySessionMode,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
 } from "./AntigravityAcpSupport.ts";
@@ -96,6 +98,52 @@ describe("Antigravity release gates", () => {
       );
       expect(isQualifiedAntigravityRelease(version)).toBe(native);
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
+    },
+  );
+});
+
+describe("Antigravity Auto", () => {
+  it.each([
+    { offered: ["default", "accept-edits", "auto", "plan"], expected: "auto" },
+    { offered: ["default", "accept-edits", "plan"], expected: "default" },
+  ])("runs as $expected when the session offers $offered", ({ offered, expected }) => {
+    const modeState = {
+      currentModeId: "default",
+      availableModes: offered.map((id) => ({ id, name: id })),
+    };
+    expect(antigravitySessionMode("auto", modeState)).toBe(expected);
+  });
+
+  it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {
+    const request = {
+      sessionId: "session-1",
+      toolCall: { toolCallId: "call-1", title: "Tool call", kind },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    } satisfies EffectAcpSchema.RequestPermissionRequest;
+    expect(antigravityPermissionDisposition({ runtimeMode: "auto", cwd: null }, request)).toBe(
+      "ask",
+    );
+  });
+
+  it.each([{ type: "readOnly" }, { type: "workspaceWrite", writableRoots: [] }])(
+    "keeps the $type sandbox's denials in Auto",
+    (sandboxPolicy) => {
+      const request = {
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "call-1",
+          title: "Edit",
+          kind: "edit",
+          locations: [{ path: "/outside-workspace/file.txt" }],
+        },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      } satisfies EffectAcpSchema.RequestPermissionRequest;
+      expect(
+        antigravityPermissionDisposition(
+          { runtimeMode: "auto", cwd: "/workspace", sandboxPolicy },
+          request,
+        ),
+      ).toBe("deny");
     },
   );
 });
@@ -215,6 +263,35 @@ describe("applyAntigravityAcpModelSelection", () => {
 
       expect(model).toBe("gemini-3.8-flash");
       expect(selections).toEqual(["model=gemini-3.8-flash-low (unlisted)"]);
+    }),
+  );
+
+  it.effect("translates saved effort option to Antigravity thinking_level config option", () =>
+    Effect.gen(function* () {
+      const { runtime, selections } = makeModelRuntime([
+        modelConfig,
+        {
+          id: "thinking_level",
+          name: "Thinking Level",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "medium", name: "Medium" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ]);
+      const model = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model: "gemini-saved",
+        options: [{ id: "effort", value: "medium" }],
+        mapError: (cause) => cause,
+      });
+
+      expect(model).toBe("gemini-saved");
+      expect(selections).toEqual(["gemini-saved", "thinking_level=medium"]);
     }),
   );
 });

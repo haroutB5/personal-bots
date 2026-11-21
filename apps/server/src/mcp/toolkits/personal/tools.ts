@@ -39,59 +39,38 @@ const RoutineFrequency = Schema.Literals(["daily", "weekly", "every_n_hours", "o
 
 /** The natural schedule fields create_routine and update_routine share. */
 const routineScheduleFields = {
-  time: Schema.optional(
-    Schema.String.annotate({
-      description: "Local 24-hour time HH:MM. Required for daily, weekly and once.",
-    }),
-  ),
-  days: Schema.optional(
-    Schema.Array(Weekday).annotate({ description: "Days of the week, for weekly routines." }),
-  ),
+  time: Schema.optional(Schema.String.annotate({ description: "Local 24h HH:MM." })),
+  days: Schema.optional(Schema.Array(Weekday).annotate({ description: "Weekdays (weekly)." })),
   everyHours: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 168 })).annotate({
-      description: "Interval in hours, for every_n_hours routines.",
+      description: "Hours interval (every_n_hours).",
     }),
   ),
-  date: Schema.optional(
-    Schema.String.annotate({ description: "Local date YYYY-MM-DD, for once routines." }),
-  ),
+  date: Schema.optional(Schema.String.annotate({ description: "Local YYYY-MM-DD (once)." })),
 };
 
 const RoutineNotifyModeField = Schema.Literals(["always", "bot_decides", "never"]).annotate({
-  description:
-    "Whether a finished run notifies the user (push). always (default). bot_decides: the bot calls notify_user in that run only when it should; use for 'only tell me if something changed'; not with relay delivery. never: silent, though failures and anything needing the user still notify. The result always lands in the chat.",
+  description: "Push notify: always (default), bot_decides (via notify_user), or never.",
 });
 
 export const CreateRoutineInput = Schema.Struct({
-  title: TrimmedNonEmptyString.annotate({
-    description: "Short name for the routine, e.g. 'Morning briefing'.",
-  }),
-  prompt: TrimmedNonEmptyString.annotate({
-    description: "What the bot should do each time the routine runs, written as a task.",
-  }),
+  title: TrimmedNonEmptyString.annotate({ description: "Short routine title." }),
+  prompt: TrimmedNonEmptyString.annotate({ description: "Self-contained task prompt per run." }),
   frequency: RoutineFrequency,
   ...routineScheduleFields,
   timeZone: Schema.optional(
-    Schema.String.annotate({
-      description: "IANA time zone of the wall-clock time. Defaults to Europe/London.",
-    }),
+    Schema.String.annotate({ description: "IANA time zone (default Europe/London)." }),
   ),
   missedRuns: Schema.optional(
     Schema.Literals(["catch_up_once", "skip"]).annotate({
-      description:
-        "Runs missed while the laptop slept: catch_up_once (default) runs once, skip runs none.",
+      description: "Missed while asleep: catch_up_once (default) or skip.",
     }),
   ),
   botName: Schema.optional(
-    Schema.String.annotate({
-      description: "Exact bot name, any letter case. Defaults to you.",
-    }),
+    Schema.String.annotate({ description: "Target bot name (default you)." }),
   ),
   newChatEachRun: Schema.optional(
-    Schema.Boolean.annotate({
-      description:
-        "Leave this out. Runs post into this chat as new turns. true is refused. A run opens a new chat only if this chat is archived or deleted, or the routine moved to another bot.",
-    }),
+    Schema.Boolean.annotate({ description: "Omit (runs post in this chat; true refused)." }),
   ),
   notifyMode: Schema.optional(RoutineNotifyModeField),
 });
@@ -107,50 +86,31 @@ export interface RoutineScheduleToolFields {
 }
 
 const RoutineIdField = TrimmedNonEmptyString.annotate({
-  description: "The routine's exact routineId, as list_routines returns it.",
+  description: "routineId from list_routines.",
 });
 
 export const UpdateRoutineInput = Schema.Struct({
   routineId: RoutineIdField,
-  title: Schema.optional(
-    TrimmedNonEmptyString.annotate({ description: "New short name for the routine." }),
-  ),
+  title: Schema.optional(TrimmedNonEmptyString.annotate({ description: "New title." })),
   prompt: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description:
-        "New task text, replacing the old one. Runs start from this alone, so keep it self-contained.",
-    }),
+    TrimmedNonEmptyString.annotate({ description: "New self-contained task prompt." }),
   ),
   frequency: Schema.optional(
     RoutineFrequency.annotate({
-      description:
-        "New schedule: daily, weekly (days), every_n_hours (everyHours) or once (date), with time where needed. Give all of it, not only what changes.",
+      description: "Full new schedule (frequency plus time/days/everyHours/date).",
     }),
   ),
   ...routineScheduleFields,
-  timeZone: Schema.optional(
-    Schema.String.annotate({ description: "New IANA time zone for the routine's times." }),
-  ),
+  timeZone: Schema.optional(Schema.String.annotate({ description: "New IANA time zone." })),
   missedRuns: Schema.optional(
     Schema.Literals(["catch_up_once", "skip"]).annotate({
-      description: "catch_up_once runs once for the latest missed time, skip runs none.",
+      description: "catch_up_once or skip.",
     }),
   ),
-  botName: Schema.optional(
-    Schema.String.annotate({
-      description: "Hand the routine to another bot: its exact name, in any letter case.",
-    }),
-  ),
-  enabled: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "false pauses the routine, true resumes it, as set_routine_enabled does.",
-    }),
-  ),
+  botName: Schema.optional(Schema.String.annotate({ description: "Reassign to bot name." })),
+  enabled: Schema.optional(Schema.Boolean.annotate({ description: "false pauses, true resumes." })),
   newChatEachRun: Schema.optional(
-    Schema.Boolean.annotate({
-      description:
-        "false: runs go into the chat the routine was created in (only for a routine created from a chat). true is refused.",
-    }),
+    Schema.Boolean.annotate({ description: "false posts in original chat; true refused." }),
   ),
   notifyMode: Schema.optional(RoutineNotifyModeField),
 });
@@ -259,8 +219,7 @@ export type SearchMemoryResult = typeof SearchMemoryResult.Type;
 export const SaveMemoryInput = Schema.Struct({
   temporalKind: Schema.optional(
     Schema.Literals(["stable", "historical", "changing"]).annotate({
-      description:
-        "stable: durable fact. historical: past event, never current status. changing: state to recheck; give observedAt and evidence.",
+      description: "stable, historical, or changing (with observedAt + evidence).",
     }),
   ),
   observedAt: Schema.optional(TrimmedNonEmptyString),
@@ -269,40 +228,35 @@ export const SaveMemoryInput = Schema.Struct({
     Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)))
       .check(Schema.isMaxLength(8))
       .annotate({
-        description:
-          "Evidence references, e.g. a public source URL or a file path and commit. Never secrets or signed URLs. Another bot's assertion is not independent verification.",
+        description: "Public URLs or file/commit refs (no secrets/signed URLs).",
       }),
   ),
   content: TrimmedNonEmptyString.annotate({
     description:
-      "For notes set temporalKind; for changing add observedAt and evidence. Set verifiedAt only after checking the source, never because another bot repeated a claim. One self-contained, dated fact or rule, under about 300 characters, e.g. '(2026-10-02) Backend runs Opus 5.5.'",
+      "One dated fact or rule (<300 chars). Set verifiedAt only after checking the source.",
   }),
   userRequest: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Required for a preference, not a note. The user's own words, verbatim from their message in this chat: their ask to remember the rule, or, if your instructions grant standing permission to save, the message the rule came from. The server checks them against the user's real messages.",
+        "Required for preference: user's verbatim words from their message in this chat.",
     }),
   ),
   kind: Schema.Literals(["note", "preference"]).annotate({
-    description:
-      "Required. preference: a standing rule for bots (always / never / when X do Y, how to report, who does what). Bots get the full list at session start, after compaction, every 20 turns (a one-line reminder between) and when it changes. note: a fact about the user, their things, a decision or an event; notes are looked up when relevant.",
+    description: "preference: standing rule for bots. note: background fact/decision/event.",
   }),
   scope: Schema.optional(
     Schema.Literals(["team", "shared", "bot"]).annotate({
-      description:
-        "team (default): your team's bots. shared: every bot; use for facts about the user themselves and rules they gave for all bots. bot: only you.",
+      description: "team (default), shared (all bots), or bot (only you).",
     }),
   ),
   apps: Schema.optional(
     Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(8)).annotate({
-      description:
-        "Only for a preference about specific apps: their slugs (e.g. ['matchday']). Scoped rules are listed in full only in chats and tasks about those apps. Omit for a global rule. Undo takes back the whole rule.",
+      description: "App slugs for scoped preference (omit for global).",
     }),
   ),
   replaces: Schema.optional(
     Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(10)).annotate({
-      description:
-        "Ids of saved entries this one replaces (from your memory block, search_memory or the similar list). They are archived and no longer sent to bots. Use this instead of saving an 'Update:' entry.",
+      description: "Saved entry ids this entry replaces/archives.",
     }),
   ),
 });
@@ -397,7 +351,7 @@ export const SaveMemoryResult = Schema.Struct({
 
 const CreateRoutineTool = Tool.make("create_routine", {
   description:
-    "Schedule a recurring or one-off routine. Each run gives the chosen bot the prompt as a task with no other context, so make it self-contained. Runs post into this chat as new turns by default (after any running turn here finishes). Times are local wall-clock in the routine's time zone (default Europe/London). Identical arguments in this chat return the same routine. Use notifyMode bot_decides when the user wants to hear only if something is worth it. Change, pause or delete later with update_routine, set_routine_enabled or delete_routine and the routineId. Show the user the returned summary, with its time zone and next run.",
+    "Schedule a recurring or one-off routine (self-contained prompt; posts into this chat; local time in timeZone, default Europe/London). Use notifyMode='bot_decides' to notify only when worth it. Show the returned summary with time zone and next run.",
   parameters: CreateRoutineInput,
   success: CreateRoutineResult,
   failure: PersonalToolFailure,
@@ -411,7 +365,7 @@ const CreateRoutineTool = Tool.make("create_routine", {
 
 const ListRoutinesTool = Tool.make("list_routines", {
   description:
-    "List every routine the user has, for all bots: routineId, title, bot, schedule ('On event: ...' for webhook routines), enabled, next run (null if disabled or finished), new-chat or same-chat per run, whether it runs in this chat, notifyMode and prompt. Other routine tools take the routineId.",
+    "List every routine across all bots with routineId, title, bot, schedule, enabled, next run, chat mode, notifyMode and prompt.",
   success: ListRoutinesResult,
   failure: PersonalToolFailure,
   dependencies,
@@ -424,7 +378,7 @@ const ListRoutinesTool = Tool.make("list_routines", {
 
 const UpdateRoutineTool = Tool.make("update_routine", {
   description:
-    "Change any bot's routine by routineId from list_routines. Omitted fields keep their value; a new prompt replaces the old one. A schedule change needs the whole new schedule (frequency plus time, days, everyHours or date); the next run is worked out from now. Webhook-event routines have no schedule, so schedule fields are refused for them. Show the user the returned summary, with its time zone and next run.",
+    "Update any bot's routine by routineId from list_routines (omitted fields unchanged; schedule changes need full frequency/time/days/everyHours/date; refused on webhook routines). Show the returned summary with time zone and next run.",
   parameters: UpdateRoutineInput,
   success: RoutineChangeResult,
   failure: PersonalToolFailure,
@@ -438,7 +392,7 @@ const UpdateRoutineTool = Tool.make("update_routine", {
 
 const SetRoutineEnabledTool = Tool.make("set_routine_enabled", {
   description:
-    "Pause (enabled false) or resume (enabled true) a routine by routineId from list_routines. A paused routine keeps its settings, does not run, and a paused event routine ignores its webhook. Resuming never replays missed runs: the next run is the next scheduled time. A one-off whose time has passed cannot be resumed, and trying removes it. Show the user the returned summary, with its time zone and next run.",
+    "Pause (enabled=false) or resume (enabled=true) a routine by routineId. Resuming never replays missed runs; expired one-offs are removed. Show the returned summary with time zone and next run.",
   parameters: SetRoutineEnabledInput,
   success: RoutineChangeResult,
   failure: PersonalToolFailure,
@@ -452,7 +406,7 @@ const SetRoutineEnabledTool = Tool.make("set_routine_enabled", {
 
 const DeleteRoutineTool = Tool.make("delete_routine", {
   description:
-    "Delete one routine for good, by routineId from list_routines plus its current title as a check. Past runs stay in history. No undo: name the routine and get the user's clear yes in this chat first, unless they already asked to delete it. If the id or title does not match, nothing is deleted; call list_routines again rather than guessing. To stop it for now, pause it instead.",
+    "Permanently delete a routine by routineId and exact current title (no undo; confirm with user first unless already asked). Pause instead to stop temporarily.",
   parameters: DeleteRoutineInput,
   success: DeleteRoutineResult,
   failure: PersonalToolFailure,
@@ -466,7 +420,7 @@ const DeleteRoutineTool = Tool.make("delete_routine", {
 
 const SearchMemoryTool = Tool.make("search_memory", {
   description:
-    "Search saved memory (entries for all bots, your team and you, plus past task summaries). An entry matches if it has any query word (plurals and extensions match; common words ignored), best first. Messages usually arrive with relevant entries under 'Known facts (from memory)', so search for what those lack. Task summaries describe past work, not preferences. If the query names an app (matchday, hbots, caltrack ...), rules scoped to it come first, on top of the limit. Results cap at about 6,000 characters with a note on how many more matched; narrow the query or lower limit for the rest.",
+    "Search saved memory (shared, team, bot entries plus task summaries) matching any query word; app-scoped rules come first. Capped near 6,000 chars.",
   parameters: SearchMemoryInput,
   success: SearchMemoryResult,
   failure: PersonalToolFailure,
@@ -507,7 +461,7 @@ const UsageStatusTool = Tool.make("usage_status", {
 
 const SaveMemoryTool = Tool.make("save_memory", {
   description:
-    "Save a fact or rule to long-term memory. Choose kind carefully: rules are preferences, facts are notes. A note is saved at once, at any reach, without asking, in any chat, task or routine: save facts, decisions and events worth keeping whenever you learn them, no userRequest needed. The chat shows a 'Saved a note' line with Undo. Notes record their source, are background facts, and never authorize an action or set a rule. A note can replace older notes, never a preference. You never save a preference yourself, even for you alone: pass the user's words verbatim in userRequest. The server checks they are in the user's own message in this chat and ask for it ('remember', 'don't forget', 'keep in mind', 'save this', 'for future reference'), unless your instructions give standing permission to save, and then only in a chat the user started. It is saved at once (with 'Saved a rule' and Undo) only if its words, links, numbers and names are the user's own, so write it in their words; a rule it replaces must be on the same subject. From a task, a routine or another bot's message it is refused: say so in your result. If automatic memory is off, the result says waiting_for_approval and the user taps Save on a card; tell them briefly and do not save again. Nothing is saved from a chat that has had a sensitive site open, not even for yourself. One dated fact per entry, under about 300 characters. When something changed, pass the old entry's id in replaces; if the result's similar list has an older version, call again with the same content and replaces set to its id. Passwords, tokens, keys and other secrets are rejected.",
+    "Save a fact (kind='note') or standing rule (kind='preference') to long-term memory (<300 chars, no secrets, blocked if a sensitive site was opened). Notes save at once with Undo in any chat/task/routine (no userRequest; can replace older notes, never preferences). Preferences require the user's verbatim words in userRequest from a chat the user started (refused in tasks/routines/bot turns); write in the user's words. If automatic memory is off, waiting_for_approval shows a Save card. Pass replaces ids when updating an entry (or if similar lists an older version).",
   parameters: SaveMemoryInput,
   success: SaveMemoryResult,
   failure: PersonalToolFailure,

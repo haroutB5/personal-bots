@@ -83,4 +83,30 @@ describe("usageRoom", () => {
       resetsAtMs: Date.parse("2026-11-15T11:00:00.000Z"),
     });
   });
+
+  it("does not let Antigravity 3p windows block Gemini models", () => {
+    const agy3pSpent: NonNullable<ServerProvider["usageLimits"]> = {
+      checkedAt: "2026-11-14T13:44:58.102Z",
+      windows: [
+        { id: "gemini-weekly", kind: "weekly", label: "Gemini weekly", usedPercent: 20 },
+        {
+          id: "3p-weekly",
+          kind: "weekly",
+          label: "Claude & GPT (shared)",
+          usedPercent: 100,
+          resetsAt: "2026-11-15T11:00:00.000Z",
+        },
+      ],
+    };
+    expect(usageRoom(agy3pSpent, "gemini-4-neon", nowMs)).toEqual({
+      room: true,
+      known: true,
+      resetsAtMs: null,
+    });
+    expect(usageRoom(agy3pSpent, "claude-sonnet-4-6", nowMs)).toEqual({
+      room: false,
+      known: true,
+      resetsAtMs: Date.parse("2026-11-15T11:00:00.000Z"),
+    });
+  });
 });

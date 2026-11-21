@@ -320,7 +320,16 @@ export function ChatScreen({
     if (instanceId === null) return null;
     return providers.find((provider) => provider.instanceId === instanceId)?.driver ?? null;
   }, [providers, record?.bot, thread?.modelSelection?.instanceId]);
-  const supportsActiveSteering = driverSupportsActiveSteering(activeDriver);
+  const negotiatedSteering = useMemo(() => {
+    const sessions = view.projection?.providerSessions;
+    if (!sessions || sessions.length === 0) return undefined;
+    const active = sessions.findLast(
+      (session) =>
+        session.status === "running" || session.status === "starting" || session.status === "ready",
+    );
+    return active?.capabilities?.turns?.supportsActiveSteering;
+  }, [view.projection?.providerSessions]);
+  const supportsActiveSteering = negotiatedSteering ?? driverSupportsActiveSteering(activeDriver);
   const latestMessageStatus = useMemo(
     () =>
       thread === null

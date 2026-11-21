@@ -175,7 +175,7 @@ export function ProviderScreen({
         : commandFailureMessage(result, `Couldn't start the ${model.label} install.`);
     if (failure === null) {
       setSheet(null);
-      setNotice("Install started. You can leave this page; Settings shows the progress.");
+      setNotice("Install started. You can leave this page and check progress here.");
     } else {
       setError(failure);
     }
@@ -195,7 +195,12 @@ export function ProviderScreen({
             "signIn",
             () => startAuth({ environmentId, input: { instanceId: instanceId as never } }),
             `Couldn't start ${model.label} sign-in.`,
-            () => setNotice("Sign-in is open. Finish it on your laptop, then tap Test."),
+            () =>
+              setNotice(
+                model.canTest
+                  ? "Sign-in is open. Finish it on your laptop, then tap Test."
+                  : "Sign-in is open. Finish it on your laptop.",
+              ),
           ).then((failure) => {
             if (failure !== null) return;
           });
@@ -435,59 +440,63 @@ export function ProviderScreen({
         </Section>
       )}
 
-      {keyField === undefined ? null : (
+      {keyField === undefined && snapshot.auth.status !== "authenticated" ? null : (
         <Section label="Account">
-          <Row
-            title={keyField.label}
-            hint={savedKey ? "Saved · never shown again" : keyField.emptyDescription}
-            right={
-              savedKey ? (
-                <View style={styles.rowButtons}>
-                  <TextButton label="Replace" onPress={() => setKeyOpen(true)} />
-                  <TextButton label="Remove" onPress={() => void removeKey()} destructive />
+          {keyField === undefined ? null : (
+            <>
+              <Row
+                title={keyField.label}
+                hint={savedKey ? "Saved · never shown again" : keyField.emptyDescription}
+                right={
+                  savedKey ? (
+                    <View style={styles.rowButtons}>
+                      <TextButton label="Replace" onPress={() => setKeyOpen(true)} />
+                      <TextButton label="Remove" onPress={() => void removeKey()} destructive />
+                    </View>
+                  ) : (
+                    <TextButton label="Add key" onPress={() => setKeyOpen(true)} />
+                  )
+                }
+                last={!keyOpen && snapshot.auth.status !== "authenticated"}
+              />
+              {keyOpen ? (
+                <View style={styles.keyForm}>
+                  <Field
+                    label={keyField.label}
+                    value={keyDraft}
+                    onChangeText={setKeyDraft}
+                    placeholder={keyField.placeholder}
+                    secure
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    help="Saved on your computer and never shown in a chat."
+                  />
+                  <TextButton
+                    label={keyField.keysUrlLabel}
+                    onPress={() => void Linking.openURL(keyField.keysUrl)}
+                  />
+                  <View style={styles.rowButtons}>
+                    <TextButton
+                      label="Cancel"
+                      onPress={() => {
+                        clearKeyDraft();
+                        setKeyOpen(false);
+                      }}
+                    />
+                    <PrimaryButton
+                      label={busy === "saveKey" ? "Saving…" : "Save key"}
+                      onPress={() => void saveKey()}
+                      busy={busy === "saveKey"}
+                      disabled={keyDraft.trim().length === 0}
+                    />
+                  </View>
                 </View>
-              ) : (
-                <TextButton label="Add key" onPress={() => setKeyOpen(true)} />
-              )
-            }
-            last={!keyOpen}
-          />
-          {keyOpen ? (
-            <View style={styles.keyForm}>
-              <Field
-                label={keyField.label}
-                value={keyDraft}
-                onChangeText={setKeyDraft}
-                placeholder={keyField.placeholder}
-                secure
-                autoCapitalize="none"
-                autoComplete="off"
-                help="Saved on your computer and never shown in a chat."
-              />
-              <TextButton
-                label={keyField.keysUrlLabel}
-                onPress={() => void Linking.openURL(keyField.keysUrl)}
-              />
-              <View style={styles.rowButtons}>
-                <TextButton
-                  label="Cancel"
-                  onPress={() => {
-                    clearKeyDraft();
-                    setKeyOpen(false);
-                  }}
-                />
-                <PrimaryButton
-                  label={busy === "saveKey" ? "Saving…" : "Save key"}
-                  onPress={() => void saveKey()}
-                  busy={busy === "saveKey"}
-                  disabled={keyDraft.trim().length === 0}
-                />
-              </View>
-            </View>
-          ) : null}
+              ) : null}
+            </>
+          )}
           {snapshot.auth.status === "authenticated" ? (
             <Row
-              title={`${keyField.displayName} account`}
+              title={`${keyField?.displayName ?? model.label} account`}
               hint={`Signed in · ${snapshot.auth.label ?? snapshot.auth.email ?? model.label}`}
               right={
                 <TextButton label="Sign out" onPress={() => setSheet("signOut")} destructive />
@@ -561,7 +570,7 @@ export function ProviderScreen({
             <Row
               key={entry.slug}
               title={entry.name}
-              hint={index === 0 ? "Default model" : undefined}
+              hint={entry.isDefault ? "Default model" : undefined}
               last={index === shownModels.length - 1 && snapshot.models.length <= 3}
             />
           ))}

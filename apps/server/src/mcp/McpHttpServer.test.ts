@@ -1875,7 +1875,10 @@ it("isToolListedForPersonalBot hides T3 desktop IDE tools and inapplicable lead/
   expect(McpHttpServer.isToolListedForPersonalBot("delegate_task", member)).toBe(true);
   expect(McpHttpServer.isToolListedForPersonalBot("request_secret", member)).toBe(true);
   expect(McpHttpServer.isToolListedForPersonalBot("preview_open", member)).toBe(true);
-  expect(McpHttpServer.isToolListedForPersonalBot("device_open", member)).toBe(true);
+  expect(McpHttpServer.isToolListedForPersonalBot("device_open", member)).toBe(false);
+  expect(McpHttpServer.isToolListedForPersonalBot("device_open", member, { hasDevice: true })).toBe(
+    true,
+  );
   expect(McpHttpServer.isToolListedForPersonalBot("html_render", member)).toBe(true);
   expect(McpHttpServer.isToolListedForPersonalBot("t3_thread_list", member)).toBe(false);
   expect(McpHttpServer.isToolListedForPersonalBot("t3_project_create", member)).toBe(false);

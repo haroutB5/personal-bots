@@ -781,6 +781,7 @@ export function Composer({
         runtimeMode: turn.runtimeMode,
         interactionMode: turn.interactionMode,
         ...(meta.followUp !== undefined ? { followUp: meta.followUp } : {}),
+        ...(meta.followUp === "queue" ? { dispatchMode: "queue" as const } : {}),
         createdAt: outgoing.createdAt,
       },
     });

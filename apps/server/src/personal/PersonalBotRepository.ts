@@ -2228,9 +2228,10 @@ export const make = Effect.gen(function* () {
     getInstructionsForThreadRow(input).pipe(
       Effect.map(
         Option.map((row) => {
-          const effort = row.modelSelection.options?.find(
-            (option) => option.id === "variant",
-          )?.value;
+          const effortOptionIds = ["effort", "reasoningEffort", "variant", "thinking_level"];
+          const effort = effortOptionIds
+            .map((id) => row.modelSelection.options?.find((option) => option.id === id)?.value)
+            .find((value): value is string => typeof value === "string" && value.length > 0);
           return {
             name: row.name,
             title: row.title,

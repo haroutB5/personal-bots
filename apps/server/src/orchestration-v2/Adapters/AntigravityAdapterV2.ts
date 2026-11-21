@@ -21,6 +21,7 @@ import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityAppendsSystemPrompt,
+  antigravityPermissionDisposition,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
   antigravitySteersWithPrompt,
@@ -257,6 +258,7 @@ export function makeAntigravityAcpAdapterFlavor(
     // `agy acp` reads a prompt sent mid-turn as a steer; cancel-and-restart killed its subagents.
     steersWithPrompt: antigravitySteersWithPrompt,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
+    ownedModelOptionIds: ["effort"],
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
       modelSelection,
@@ -266,6 +268,7 @@ export function makeAntigravityAcpAdapterFlavor(
         runtime,
         model:
           modelSelection.model === ANTIGRAVITY_DEFAULT_MODEL ? undefined : modelSelection.model,
+        options: modelSelection.options,
         defaultModel,
         mapError: (cause) => cause,
       });
@@ -281,6 +284,7 @@ export function makeAntigravityAcpAdapterFlavor(
           request,
         }),
     },
+    permissionDisposition: antigravityPermissionDisposition,
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);

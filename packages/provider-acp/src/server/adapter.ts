@@ -71,6 +71,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -492,7 +493,7 @@ export interface AcpAdapterV2Flavor {
   ) => ReadonlyArray<{ readonly id: string; readonly value: string }>;
   /**
    * The runtime mode a native session mode grants, for flavors whose modes are permission levels.
-   * Under a policy ceiling, a mode the user picks that this does not place under it is not applied.
+   * A picked mode this does not place within the thread's runtime mode is not applied.
    */
   readonly runtimeModeForSessionMode?: (modeId: string) => RuntimeMode | undefined;
   readonly clientFileSystem?: {
@@ -1376,41 +1377,66 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
         .join("\n");
 }
 
-function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
+function resolvedPathInfo(
+  toolCall: AcpToolCallState,
+): { readonly path: string; readonly fromQuery: boolean } | undefined {
   const locations = toolCall.data.locations;
   if (Array.isArray(locations)) {
     for (const location of locations) {
       const path = unknownRecord(location)?.path;
       if (typeof path === "string" && path.trim().length > 0) {
-        return path.trim();
+        return { path: path.trim(), fromQuery: false };
       }
     }
   }
   const rawInput = unknownRecord(toolCall.data.rawInput);
-  for (const key of ["path", "filePath", "file_path", "url", "query", "pattern"]) {
+  for (const key of ["path", "filePath", "file_path", "url"]) {
     const candidate = rawInput?.[key];
     if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
+      return { path: candidate.trim(), fromQuery: false };
+    }
+  }
+  for (const key of ["query", "pattern"]) {
+    const candidate = rawInput?.[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return { path: candidate.trim(), fromQuery: true };
     }
   }
   return undefined;
 }
 
+function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
+  return resolvedPathInfo(toolCall)?.path;
+}
+
 function acpBackendWebSearch(
   rawInput: Record<string, unknown> | undefined,
-  rawOutput: Record<string, unknown> | undefined,
+  rawOutput: unknown,
+  title?: string | null,
 ):
   | { readonly query: string | undefined; readonly results: OrchestrationV2WebSearchResult[] }
   | undefined {
   const variant = typeof rawInput?.variant === "string" ? rawInput.variant.toLowerCase() : "";
-  const action = unknownRecord(rawOutput?.action);
-  if (variant !== "xsearch" && variant !== "websearch" && action?.type !== "search") {
+  const rawOutputRecord = unknownRecord(rawOutput);
+  const action = unknownRecord(rawOutputRecord?.action);
+  const isWebSearchTitle =
+    /^\s*(?:web search|search the web|(?:run(?:ning)?\s+)?(?:web_search|search_web)\s*$)/iu.test(
+      title ?? "",
+    );
+  const isWebSearchVariant = [
+    "xsearch",
+    "websearch",
+    "web_search",
+    "search_web",
+    "web-search",
+  ].includes(variant);
+  if (!isWebSearchVariant && action?.type !== "search" && !isWebSearchTitle) {
     return undefined;
   }
   let args: Record<string, unknown> | undefined;
-  if (typeof rawOutput?.input === "string") {
+  if (typeof rawOutputRecord?.input === "string") {
     try {
-      args = unknownRecord(JSON.parse(rawOutput.input));
+      args = unknownRecord(JSON.parse(rawOutputRecord.input));
     } catch {
       args = undefined;
     }
@@ -1419,7 +1445,14 @@ function acpBackendWebSearch(
     .filter(([, value]) => typeof value === "string" || typeof value === "number")
     .map(([key, value]) => `${key}: ${value}`)
     .join(", ");
-  const query = [action?.query, args?.query, argsText]
+  const query = [
+    action?.query,
+    args?.query,
+    rawInput?.query,
+    rawInput?.search_query,
+    rawInput?.q,
+    argsText,
+  ]
     .find((value): value is string => typeof value === "string" && value.trim().length > 0)
     ?.trim();
   const urls = new Set<string>();
@@ -1427,7 +1460,29 @@ function acpBackendWebSearch(
     const url = unknownRecord(source)?.url;
     if (typeof url === "string" && url.trim().length > 0) urls.add(url.trim());
   }
+  if (urls.size === 0) {
+    for (const match of textFromUnknown(rawOutput)?.matchAll(/https?:\/\/[^\s<>"]+/gu) ?? []) {
+      urls.add(trimCitationUrl(match[0]));
+    }
+  }
   return { query, results: [...urls].map((url) => ({ url })) };
+}
+
+// Prose citations end in punctuation or a closing bracket that is not part of the URL.
+function trimCitationUrl(raw: string): string {
+  let url = raw;
+  for (;;) {
+    const trimmed = url.replace(/[.,;:]+$/u, "");
+    const close = trimmed.at(-1);
+    const open = close === ")" ? "(" : close === "]" ? "[" : undefined;
+    if (open && close && trimmed.split(open).length < trimmed.split(close).length) {
+      url = trimmed.slice(0, -1);
+    } else if (trimmed === url) {
+      return url;
+    } else {
+      url = trimmed;
+    }
+  }
 }
 
 function providerRequestKind(kind: string | "unknown"): ProviderRequestKind {
@@ -1497,7 +1552,7 @@ function selectPermissionOptionId(
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
   const optionIdOfKind = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
-    request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+    request.options.find((option) => option.kind === kind)?.optionId;
   if (decision === "acceptForSession") {
     // Agents may offer only allow_once, and answering "cancelled" would stop the turn the user approved.
     return optionIdOfKind("allow_always") ?? optionIdOfKind("allow_once");
@@ -1583,6 +1638,15 @@ interface ActiveAcpTurn {
     {
       readonly id: OrchestrationV2PlanArtifact["id"];
       readonly startedAt: DateTime.Utc;
+      /** The turn that first reported the plan; later turns update its rows. */
+      readonly origin: {
+        readonly runId: ActiveAcpTurn["input"]["runId"];
+        readonly rootNodeId: ActiveAcpTurn["input"]["rootNodeId"];
+        readonly providerThreadId: ActiveAcpTurn["input"]["providerThread"]["id"];
+        readonly providerTurnId: ActiveAcpTurn["providerTurnId"];
+        readonly nativeItemId: string;
+        readonly ordinal: number;
+      };
       latest: OrchestrationV2PlanArtifact | null;
     }
   >;
@@ -2148,6 +2212,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           new Map<string, OrchestrationV2ProviderThread>(),
         );
         const nativeBuildConfigurationBySessionId = new Map<string, AcpNativeBuildConfiguration>();
+        const plansBySessionId = new Map<string, ActiveAcpTurn["plans"]>();
         const initialSessionActivationFailure = yield* Ref.make<{
           readonly sessionId: string;
           readonly error: EffectAcpErrors.AcpError;
@@ -4482,7 +4547,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
-            const summary = textFromUnknown(rawOutput);
+            const summary =
+              (status === "failed" ? textFromUnknown(toolCall.data.compactionError) : undefined) ||
+              textFromUnknown(rawOutput);
             turnItem = {
               ...base,
               type: "compaction",
@@ -4582,6 +4649,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   title: path ? formatReadToolLabel(path) : (title ?? "Read file"),
                   type: "dynamic_tool",
                   toolName: "Read",
+                  ...(path !== undefined &&
+                  path.length <= 4096 &&
+                  !/[\r\n]/.test(path) &&
+                  isWorkspaceImagePreviewPath(path)
+                    ? { viewedImagePath: path }
+                    : {}),
                   input:
                     path === undefined ||
                     ["path", "filePath", "file_path"].some((key) => rawInputRecord?.[key] === path)
@@ -4591,12 +4664,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 };
                 break;
               case "search": {
-                const backendSearch = acpBackendWebSearch(rawInputRecord, rawOutputRecord);
+                const backendSearch = acpBackendWebSearch(
+                  rawInputRecord,
+                  rawOutput,
+                  typeof toolCall.data.title === "string" ? toolCall.data.title : title,
+                );
                 if (backendSearch !== undefined) {
-                  const label = nonEmptyText(toolCall.data.title, title ?? "Web search").replace(
-                    /:\s*$/u,
-                    "",
-                  );
+                  const label = nonEmptyText(toolCall.data.title, title ?? "Web search")
+                    .replace(/:\s*$/u, "")
+                    // Antigravity titles the call "Running search_web".
+                    .replace(
+                      /^\s*(?:run(?:ning)?\s+)?(?:web_search|search_web)\s*$/iu,
+                      "Web search",
+                    );
                   turnItem = {
                     ...base,
                     title:
@@ -4613,6 +4693,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   };
                   break;
                 }
+                const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
                 turnItem = {
                   ...base,
                   title:
@@ -4623,7 +4704,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }) ?? title,
                   type: "file_search",
                   ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined
+                  ...(path === undefined ||
+                  (pathIsQuery && textFromUnknown(rawOutput) === undefined)
                     ? {}
                     : {
                         results: [
@@ -4758,30 +4840,51 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const emitPlan = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           update: AcpPlanUpdate,
+          sessionScoped: boolean,
         ) {
           yield* closeTextStreams(context);
-          const existing = context.plans.get(update.nativePlanId);
+          let plans = sessionScoped ? plansBySessionId.get(context.nativeThreadId) : context.plans;
+          if (plans === undefined) {
+            plans = new Map();
+            plansBySessionId.set(context.nativeThreadId, plans);
+          }
+          const existing = plans.get(update.nativePlanId);
           if (update.kind === "removed" && existing === undefined) return;
-          const nativeItemId = `${context.nativeTurnId}:plan:${encodeURIComponent(update.nativePlanId)}`;
-          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const now = yield* DateTime.now;
-          const nodeId = providerNodeId(nativeItemId);
-          const turnItemId = providerTurnItemId(nativeItemId);
-          const planState = existing ?? {
-            id: yield* idAllocator.allocate.plan({
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              driver,
-            }),
-            startedAt: now,
-            latest: null,
-          };
+          let planState = existing;
+          if (planState === undefined) {
+            const nativeItemId = `${context.nativeTurnId}:plan:${encodeURIComponent(update.nativePlanId)}`;
+            planState = {
+              id: yield* idAllocator.allocate.plan({
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                driver,
+              }),
+              startedAt: now,
+              origin: {
+                runId: context.input.runId,
+                rootNodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemId,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              },
+              latest: null,
+            };
+          }
+          const { origin } = planState;
+          const nodeId = providerNodeId(origin.nativeItemId);
+          const turnItemId = providerTurnItemId(origin.nativeItemId);
           const planId = planState.id;
-          const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
+          const nativeItemRef = {
+            driver,
+            nativeId: origin.nativeItemId,
+            strength: "weak" as const,
+          };
           const base = {
             id: planId,
             threadId: context.input.threadId,
-            runId: context.input.runId,
+            runId: origin.runId,
             nodeId,
           } as const;
           let plan: OrchestrationV2PlanArtifact;
@@ -4832,7 +4935,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             };
           }
           planState.latest = plan;
-          context.plans.set(update.nativePlanId, planState);
+          plans.set(update.nativePlanId, planState);
           const completed = plan.status === "completed" || plan.status === "superseded";
           const nodeKind = plan.kind === "todo_list" ? "todo_list" : "plan";
           yield* emitProviderEvent({
@@ -4841,14 +4944,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             node: {
               id: nodeId,
               threadId: context.input.threadId,
-              runId: context.input.runId,
-              parentNodeId: context.input.rootNodeId,
-              rootNodeId: context.input.rootNodeId,
+              runId: origin.runId,
+              parentNodeId: origin.rootNodeId,
+              rootNodeId: origin.rootNodeId,
               kind: nodeKind,
               status: completed ? "completed" : "running",
               countsForRun: false,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
+              providerThreadId: origin.providerThreadId,
+              providerTurnId: origin.providerTurnId,
               nativeItemRef,
               runtimeRequestId: null,
               checkpointScopeId: null,
@@ -4863,13 +4966,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             turnItem: {
               id: turnItemId,
               threadId: context.input.threadId,
-              runId: context.input.runId,
+              runId: origin.runId,
               nodeId,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
+              providerThreadId: origin.providerThreadId,
+              providerTurnId: origin.providerTurnId,
               nativeItemRef,
               parentItemId: null,
-              ordinal,
+              ordinal: origin.ordinal,
               status: completed ? "completed" : "running",
               title: null,
               startedAt: planState.startedAt,
@@ -5658,11 +5761,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const lateMonitorChatter =
                 /<monitor-event\b/i.test(text) ||
                 /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text);
-              if (
-                text.trim().length > 0 &&
-                lateBackgroundMutations.length === 0 &&
-                !lateMonitorChatter
-              ) {
+              if (lateBackgroundMutations.length === 0 && !lateMonitorChatter) {
                 yield* appendLoadedHistory(
                   notification,
                   update.sessionUpdate === "user_message_chunk"
@@ -6012,7 +6111,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (event._tag === "ToolCallUpdated") {
                   yield* emitTool(context, event.toolCall);
                 } else if (event._tag === "PlanUpdated") {
-                  yield* emitPlan(context, event.payload);
+                  yield* emitPlan(context, event.payload, update.sessionUpdate !== "plan");
                 } else if (event._tag === "NoticeReceived") {
                   yield* emitNotice(context, event);
                 } else if (event._tag === "UnknownUpdate") {
@@ -7875,9 +7974,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           const configOptions = yield* runtime.getConfigOptions;
-          // Under a policy ceiling, a mode the user picks applies only when the flavor can place
-          // it under the ceiling; an unknown mode could be the agent's own skip-approval mode.
-          const ceiling = runtimePolicy.maxRuntimeMode;
+          // A picked mode applies only when the flavor places it within the bound; an unknown mode
+          // could be the agent's own skip-approval mode. Modes known to be permission levels are
+          // also bounded by the thread's runtime mode, so model options cannot widen it.
+          const ceiling =
+            flavor.runtimeModeForSessionMode === undefined ||
+            (runtimePolicy.maxRuntimeMode !== undefined &&
+              isRuntimeModeAbove(runtimePolicy.runtimeMode, runtimePolicy.maxRuntimeMode))
+              ? runtimePolicy.maxRuntimeMode
+              : runtimePolicy.runtimeMode;
           const isModeChoice = (id: string) =>
             id === ACP_SESSION_MODE_OPTION_ID ||
             configOptions.some(
@@ -8028,6 +8133,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const nativeBuild = nativeBuildConfigurationBySessionId.get(startResult.sessionId);
             if (nativeBuild !== undefined) {
               if (
+                policyMode === undefined &&
                 nativeBuild.modeId !== undefined &&
                 effectiveModeState?.currentModeId !== nativeBuild.modeId &&
                 effectiveModeState?.availableModes.some(
@@ -8040,7 +8146,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const option = effectiveConfigOptions.find(
                   (candidate) => candidate.type === "select" && candidate.id === saved.id,
                 );
-                if (option === undefined || option.type !== "select") continue;
+                if (
+                  option === undefined ||
+                  option.type !== "select" ||
+                  (policyMode !== undefined && option.category === "mode")
+                )
+                  continue;
                 const choices = option.options.flatMap((entry) =>
                   "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
                 );
@@ -10209,7 +10320,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const state = yield* Ref.get(snapshot);
                   const messages = state.order.flatMap((key) => {
                     const message = state.messages.get(key);
-                    return message === undefined ? [] : [message];
+                    return message === undefined ||
+                      (message.text.trim().length === 0 && message.attachments.length === 0)
+                      ? []
+                      : [message];
                   });
                   const now = yield* DateTime.now;
                   return {

@@ -3174,6 +3174,131 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("replaces and removes identified ACP plans across turns", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-cross-turn-plans");
+      const threadId = ThreadId.make("acp-cross-turn-plans");
+      let notify:
+        | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+        | undefined;
+      let ordinal = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  notify = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  ordinal++;
+                  const send = (update: EffectAcpSchema.SessionUpdate) =>
+                    notify!({ sessionId: "mock-session-1", update });
+                  const plan = (id: string, text: string) =>
+                    send({
+                      sessionUpdate: "plan_update",
+                      plan: {
+                        type: "items",
+                        planId: id,
+                        entries: [{ content: text, priority: "medium", status: "pending" }],
+                      },
+                    });
+                  yield* send({ sessionUpdate: "state_update", state: "running" });
+                  if (ordinal === 1) {
+                    yield* plan("control", "First");
+                    yield* plan("control", "Replacement");
+                    yield* send({ sessionUpdate: "plan_removed", planId: "control" });
+                    yield* plan("later-remove", "Remove on next turn");
+                    yield* plan("later-replace", "Old contents");
+                  } else {
+                    yield* send({ sessionUpdate: "plan_removed", planId: "later-remove" });
+                    yield* plan("later-replace", "New contents");
+                  }
+                  yield* send({
+                    sessionUpdate: "plan",
+                    entries: [{ content: "Anonymous plan", priority: "medium", status: "pending" }],
+                  });
+                  yield* send({
+                    sessionUpdate: "state_update",
+                    state: "idle",
+                    stopReason: "end_turn",
+                  });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("acp-cross-turn-plans"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const run = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          return Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          ).flatMap((event) => (event.type === "plan.updated" ? [event.plan] : []));
+        });
+      const first = yield* run(1);
+      assert.equal(first.length, 6);
+      assert.equal(first[0]!.id, first[1]!.id);
+      assert.equal(first[1]!.id, first[2]!.id);
+      assert.equal(first[1]!.kind, "todo_list");
+      assert.deepEqual(first[1]!.kind === "todo_list" ? first[1]!.steps.map((s) => s.text) : [], [
+        "Replacement",
+      ]);
+      assert.equal(first[2]!.status, "superseded");
+      const second = yield* run(2);
+      assert.equal(second.length, 3);
+      assert.notEqual(first[5]!.id, second[2]!.id);
+      const removed = second.find((p) => p.id === first[3]!.id && p.status === "superseded");
+      const replacement = second.find(
+        (p) => p.kind === "todo_list" && p.steps.some((s) => s.text === "New contents"),
+      );
+      assert.isDefined(
+        removed,
+        "plan_removed on a later turn must supersede the existing session plan",
+      );
+      assert.equal(removed?.runId, first[3]!.runId);
+      assert.equal(replacement?.runId, first[4]!.runId);
+      assert.equal(removed?.nodeId, first[3]!.nodeId);
+      assert.equal(replacement?.nodeId, first[4]!.nodeId);
+      assert.equal(
+        replacement?.id,
+        first[4]!.id,
+        "the same session plan must be replaced, not duplicated",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3337,10 +3462,15 @@ describe("AcpAdapterV2", () => {
       yield* replay("user_message_chunk", "u1", "lo");
       yield* replay("agent_message_chunk", "a1", "hi");
       yield* replay("user_message_chunk", "u2", "next");
-      yield* replay("agent_message_chunk", "a1", " there");
+      yield* replay("agent_message_chunk", "a1", " ");
+      yield* replay("agent_message_chunk", "a1", "there");
+      yield* replay("agent_message_chunk", "a3", "\t");
+      yield* replay("agent_message_chunk", "a3", "code");
+      yield* replay("agent_message_chunk", "a4", "\n\n");
       const first = yield* runtime.readThreadSnapshot({ providerThread });
       yield* replay("agent_message_chunk", "a2", "done");
-      yield* replay("user_message_chunk", "u2", " one");
+      yield* replay("user_message_chunk", "u2", "\n");
+      yield* replay("user_message_chunk", "u2", "\tone");
       yield* sessionUpdateHandler!({
         sessionId: "mock-child-session",
         update: {
@@ -3352,11 +3482,17 @@ describe("AcpAdapterV2", () => {
 
       const texts = (snapshot: typeof first) =>
         snapshot.messages.map((message) => `${message.role}:${message.text}`);
-      assert.deepEqual(texts(first), ["user:hello", "assistant:hi there", "user:next"]);
+      assert.deepEqual(texts(first), [
+        "user:hello",
+        "assistant:hi there",
+        "user:next",
+        "assistant:\tcode",
+      ]);
       assert.deepEqual(texts(second), [
         "user:hello",
         "assistant:hi there",
-        "user:next one",
+        "user:next\n\tone",
+        "assistant:\tcode",
         "assistant:done",
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
@@ -4450,16 +4586,54 @@ describe("AcpAdapterV2", () => {
             item.changes[0]?.oldPath === "/workspace/old.ts",
         ),
       );
-      const read = items.find((item) => item.type === "dynamic_tool" && item.toolName === "Read");
-      assert.deepEqual(
-        read?.type === "dynamic_tool" ? { title: read.title, input: read.input } : null,
-        { title: "Read src/env.ts", input: { path: "src/env.ts" } },
-      );
+      const readItem = (nativeId: string) => {
+        const item = items.findLast(
+          (candidate) =>
+            candidate.type === "dynamic_tool" &&
+            candidate.toolName === "Read" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "dynamic_tool"
+          ? { title: item.title, input: item.input, viewedImagePath: item.viewedImagePath }
+          : null;
+      };
+      assert.deepEqual(readItem("structured-read"), {
+        title: "Read src/env.ts",
+        input: { path: "src/env.ts" },
+        viewedImagePath: undefined,
+      });
+      assert.deepEqual(readItem("structured-image-read"), {
+        title: "Read /workspace/mockup.png",
+        input: { file_path: "/workspace/mockup.png", start_line: 0, end_line: 799 },
+        viewedImagePath: "/workspace/mockup.png",
+      });
       const search = items.find((item) => item.type === "file_search");
       assert.deepEqual(
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
+      const fileSearch = (nativeId: string) => {
+        const item = items.find(
+          (candidate) =>
+            candidate.type === "file_search" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "file_search"
+          ? { pattern: item.pattern, results: item.results }
+          : null;
+      };
+      assert.deepEqual(fileSearch("structured-search-explicit-location"), {
+        pattern: "README.md",
+        results: [{ fileName: "README.md", preview: "# Title" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-only"), {
+        pattern: "TODO",
+        results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-no-output"), {
+        pattern: "FIXME",
+        results: undefined,
+      });
       const webItem = (nativeId: string, status: string) => {
         const item = items.findLast(
           (candidate) =>
@@ -4485,6 +4659,25 @@ describe("AcpAdapterV2", () => {
         title: "Web search: t3 code",
         patterns: ["t3 code"],
         results: [{ url: "https://t3.codes" }, { url: "https://github.com/pingdotgg/t3code" }],
+      });
+      assert.deepEqual(webItem("antigravity-web-search", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: [
+          {
+            url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
+          },
+        ],
+      });
+      assert.deepEqual(webItem("antigravity-run-search-web", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: undefined,
+      });
+      assert.deepEqual(webItem("antigravity-web-search-streamed", "completed"), {
+        title: "Web search: streamed citations",
+        patterns: ["streamed citations"],
+        results: [{ url: "https://example.com/streamed_(detail)" }],
       });
       assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
         { url: "https://t3.codes", snippet: "T3 Code page" },
@@ -6277,6 +6470,22 @@ describe("AcpAdapterV2", () => {
         { optionId: "reject-once", name: "Reject", kind: "reject_once" },
       ],
       optionId: "allow-once",
+    },
+    {
+      label: "answers Always allow with the agent's option id unchanged when it has spaces",
+      options: [
+        { optionId: " opaque-choice ", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+      optionId: " opaque-choice ",
+    },
+    {
+      label: "answers Always allow with a whitespace-only option id instead of cancelling",
+      options: [
+        { optionId: " ", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+      optionId: " ",
     },
   ] as const)("$label", ({ options, optionId }) =>
     Effect.gen(function* () {

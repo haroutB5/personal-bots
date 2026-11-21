@@ -202,7 +202,7 @@ describe("real shapes", () => {
     );
     expect(w.phase).toBe("working");
     expect(w.steps.map((step: any) => step.label)).toEqual([
-      "Subagent",
+      "Subagent task",
       "File search",
       "Web search",
       "Error",
