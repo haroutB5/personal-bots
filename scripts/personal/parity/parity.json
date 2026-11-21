@@ -1519,7 +1519,7 @@
       "web": "BotThreadsScreen.tsx:612",
       "via": "menu",
       "logic": {
-        "files": 82,
+        "files": 83,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -1567,7 +1567,7 @@
       "web": "BotThreadsScreen.tsx:619",
       "via": "menu",
       "logic": {
-        "files": 82,
+        "files": 83,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -1795,7 +1795,7 @@
       "web": "ConversationScreen.tsx:1491",
       "via": "menu",
       "logic": {
-        "files": 140,
+        "files": 141,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1897,7 +1897,7 @@
       "web": "ConversationScreen.tsx:1494",
       "via": "menu",
       "logic": {
-        "files": 140,
+        "files": 141,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1999,7 +1999,7 @@
       "web": "ConversationScreen.tsx:1505",
       "via": "menu",
       "logic": {
-        "files": 140,
+        "files": 141,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2101,7 +2101,7 @@
       "web": "ConversationScreen.tsx:1517",
       "via": "menu",
       "logic": {
-        "files": 140,
+        "files": 141,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2203,7 +2203,7 @@
       "web": "ConversationScreen.tsx:1526",
       "via": "menu",
       "logic": {
-        "files": 140,
+        "files": 141,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2305,7 +2305,7 @@
       "web": "ConversationScreen.tsx:1540",
       "via": "menu",
       "logic": {
-        "files": 140,
+        "files": 141,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2834,7 +2834,7 @@
       "web": "PersonalComposer.tsx:1310",
       "via": "menu",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2861,7 +2861,7 @@
       "web": "PersonalComposer.tsx:1318",
       "via": "menu",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2888,7 +2888,7 @@
       "web": "PersonalComposer.tsx:1327",
       "via": "menu",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2915,7 +2915,7 @@
       "web": "PersonalComposer.tsx:1461",
       "via": "menu",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2942,7 +2942,7 @@
       "web": "PersonalComposer.tsx:1470",
       "via": "menu",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -3251,7 +3251,7 @@
       "web": "BotThreadsScreen.tsx:203",
       "via": "gesture",
       "logic": {
-        "files": 82,
+        "files": 83,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -3299,7 +3299,7 @@
       "web": "BotThreadsScreen.tsx:241",
       "via": "gesture",
       "logic": {
-        "files": 82,
+        "files": 83,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -5821,7 +5821,7 @@
       "web": "PersonalComposer.tsx:1341",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",

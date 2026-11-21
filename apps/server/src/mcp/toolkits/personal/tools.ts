@@ -420,7 +420,7 @@ const DeleteRoutineTool = Tool.make("delete_routine", {
 
 const SearchMemoryTool = Tool.make("search_memory", {
   description:
-    "Search saved memory (shared, team, bot entries plus task summaries) matching any query word; app-scoped rules come first. Capped near 6,000 chars.",
+    "Search saved memory (shared, your team, and bot entries plus task summaries) matching any query word; app-scoped rules come first. Capped near 6,000 chars.",
   parameters: SearchMemoryInput,
   success: SearchMemoryResult,
   failure: PersonalToolFailure,
@@ -461,7 +461,7 @@ const UsageStatusTool = Tool.make("usage_status", {
 
 const SaveMemoryTool = Tool.make("save_memory", {
   description:
-    "Save a fact (kind='note') or standing rule (kind='preference') to long-term memory (<300 chars, no secrets, blocked if a sensitive site was opened). Notes save at once with Undo in any chat/task/routine (no userRequest; can replace older notes, never preferences). Preferences require the user's verbatim words in userRequest from a chat the user started (refused in tasks/routines/bot turns); write in the user's words. If automatic memory is off, waiting_for_approval shows a Save card. Pass replaces ids when updating an entry (or if similar lists an older version).",
+    "Save a fact (kind='note') or standing rule (kind='preference') to memory (<300 chars, no secrets). A note is saved at once with Undo in any chat/task/routine (no userRequest; replaces notes, never preferences). You never save a preference yourself, even for you alone: pass userRequest verbatim from a chat the user started (refused in tasks/routines/bot turns); saved with 'Saved a rule' and Undo only if its words are the user's own, so write it in their words (or waiting_for_approval card if auto-memory is off). Sensitive chats save nothing, not even for yourself. Pass replaces ids when updating.",
   parameters: SaveMemoryInput,
   success: SaveMemoryResult,
   failure: PersonalToolFailure,

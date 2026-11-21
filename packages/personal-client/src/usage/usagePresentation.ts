@@ -549,7 +549,7 @@ export function selectUsageCards(
         resetSinceReading: usageResetSinceReading(limits, now),
         session: pickSession(stripWindows, now),
         weeklies: orderedWeeklies,
-        windows: stripWindows.map((w) => toRow(w, now)),
+        windows: limits.windows.map((w) => toRow(w, now)),
         checkedAt: parseCheckedAt(limits.checkedAt),
         resetCredits: limits.resetCredits
           ? { credits: limits.resetCredits, input: { instanceId: provider.instanceId } }
