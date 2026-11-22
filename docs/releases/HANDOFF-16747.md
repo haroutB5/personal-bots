@@ -40,3 +40,20 @@ Gates: `gate-evidence.mjs` with `gates-linux.scoped.json` (section below).
 ## Rollback
 
 Binary rollback to `930b9ae3ec80` (1.67.46). No data change, so no data restore.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=769e60c54d58e04fd40626b93b1a458660550250 release=769e60c54d58 json-sha256=b80929d4c13c8c4522a37709507633110f04c984ab922408ba47b6ca4cf7e527 result=PASS -->
+
+- server-tests: SKIPPED, skip: no changed path is an input of server-tests: apps/server, packages, scripts/personal/adblock, scripts/personal/dsh-runtime, scripts/personal/updates, scripts/personal/sync, scripts/personal/testing (not packages/personal-client/, packages/client-runtime/)
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: SKIPPED, skip: no changed path is an input of e2e: apps/server, apps/web, packages, scripts/personal/e2e, scripts/personal/node/e2e-smoke.mjs, scripts/personal/testing
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+
+<!-- gate-evidence:end -->
