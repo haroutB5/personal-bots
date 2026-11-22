@@ -906,11 +906,11 @@ class Run:
         return "PASS", f"Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid {pid} alive, FATAL 0, JS errors 0"
 
     def approval_card(self, s):
-        return s.first(text=r"Assistant needs approval") and s.first(text="Run a command") and s.first(desc="Approve")
+        return s.first(text=r"Developer needs approval") and s.first(text="Run a command") and s.first(desc="Approve")
 
     def ask_approval(self, tag):
         """Send SAFETYQ: the fake CLI asks for a Bash approval like Claude Code's safety check does. Waits for the card."""
-        self.say("Assistant", "SAFETYQ")
+        self.say("Developer", "SAFETYQ")
         s, ok = self.d.wait(self.approval_card, 30)
         self.shot(f"f10-{tag}-card")
         if not ok:
@@ -923,15 +923,15 @@ class Run:
 
     def f10(self):
         """Tool approvals (1.67.50): the card, the Chats row, Approve, Deny and the server's 2-minute auto-decline."""
-        self.open_bot("Assistant")
+        self.open_bot("Developer")
         self.ask_approval("approve")
         # The Chats row says Needs approval, and tapping it opens the chat at the card.
         self.leave_chat()
         self.to_chats()
-        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Assistant, .*Needs approval.*") if n.clickable), None), 20)
+        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Developer, .*Needs approval.*") if n.clickable), None), 20)
         self.shot("f10-chats-needs-approval")
         if not row:
-            return "FAIL", "the Assistant row never read Needs approval"
+            return "FAIL", "the Developer row never read Needs approval"
         self.d.tap(row)
         s, ok = self.d.wait(self.approval_card, 15)
         self.shot("f10-opened-from-row")
@@ -959,7 +959,7 @@ class Run:
             return "FAIL", f"no auto-decline after {waited}s"
         self.leave_chat()
         self.to_chats()
-        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Assistant, .*") if n.clickable), None), 10)
+        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Developer, .*") if n.clickable), None), 10)
         self.shot("f10-chats-after")
         if row and "Needs approval" in row.desc:
             return "FAIL", "the Chats row still reads Needs approval after the request resolved"

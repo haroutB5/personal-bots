@@ -12,4 +12,4 @@ Claude Code still asks for some Bash calls under full access (its bypass-immune 
 
 ## Driving it with adb and uiautomator
 
-Flow 10 sends `SAFETYQ` to `Assistant` three times (approve, deny, timeout). The fake CLI sends a `can_use_tool` request for Bash with a `$AD snapshot -i` loop command and the CLI's "can't be sure it read this command" reason. Screenshots `f10-*.png`. The timeout case waits up to 200 s.
+Flow 10 sends `SAFETYQ` to `Developer` three times (Assistant is the pinned lead and has no list row) (approve, deny, timeout). The fake CLI sends a `can_use_tool` request for Bash with a `$AD snapshot -i` loop command and the CLI's "can't be sure it read this command" reason. Screenshots `f10-*.png`. The timeout case waits up to 200 s.
