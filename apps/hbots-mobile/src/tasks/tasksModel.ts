@@ -4,8 +4,14 @@ import {
   type TaskBucket,
   type TaskListFilter,
 } from "@hbots/personal-client/conversation/taskPresentation";
+import { projectHasScheduledWork } from "@hbots/personal-client/work/projectCards";
 import * as DateTime from "effect/DateTime";
-import type { PersonalBot, PersonalRoutine, PersonalTask } from "@t3tools/contracts";
+import type {
+  PersonalBot,
+  PersonalProject,
+  PersonalRoutine,
+  PersonalTask,
+} from "@t3tools/contracts";
 
 export type TaskBuckets = Record<TaskBucket, Array<PersonalTask>>;
 
@@ -47,14 +53,89 @@ export function unansweredQuestionCount(
   return seen.size;
 }
 
+/**
+ * Work cards: one per open project with work scheduled (`projectHasScheduledWork`),
+ * one per standalone request row. Tasks in a counted project, or a lead waiting
+ * on a shown helper, add nothing. Null `projects` counts each live project id once.
+ */
+export function workCardCount(
+  buckets: TaskBuckets,
+  projects: ReadonlyArray<PersonalProject> | null | undefined,
+): number {
+  const live = [...buckets.active, ...buckets.waiting];
+  const byId = new Map(live.map((task) => [task.taskId as string, task]));
+  const openProjectIds =
+    projects === null || projects === undefined
+      ? null
+      : new Set(
+          projects
+            .filter((project) => project.state.kind === "open")
+            .map((project) => project.projectId as string),
+        );
+  const projectOf = (task: PersonalTask): string | null => {
+    const projectId = task.projectId ?? null;
+    if (projectId === null) return null;
+    return openProjectIds === null || openProjectIds.has(projectId) ? projectId : null;
+  };
+  const hasLiveChild = new Set<string>();
+  for (const task of live) {
+    if (task.parentTaskId !== null && byId.has(task.parentTaskId)) {
+      hasLiveChild.add(task.parentTaskId);
+    }
+  }
+  const waitingOnShownChild = (task: PersonalTask) =>
+    task.status === "waiting_for_agent" && hasLiveChild.has(task.taskId);
+  /** The topmost live standalone ancestor: one request row holds it and its helpers. */
+  const rootOf = (task: PersonalTask): string => {
+    let current = task;
+    const seen = new Set<string>();
+    while (current.parentTaskId !== null && !seen.has(current.taskId)) {
+      seen.add(current.taskId);
+      const parent = byId.get(current.parentTaskId);
+      if (parent === undefined || projectOf(parent) !== null) break;
+      current = parent;
+    }
+    return current.taskId;
+  };
+  const cards = new Set<string>();
+  const allTasks = [...live, ...buckets.completed];
+  for (const project of projects ?? []) {
+    if (projectHasScheduledWork(project, allTasks)) cards.add(`project:${project.projectId}`);
+  }
+  const looseRows = new Map<string, boolean>();
+  for (const task of live) {
+    const projectId = projectOf(task);
+    if (projectId !== null) {
+      cards.add(`project:${projectId}`);
+      continue;
+    }
+    const root = rootOf(task);
+    looseRows.set(root, (looseRows.get(root) ?? false) || !waitingOnShownChild(task));
+  }
+  for (const [root, counts] of looseRows) if (counts) cards.add(`task:${root}`);
+  return cards.size;
+}
+
+/** Scheduled tab: enabled routines first, then paused ones under their own heading. */
+export function routineSections(routines: ReadonlyArray<PersonalRoutine>): {
+  readonly enabled: ReadonlyArray<PersonalRoutine>;
+  readonly paused: ReadonlyArray<PersonalRoutine>;
+} {
+  return {
+    enabled: routines.filter((routine) => routine.enabled),
+    paused: routines.filter((routine) => !routine.enabled),
+  };
+}
+
 export function taskListCounts(
   buckets: TaskBuckets,
   routines: ReadonlyArray<PersonalRoutine>,
   questionCount = 0,
+  projects: ReadonlyArray<PersonalProject> | null = null,
 ): Record<TaskListFilter, number> {
   return {
-    work: buckets.active.length + buckets.waiting.length + questionCount,
-    scheduled: routines.filter((routine) => routine.enabled).length,
+    work: workCardCount(buckets, projects) + questionCount,
+    scheduled: routineSections(routines).enabled.length,
     completed: buckets.completed.length,
   };
 }
@@ -128,4 +209,17 @@ export function taskResultHeading(task: PersonalTask): string {
   return task.status === "running" && task.result?.waitingOnBackgroundSince !== undefined
     ? "Reply so far (still finishing background work)"
     : "Result";
+}
+
+/**
+ * The project card's line under its name: the lead's own why, else the step
+ * being worked on now, so it never reads as the chat the goal started in.
+ */
+export function projectCardSubtitle(card: {
+  readonly why: string | null;
+  readonly steps: ReadonlyArray<{ readonly label: string; readonly state: string }>;
+}): string | null {
+  const why = card.why?.trim() ?? "";
+  if (why.length > 0) return why;
+  return card.steps.find((step) => step.state === "doing")?.label ?? null;
 }

@@ -43,6 +43,7 @@ import { tokens } from "../shell/tokens";
 import {
   botsById,
   routineBulkTargets,
+  routineSections,
   TASK_EMPTY_TEXT,
   taskBuckets,
   taskListCounts,
@@ -52,7 +53,14 @@ import {
 } from "./tasksModel";
 import { ClosedProjects } from "../work/ProjectCards";
 import { WorkScreen } from "../work/WorkScreen";
-import { EmptyText, ScreenScroll, SmallBotAvatar, StatusDot, TaskButton } from "./TaskUi";
+import {
+  EmptyText,
+  ScreenScroll,
+  SectionLabel,
+  SmallBotAvatar,
+  StatusDot,
+  TaskButton,
+} from "./TaskUi";
 
 const OLDER_PAGE_SIZE = 30;
 
@@ -182,7 +190,8 @@ function RoutineRow({
       accessibilityState={selecting ? { checked: selected } : undefined}
       accessibilityLabel={`${routine.title}, ${describePersonalRoutineTrigger(routine)}, ${routineTriggerStatusLabel(routine)}`}
       android_ripple={{ color: "rgba(255,255,255,0.08)" }}
-      style={styles.row}
+      testID={`routine-row-${routine.routineId}`}
+      style={[styles.row, routine.enabled ? null : styles.rowPaused]}
     >
       {selecting ? <Check checked={selected} /> : null}
       <SmallBotAvatar bot={bot} />
@@ -270,7 +279,8 @@ export function TasksScreen({
     () => unansweredQuestionCount(workQuestions.data?.questions ?? [], buckets),
     [workQuestions.data, buckets],
   );
-  const counts = taskListCounts(buckets, routines, questionCount);
+  const counts = taskListCounts(buckets, routines, questionCount, projects ?? null);
+  const routineGroups = useMemo(() => routineSections(routines), [routines]);
   const loadState = tasksScreenState({
     view,
     tasks: merged,
@@ -369,6 +379,17 @@ export function TasksScreen({
   };
 
   const list = view === "completed" ? buckets.completed : null;
+  const routineRow = (routine: PersonalRoutine) => (
+    <RoutineRow
+      key={routine.routineId}
+      routine={routine}
+      bot={botMap.get(routine.botId)}
+      selected={selection?.has(routine.routineId) ?? false}
+      selecting={selecting}
+      onPress={() => (selecting ? toggle(routine.routineId) : onOpenRoutine(routine.routineId))}
+      onLongPress={() => enterSelect(routine.routineId)}
+    />
+  );
 
   return (
     <View style={styles.screen}>
@@ -479,19 +500,15 @@ export function TasksScreen({
                 </View>
               </View>
             ) : (
-              routines.map((routine) => (
-                <RoutineRow
-                  key={routine.routineId}
-                  routine={routine}
-                  bot={botMap.get(routine.botId)}
-                  selected={selection?.has(routine.routineId) ?? false}
-                  selecting={selecting}
-                  onPress={() =>
-                    selecting ? toggle(routine.routineId) : onOpenRoutine(routine.routineId)
-                  }
-                  onLongPress={() => enterSelect(routine.routineId)}
-                />
-              ))
+              <>
+                {routineGroups.enabled.map(routineRow)}
+                {routineGroups.paused.length === 0 ? null : (
+                  <View style={styles.pausedHeading} testID="routines-paused-heading">
+                    <SectionLabel>Paused</SectionLabel>
+                  </View>
+                )}
+                {routineGroups.paused.map(routineRow)}
+              </>
             )
           ) : list !== null && list.length === 0 ? (
             <EmptyText>{TASK_EMPTY_TEXT[view]}</EmptyText>
@@ -656,6 +673,8 @@ const styles = StyleSheet.create({
   rowMetaLine: { flexDirection: "row", alignItems: "center", gap: 6 },
   rowMeta: { color: tokens.textSecondary, fontSize: 13, flexShrink: 1 },
   rowTertiary: { color: tokens.textTertiary, fontSize: 13 },
+  rowPaused: { opacity: 0.55 },
+  pausedHeading: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 4 },
   rowTime: { color: tokens.textTertiary, fontSize: 13, alignSelf: "flex-start", paddingTop: 2 },
   check: {
     width: 22,

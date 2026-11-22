@@ -2,7 +2,12 @@ import type { PersonalProject, PersonalProjectStep, PersonalTask } from "@t3tool
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildProjectCards, goalChatLine, goalChatMap } from "./projectCards.ts";
+import {
+  buildProjectCards,
+  goalChatLine,
+  goalChatMap,
+  projectHasScheduledWork,
+} from "./projectCards.ts";
 
 const NOW = Date.parse("2026-11-14T12:00:00.000Z");
 const MIN = 60_000;
@@ -24,6 +29,8 @@ const FIVE_STEPS: ReadonlyArray<PersonalProjectStep> = [
   { label: "Release", state: "todo" },
   { label: "Close out", state: "todo" },
 ];
+
+const ALL_DONE = FIVE_STEPS.map((step) => ({ ...step, state: "done" as const }));
 
 function project(input: {
   readonly id: string;
@@ -79,7 +86,10 @@ function task(input: {
 const cardOf = (
   projects: ReadonlyArray<PersonalProject>,
   tasks: ReadonlyArray<PersonalTask> = [],
-) => buildProjectCards({ projects, tasks, nowMs: NOW, botName }).cards[0]!;
+) => {
+  const summary = buildProjectCards({ projects, tasks, nowMs: NOW, botName });
+  return (summary.cards[0] ?? summary.quiet[0])!;
+};
 
 describe("buildProjectCards estimate label", () => {
   it("a fresh estimate due in the future reads About 2 h left, secondary", () => {
@@ -166,9 +176,9 @@ describe("buildProjectCards who and step lines", () => {
     expect([card.whoLine, card.whoTone]).toEqual(["Poteto waiting on Builder", "waiting"]);
   });
 
-  it("with no active linked task reads Nobody on it and how long it has been quiet", () => {
+  it("with nothing scheduled reads Nobody on it and how long it has been quiet", () => {
     const card = cardOf(
-      [project({ id: "a", lastActivityAgoMs: 3 * HOUR })],
+      [project({ id: "a", steps: ALL_DONE, lastActivityAgoMs: 3 * HOUR })],
       [
         task({
           id: "old",
@@ -184,6 +194,19 @@ describe("buildProjectCards who and step lines", () => {
       "idle",
       null,
     ]);
+  });
+
+  it("with steps left but nobody on it reads Not running", () => {
+    const card = cardOf([project({ id: "a", lastActivityAgoMs: 3 * HOUR })]);
+    expect([card.whoLine, card.whoTone, card.scheduled]).toEqual(["Not running", "idle", true]);
+  });
+
+  it("with a paused (interrupted) linked task reads Paused", () => {
+    const card = cardOf(
+      [project({ id: "a", steps: ALL_DONE })],
+      [task({ id: "p", botId: "builder", status: "interrupted", projectId: "a" })],
+    );
+    expect([card.whoLine, card.whoTone, card.scheduled]).toEqual(["Paused", "idle", true]);
   });
 
   it("all steps done reads All 5 steps done; a gap with nothing under way counts what is done", () => {
@@ -204,19 +227,20 @@ describe("buildProjectCards who and step lines", () => {
         task({ id: "y", botId: "shipper", status: "running" }),
       ],
     );
-    expect(card.whoLine).toBe("Nobody on it · quiet 1 h");
+    expect(card.whoLine).toBe("Not running");
     expect(card.activeTaskIds).toEqual([]);
   });
 });
 
 describe("buildProjectCards folds", () => {
-  it("shows 4 cards, counts the rest, folds 72 h quiet projects and lists closed ones", () => {
+  it("shows 4 cards, counts the rest, folds projects with nothing scheduled and lists closed ones", () => {
     const summary = buildProjectCards({
       projects: [
         ...["a", "b", "c", "d", "e"].map((id, index) =>
           project({ id, lastActivityAgoMs: (index + 1) * HOUR }),
         ),
-        project({ id: "sleepy", lastActivityAgoMs: 72 * HOUR }),
+        project({ id: "sleepy", steps: ALL_DONE, lastActivityAgoMs: HOUR / 2 }),
+        project({ id: "paused-long-ago", lastActivityAgoMs: 200 * HOUR }),
         project({ id: "shipped", closed: { kind: "done", agoMs: 2 * HOUR } }),
         project({ id: "stopped", closed: { kind: "dropped", agoMs: 26 * HOUR } }),
       ],
@@ -225,7 +249,7 @@ describe("buildProjectCards folds", () => {
       botName,
     });
     expect(summary.cards.map((card) => card.projectId)).toEqual(["e", "a", "b", "c"]);
-    expect(summary.more.map((card) => card.projectId)).toEqual(["d"]);
+    expect(summary.more.map((card) => card.projectId)).toEqual(["d", "paused-long-ago"]);
     expect(summary.quiet.map((card) => card.projectId)).toEqual(["sleepy"]);
     expect(summary.closed.map((entry) => [entry.projectId, entry.outcome])).toEqual([
       ["shipped", "done"],
@@ -399,5 +423,36 @@ describe("goalChatMap", () => {
 
   it("a chat the list does not hold is not there to name", () => {
     expect(goalChatMap({ shells: [], links: [link("deleted")] }).size).toBe(0);
+  });
+});
+
+describe("projectHasScheduledWork", () => {
+  const open = project({ id: "a", steps: ALL_DONE });
+  const linked = (status: PersonalTask["status"]) => [
+    task({ id: "t", botId: "builder", status, projectId: "a" }),
+  ];
+  it("holds for every unfinished linked task, interrupted included", () => {
+    for (const status of [
+      "queued",
+      "running",
+      "waiting_for_agent",
+      "waiting_for_user",
+      "waiting_for_browser",
+      "rate_limited",
+      "interrupted",
+    ] as const) {
+      expect(projectHasScheduledWork(open, linked(status))).toBe(true);
+    }
+  });
+  it("does not hold for finished tasks alone with every step done", () => {
+    for (const status of ["completed", "failed", "cancelled"] as const) {
+      expect(projectHasScheduledWork(open, linked(status))).toBe(false);
+    }
+    expect(projectHasScheduledWork(open, [])).toBe(false);
+  });
+  it("holds for a step not done with no tasks, and never for a closed project", () => {
+    expect(projectHasScheduledWork(project({ id: "a" }), [])).toBe(true);
+    const closed = project({ id: "a", closed: { kind: "done", agoMs: HOUR } });
+    expect(projectHasScheduledWork(closed, linked("running"))).toBe(false);
   });
 });

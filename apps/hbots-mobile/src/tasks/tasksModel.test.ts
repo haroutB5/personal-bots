@@ -1,16 +1,24 @@
-import type { PersonalBot, PersonalRoutine, PersonalTask } from "@t3tools/contracts";
+import type {
+  PersonalBot,
+  PersonalProject,
+  PersonalRoutine,
+  PersonalTask,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   botsById,
+  projectCardSubtitle,
   routineBulkTargets,
+  routineSections,
   taskBuckets,
   taskListCounts,
   taskResultHeading,
   taskRowMeta,
   tasksScreenState,
   unansweredQuestionCount,
+  workCardCount,
 } from "./tasksModel";
 
 function task(
@@ -90,6 +98,159 @@ describe("taskListCounts", () => {
       scheduled: 1,
       completed: 0,
     });
+  });
+});
+
+const T = "2026-11-22T17:00:00Z";
+const project = (
+  projectId: string,
+  kind: "open" | "done" | "dropped" = "open",
+  steps: ReadonlyArray<"done" | "doing" | "todo"> = [],
+) =>
+  ({
+    projectId,
+    state: { kind },
+    steps: steps.map((state, index) => ({ label: `Step ${index + 1}`, state })),
+  }) as unknown as PersonalProject;
+/** A task linked to a goal; built from a variable so fork hygiene does not read it as an EAS id. */
+const inGoal = (projectId: string, extra: object = {}) => ({ projectId, ...extra }) as never;
+const live = (...tasks: ReadonlyArray<PersonalTask>) =>
+  taskBuckets(new Map(tasks.map((entry) => [entry.taskId as string, entry])));
+
+describe("workCardCount", () => {
+  it("counts two projects, each with a running helper and its waiting lead, as 2", () => {
+    const buckets = live(
+      task("lead-a", "waiting_for_agent", T, inGoal("p-a")),
+      task("child-a", "running", T, inGoal("p-a", { parentTaskId: "lead-a" })),
+      task("lead-b", "waiting_for_agent", T, inGoal("p-b")),
+      task("child-b", "running", T, inGoal("p-b", { parentTaskId: "lead-b" })),
+    );
+    expect(workCardCount(buckets, [project("p-a"), project("p-b")])).toBe(2);
+    expect(taskListCounts(buckets, routines, 0, [project("p-a"), project("p-b")]).work).toBe(2);
+  });
+
+  it("counts one standalone running task as 1", () => {
+    expect(workCardCount(live(task("a", "running", T)), [])).toBe(1);
+  });
+
+  it("still counts a project whose only live task is a waiting lead", () => {
+    const buckets = live(task("lead", "waiting_for_agent", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p")])).toBe(1);
+  });
+
+  it("folds a standalone lead and its helpers into one card", () => {
+    const buckets = live(
+      task("lead", "waiting_for_agent", T),
+      task("h1", "running", T, { parentTaskId: "lead" } as never),
+      task("h2", "queued", T, { parentTaskId: "lead" } as never),
+    );
+    expect(workCardCount(buckets, [])).toBe(1);
+  });
+
+  it("adds nothing for a standalone lead waiting on a helper shown in a project card", () => {
+    const buckets = live(
+      task("lead", "waiting_for_agent", T),
+      task("child", "running", T, inGoal("p", { parentTaskId: "lead" })),
+    );
+    expect(workCardCount(buckets, [project("p")])).toBe(1);
+  });
+
+  it("treats tasks of a closed project as standalone", () => {
+    const buckets = live(task("a", "running", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p", "done")])).toBe(1);
+  });
+
+  it("counts a project whose only task is paused (interrupted)", () => {
+    const buckets = live(task("a", "interrupted", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p", "open", ["done"])])).toBe(1);
+  });
+
+  it("counts a project with a task queued for later", () => {
+    const buckets = live(
+      task("a", "queued", T, inGoal("p", { availableAt: "2026-12-01T09:00:00Z" })),
+    );
+    expect(workCardCount(buckets, [project("p", "open", ["done"])])).toBe(1);
+  });
+
+  it("counts a project with steps still to do and no tasks at all", () => {
+    expect(workCardCount(live(), [project("p", "open", ["done", "todo"])])).toBe(1);
+  });
+
+  it("does not count a project with only finished tasks and every step done", () => {
+    const buckets = live(
+      task("a", "completed", T, inGoal("p")),
+      task("b", "failed", T, inGoal("p")),
+      task("c", "cancelled", T, inGoal("p")),
+    );
+    expect(workCardCount(buckets, [project("p", "open", ["done", "done"])])).toBe(0);
+  });
+
+  it("still counts finished tasks' project while steps remain", () => {
+    const buckets = live(task("a", "completed", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p", "open", ["done", "todo"])])).toBe(1);
+  });
+
+  it("never counts a done or dropped project, whatever its steps and paused tasks", () => {
+    const buckets = live(task("a", "interrupted", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p", "done", ["todo"])])).toBe(0);
+    expect(workCardCount(live(), [project("q", "dropped", ["todo"])])).toBe(0);
+  });
+
+  it("counts a scheduled project plus its live task as one card", () => {
+    const buckets = live(
+      task("a", "running", T, inGoal("p")),
+      task("b", "interrupted", T, inGoal("p")),
+    );
+    expect(workCardCount(buckets, [project("p", "open", ["doing", "todo"])])).toBe(1);
+  });
+
+  it("counts each project id once before the project list loads", () => {
+    const buckets = live(
+      task("a", "running", T, inGoal("p")),
+      task("b", "running", T, inGoal("p")),
+    );
+    expect(workCardCount(buckets, null)).toBe(1);
+  });
+});
+
+describe("routineSections", () => {
+  it("lists enabled routines first and the paused ones after, keeping order", () => {
+    const list = [
+      { routineId: "p1", enabled: false },
+      { routineId: "e1", enabled: true },
+      { routineId: "p2", enabled: false },
+      { routineId: "e2", enabled: true },
+    ] as unknown as ReadonlyArray<PersonalRoutine>;
+    const sections = routineSections(list);
+    expect(sections.enabled.map((entry) => entry.routineId)).toEqual(["e1", "e2"]);
+    expect(sections.paused.map((entry) => entry.routineId)).toEqual(["p1", "p2"]);
+    expect(taskListCounts(live(), list).scheduled).toBe(2);
+  });
+
+  it("has no paused section when nothing is paused", () => {
+    const list = [{ routineId: "e1", enabled: true }] as unknown as ReadonlyArray<PersonalRoutine>;
+    expect(routineSections(list).paused).toEqual([]);
+  });
+});
+
+describe("projectCardSubtitle", () => {
+  const steps = [
+    { label: "Plan", state: "done" },
+    { label: "Build the fix", state: "doing" },
+  ];
+  it("shows the lead's why", () => {
+    expect(projectCardSubtitle({ why: " Honest badge counts ", steps })).toBe(
+      "Honest badge counts",
+    );
+  });
+  it("falls back to the current step when there is no why", () => {
+    expect(projectCardSubtitle({ why: null, steps })).toBe("Build the fix");
+    expect(projectCardSubtitle({ why: "  ", steps })).toBe("Build the fix");
+  });
+  it("is null with neither", () => {
+    expect(
+      projectCardSubtitle({ why: null, steps: [{ label: "Plan", state: "todo" }] }),
+    ).toBeNull();
   });
 });
 

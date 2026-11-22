@@ -96,6 +96,7 @@ import { LiveWorkRow } from "./LiveWorkRow";
 import type { PendingSend } from "./composerSendModel";
 import { JUMP_SETTLE_MS, jumpVisible } from "./jumpToLatest";
 import { useNow } from "./useNow";
+import { SWIPE_TIME_LABEL_HEIGHT, swipeTimeTop } from "./swipeTime";
 import { noteListCommit } from "../personal/chatOpenPerf";
 import { useStreamCommitPerf } from "./useStreamCommitPerf";
 import {
@@ -783,6 +784,10 @@ function SwipeMessageRow({
   // eslint-disable-next-line react/refs -- the animated value is created once
   const translateX = useRef(new Animated.Value(0)).current;
   const [revealed, setRevealed] = useState(false);
+  // The time sits level with the finger, so a message taller than the screen still shows it.
+  const [timeTop, setTimeTop] = useState(0);
+  const rowRef = useRef<View>(null);
+  const labelHeight = useRef(SWIPE_TIME_LABEL_HEIGHT);
   const beganInScroller = useRef(false);
   // The responder below is made once; it reads the row's current reply at release time.
   const latestOnReply = useRef(onReply);
@@ -805,6 +810,19 @@ function SwipeMessageRow({
     PanResponder.create({
       onMoveShouldSetPanResponder: (_event, gesture) =>
         claimsReplySwipe(gesture.dx, gesture.dy, beganInScroller.current),
+      onPanResponderGrant: (_event, gesture) => {
+        const touchY = gesture.y0;
+        rowRef.current?.measure((_x, _y, _width, height, _pageX, pageY) =>
+          setTimeTop(
+            swipeTimeTop({
+              touchY,
+              rowTop: pageY,
+              rowHeight: height,
+              labelHeight: labelHeight.current,
+            }),
+          ),
+        );
+      },
       onPanResponderMove: (_event, gesture) => {
         const direction = align === "end" ? -1 : 1;
         const next = Math.max(0, Math.min(72, gesture.dx * direction));
@@ -836,10 +854,20 @@ function SwipeMessageRow({
   ).current;
   const panHandlers = responder.panHandlers;
   return (
-    <View style={[styles.swipeRow, align === "end" ? styles.alignEnd : styles.alignStart]}>
+    <View
+      ref={rowRef}
+      style={[styles.swipeRow, align === "end" ? styles.alignEnd : styles.alignStart]}
+    >
       {revealed && sentAt !== null ? (
         <View
-          style={[styles.swipeTime, align === "end" ? styles.swipeTimeEnd : styles.swipeTimeStart]}
+          onLayout={(event) => {
+            labelHeight.current = event.nativeEvent.layout.height;
+          }}
+          style={[
+            styles.swipeTime,
+            { top: timeTop },
+            align === "end" ? styles.swipeTimeEnd : styles.swipeTimeStart,
+          ]}
         >
           <SentAt at={sentAt} align={align} />
         </View>
@@ -1639,7 +1667,7 @@ const styles = StyleSheet.create({
   alignStart: { alignItems: "flex-start" },
   swipeRow: { width: "100%" },
   swipeContent: { width: "100%" },
-  swipeTime: { position: "absolute", top: "35%", zIndex: 1 },
+  swipeTime: { position: "absolute", zIndex: 1 },
   swipeTimeStart: { left: 4 },
   swipeTimeEnd: { right: 4 },
   userColumn: { alignSelf: "flex-end", alignItems: "flex-end", gap: 4, maxWidth: "78%" },

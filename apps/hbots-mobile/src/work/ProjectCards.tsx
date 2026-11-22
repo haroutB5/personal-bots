@@ -13,6 +13,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "../shell/tokens";
+import { projectCardSubtitle } from "../tasks/tasksModel";
 import { SmallBotAvatar } from "../tasks/TaskUi";
 
 const NO_ROWS: ReadonlyArray<GoalNowRow> = [];
@@ -48,26 +49,33 @@ export function GoalOwnerLine({
   line,
   bot,
   testID,
+  subtitle,
   onOpenChat,
 }: {
   readonly line: GoalChatLine;
   readonly bot: PersonalBot | undefined;
   readonly testID: string;
+  /**
+   * What follows the bot name in place of the chat title. A card passes the
+   * goal's own why, since the chat a goal started in says nothing about it.
+   */
+  readonly subtitle?: string | null;
   readonly onOpenChat: (botId: string, threadId: string) => void;
 }) {
+  const label = subtitle === undefined ? line.chatTitle : subtitle;
   const body = (
     <>
       <SmallBotAvatar bot={bot} size={16} />
       <Text style={styles.ownerBot} maxFontSizeMultiplier={1.3}>
         {line.botName}
       </Text>
-      {line.chatTitle === null ? null : (
+      {label === null ? null : (
         <>
           <Text style={styles.ownerSep} maxFontSizeMultiplier={1.3}>
             ›
           </Text>
           <Text style={styles.ownerChat} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-            {line.chatTitle}
+            {label}
           </Text>
         </>
       )}
@@ -86,6 +94,7 @@ export function GoalOwnerLine({
       onPress={() => onOpenChat(line.botId, threadId)}
       accessibilityRole="button"
       accessibilityLabel={`Open ${line.botName} chat${line.chatTitle === null ? "" : `, ${line.chatTitle}`}`}
+      accessibilityHint={subtitle === undefined || subtitle === null ? undefined : subtitle}
       android_ripple={{ color: "rgba(255,255,255,0.08)" }}
       testID={testID}
       style={styles.owner}
@@ -187,6 +196,7 @@ function Card({
           line={owner}
           bot={botMap.get(card.leadBotId)}
           testID={`work-project-owner-${card.projectId}`}
+          subtitle={projectCardSubtitle(card)}
           onOpenChat={onOpenChat}
         />
         <Segments steps={card.segments} />
