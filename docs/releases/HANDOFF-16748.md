@@ -59,3 +59,20 @@ None. Max migration is 160 on trunk and on the head. Params use `--migration-bef
 ## Rollback
 
 Binary rollback to `769e60c54d58` (1.67.47), and put `T3CODE_PERSONAL_GAMINGPC_HOST` back only if Harout asks for the gaming PC line again. No data change.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=bd9aca24a56272fa47d85574dc8269a102d6bf52 release=bd9aca24a562 json-sha256=e04fd4924c1c75eea648160753c2c0371ef4afd9e28272fd9b294c395a92b27a result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/scripts/linux-boot-smoke.ts, apps/server/src/personal/performance/coolifyHealth.test.ts, apps/server/src/personal/performance/coolifyHealth.ts, apps/server/src/personal/performance/gamingPc.test.ts, ...; selected 28 test files
+- server-tsc: PASS, exit 0
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: PASS, selected: e2e inputs changed: apps/server/scripts/linux-boot-smoke.ts, apps/server/src/personal/performance/coolifyHealth.test.ts, apps/server/src/personal/performance/coolifyHealth.ts, apps/server/src/personal/performance/gamingPc.test.ts, ...; selected 12 journeys
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: PASS, selected: hbots-mobile-kotlin inputs changed: apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/SmallWidgetModels.kt, apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/TileGridModel.kt, apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/WidgetFeed.kt, apps/hbots-mobile/modules/hbots-launcher/android/src/main/java/expo/modules/hbotslauncher/WidgetRenderer.kt, ...; selected 1 Gradle tasks
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+
+<!-- gate-evidence:end -->
