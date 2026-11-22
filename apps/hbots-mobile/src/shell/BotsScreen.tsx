@@ -31,9 +31,11 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useIsFocused } from "@react-navigation/native";
 import { IconHierarchy, IconPlus, IconSearch, IconSettings } from "../ui/icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   Animated,
+  Easing,
   KeyboardAvoidingView,
   PanResponder,
   Platform,
@@ -61,12 +63,25 @@ import { RenameChatSheet } from "../sheets/RenameChatSheet";
 import { SnoozeSheet } from "../sheets/SnoozeSheet";
 import type { ChatEnvironment } from "../chat/chatEnvironment";
 import type { UpdateSnapshot } from "../updater";
+import { useReducedMotion } from "../motion/useReducedMotion";
 import { BotAvatar } from "./BotAvatar";
 import { InAppBannerHost } from "./InAppBannerHost";
 import type { InAppBannerFeed } from "./inAppBannerFeed";
 import { NewItemsSheet } from "./NewItemsSheet";
 import { botsHomeState, botTapTarget, groupsSectionVisible } from "./botsHomeState";
-import { classifyRelease, DRAG_SLOP_DP, moveTo, reorderByDrag } from "./pinnedOrderModel";
+import {
+  clampDragDx,
+  classifyRelease,
+  DRAG_SLOP_DP,
+  dropIndex,
+  moveTo,
+  PINNED_TILE_STEP,
+  type PinnedDrag,
+  pinnedRenderOrder,
+  pinnedRestX,
+  pinnedSettleOffset,
+  sameOrder,
+} from "./pinnedOrderModel";
 import { PersonalOfflineBanner } from "./PersonalOfflineBanner";
 import { ServerUpdateBanner } from "./ServerUpdateBanner";
 import { UpdatePermissionBanner } from "./UpdatePermissionBanner";
@@ -87,20 +102,68 @@ function statusColor(summary: BotSummary, now: number): string {
   return botStatus(summary, now).tone === "review" ? tokens.reviewText : tokens.textSecondary;
 }
 
+const LIFT_SCALE = 1.1;
+const SETTLE_MS = 180;
+const REDUCED_MS = 60;
+
+function pinnedSpring(value: Animated.Value, toValue: number, reduceMotion: boolean) {
+  return reduceMotion
+    ? Animated.timing(value, { toValue, duration: REDUCED_MS, useNativeDriver: true })
+    : Animated.spring(value, {
+        toValue,
+        stiffness: 420,
+        damping: 32,
+        mass: 1,
+        useNativeDriver: true,
+      });
+}
+
+function useScreenReader(): boolean {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    let active = true;
+    AccessibilityInfo.isScreenReaderEnabled().then(
+      (value) => {
+        if (active) setEnabled(value);
+      },
+      () => undefined,
+    );
+    const subscription = AccessibilityInfo.addEventListener("screenReaderChanged", setEnabled);
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+  return enabled;
+}
+
 function PinnedTile({
   summary,
   now,
+  slot,
+  renderIndex,
+  count,
+  restX,
+  reduceMotion,
   onPress,
-  onLift,
+  onDragState,
   onDrop,
   onMove,
   onOpenActions,
 }: {
   readonly summary: BotSummary;
   readonly now: number;
+  /** The tile's place in the order on screen. */
+  readonly slot: number;
+  /** Where the strip mounts this tile; changes only when the mount order is reset. */
+  readonly renderIndex: number;
+  readonly count: number;
+  /** The translateX that puts this tile where it belongs right now (see pinnedRestX). */
+  readonly restX: number;
+  readonly reduceMotion: boolean;
   readonly onPress: () => void;
-  readonly onLift: (active: boolean) => void;
-  readonly onDrop: (botId: string, dx: number) => void;
+  readonly onDragState: (drag: PinnedDrag | null) => void;
+  readonly onDrop: (botId: string, to: number) => void;
   readonly onMove: (delta: -1 | 1) => void;
   readonly onOpenActions: () => void;
 }) {
@@ -108,28 +171,103 @@ function PinnedTile({
   const badge = status.tone === "review" ? "attention" : summary.live ? "working" : null;
   const unread = summary.unreadChats ?? 0;
   const botId = summary.bot.botId as string;
-  // The responder is created once, so it reads the current callbacks from here.
-  const latest = useRef({ onDrop, onLift, onOpenActions });
+  // The responder is created once, so it reads the current props from here.
+  const latest = useRef({ onDrop, onDragState, onOpenActions, slot, count, restX, reduceMotion });
   useEffect(() => {
-    latest.current = { onDrop, onLift, onOpenActions };
+    latest.current = { onDrop, onDragState, onOpenActions, slot, count, restX, reduceMotion };
   });
-  // eslint-disable-next-line react/refs -- the animated value is created once
-  const translateX = useRef(new Animated.Value(0)).current;
+  // x is the tile's whole sideways position: its slot, the reflow slide and the
+  // finger. It is never reset, so a committed reorder has nothing to snap.
+  const [x] = useState(() => new Animated.Value(restX));
+  const [scale] = useState(() => new Animated.Value(1));
+  const [raised, setRaised] = useState(false);
   const lifted = useRef(false);
   const dragging = useRef(false);
+  const settling = useRef(false);
   const suppressPress = useRef(false);
   const releaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fromSlot = useRef(0);
+  const hoverSlot = useRef(0);
+  const startX = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
-  const resetLift = (openActions: boolean) => {
+  const springTo = (value: Animated.Value, toValue: number) =>
+    pinnedSpring(value, toValue, latest.current.reduceMotion);
+
+  // The mount order was reset (new set of bots, screen hidden or a screen
+  // reader on), so the layout moved this view: jump x with it, before paint.
+  const mountedAt = useRef(renderIndex);
+  useLayoutEffect(() => {
+    if (mountedAt.current === renderIndex) return;
+    mountedAt.current = renderIndex;
+    x.stopAnimation();
+    x.setValue(restX);
+  }, [x, renderIndex, restX]);
+
+  // Follow the slot and the reflow slide whenever this tile is not in the hand.
+  useEffect(() => {
+    if (lifted.current || settling.current) return;
+    const animation = pinnedSpring(x, restX, reduceMotion);
+    animation.start();
+    return () => animation.stop();
+  }, [x, restX, reduceMotion]);
+
+  const endLift = () => {
     if (releaseTimer.current !== null) {
       clearTimeout(releaseTimer.current);
       releaseTimer.current = null;
     }
-    translateX.setValue(0);
     lifted.current = false;
     dragging.current = false;
-    latest.current.onLift(false);
+  };
+
+  // Cancel: the tile and its neighbours spring back and nothing is saved.
+  const resetLift = (openActions: boolean) => {
+    if (!lifted.current) return;
+    endLift();
+    springTo(x, startX.current).start();
+    springTo(scale, 1).start(() => {
+      if (mounted.current && !lifted.current) setRaised(false);
+    });
+    latest.current.onDragState(null);
     if (openActions) latest.current.onOpenActions();
+  };
+
+  // Drop: glide from the finger into the hover slot, then commit the order.
+  // The landing x equals pinnedRestX for the new slot, so the commit is still.
+  const settle = (from: number, hover: number) => {
+    endLift();
+    settling.current = true;
+    const timing = (value: Animated.Value, toValue: number) =>
+      Animated.timing(value, {
+        toValue,
+        duration: latest.current.reduceMotion ? REDUCED_MS : SETTLE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      });
+    Animated.parallel([
+      timing(x, startX.current + pinnedSettleOffset(from, hover)),
+      timing(scale, 1),
+    ]).start(() => {
+      settling.current = false;
+      if (!mounted.current) return;
+      // One batch: the new order, the cleared drag and the lowered tile.
+      latest.current.onDrop(botId, hover);
+      latest.current.onDragState(null);
+      setRaised(false);
+      // If the order did not change after all, restX held: glide back to it.
+      setTimeout(() => {
+        if (mounted.current && !lifted.current && !settling.current) {
+          springTo(x, latest.current.restX).start();
+        }
+      }, 120);
+    });
   };
 
   const endPress = () => {
@@ -148,6 +286,7 @@ function PinnedTile({
     PanResponder.create({
       onMoveShouldSetPanResponder: (_event, gesture) =>
         lifted.current && Math.abs(gesture.dx) > DRAG_SLOP_DP,
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
         dragging.current = true;
         if (releaseTimer.current !== null) {
@@ -156,19 +295,36 @@ function PinnedTile({
         }
       },
       onPanResponderMove: (_event, gesture) => {
-        translateX.setValue(gesture.dx);
+        if (!lifted.current) return;
+        const dx = clampDragDx(gesture.dx, fromSlot.current, latest.current.count);
+        x.setValue(startX.current + dx);
+        const hover = dropIndex(dx, PINNED_TILE_STEP, fromSlot.current, latest.current.count);
+        // React only hears about the drag when the hover slot changes.
+        if (hover !== hoverSlot.current) {
+          hoverSlot.current = hover;
+          latest.current.onDragState({ from: fromSlot.current, hover });
+        }
       },
       onPanResponderRelease: (_event, gesture) => {
-        const dx = gesture.dx;
-        resetLift(false);
-        if (classifyRelease(dx, true) === "reorder") latest.current.onDrop(botId, dx);
+        if (!lifted.current) return;
+        const from = fromSlot.current;
+        const hover = hoverSlot.current;
+        if (classifyRelease(gesture.dx, true) === "reorder" && hover !== from) {
+          settle(from, hover);
+        } else {
+          resetLift(false);
+        }
       },
       onPanResponderTerminate: () => resetLift(false),
     }),
   ).current;
   return (
     <Animated.View
-      style={[styles.pinnedTileWrap, { transform: [{ translateX }] }]}
+      style={[
+        styles.pinnedTileWrap,
+        raised ? styles.pinnedTileWrapRaised : null,
+        { transform: [{ translateX: x }, { scale }] },
+      ]}
       // eslint-disable-next-line react/refs -- pan handlers are stable for the component lifetime
       {...responder.panHandlers}
     >
@@ -181,10 +337,18 @@ function PinnedTile({
           onPress();
         }}
         onLongPress={() => {
+          if (settling.current) return;
           suppressPress.current = true;
           lifted.current = true;
           dragging.current = false;
-          latest.current.onLift(true);
+          fromSlot.current = latest.current.slot;
+          hoverSlot.current = latest.current.slot;
+          startX.current = latest.current.restX;
+          x.stopAnimation();
+          x.setValue(startX.current);
+          setRaised(true);
+          springTo(scale, LIFT_SCALE).start();
+          latest.current.onDragState({ from: fromSlot.current, hover: hoverSlot.current });
         }}
         onPressOut={endPress}
         delayLongPress={300}
@@ -496,12 +660,23 @@ export function BotsScreen({
     reportFailure: false,
   });
   const [pinnedOrderIds, setPinnedOrderIds] = useState<ReadonlyArray<string> | null>(null);
-  const [pinnedDragging, setPinnedDragging] = useState(false);
+  const [pinnedDrag, setPinnedDrag] = useState<PinnedDrag | null>(null);
+  const pinnedDragging = pinnedDrag !== null;
+  const updatePinnedDrag = useCallback((next: PinnedDrag | null) => {
+    setPinnedDrag((prev) =>
+      prev === next ||
+      (prev !== null && next !== null && prev.from === next.from && prev.hover === next.hover)
+        ? prev
+        : next,
+    );
+  }, []);
 
   const focused = useIsFocused();
   useEffect(() => {
     if (!focused) closeAllSwipeRows();
   }, [focused]);
+  const reduceMotion = useReducedMotion();
+  const screenReader = useScreenReader();
 
   const sheetOpen =
     actionBot !== null ||
@@ -693,10 +868,33 @@ export function BotsScreen({
     void savePinnedOrder(nextIds, currentIds);
   };
 
-  const movePinnedByDrag = (botId: string, dx: number) => {
+  const movePinnedByDrag = (botId: string, to: number) => {
     const currentIds = pinnedIdsRef.current;
-    movePinned(reorderByDrag(currentIds, botId, dx), currentIds);
+    const from = currentIds.indexOf(botId);
+    if (from < 0) return;
+    movePinned(moveTo(currentIds, from, to), currentIds);
   };
+
+  // The strip mounts its tiles in a stable order and places each one with
+  // translateX (pinnedRenderOrder), so a reorder never moves a native view and
+  // cannot flash. It falls back to the visual order whenever nobody can see the
+  // swap: the screen is hidden, or a screen reader needs the traversal order.
+  const pinnedVisualIds = useMemo(
+    () => pinnedSummaries.map((summary) => summary.bot.botId as string),
+    [pinnedSummaries],
+  );
+  const [pinnedMountIds, setPinnedMountIds] = useState<ReadonlyArray<string>>([]);
+  const normalizePinned = (!focused || screenReader) && pinnedDrag === null;
+  const pinnedRenderIds = pinnedRenderOrder(pinnedMountIds, pinnedVisualIds, normalizePinned);
+  // Stored during render (React's "adjust state on a prop change" pattern).
+  if (!sameOrder(pinnedRenderIds, pinnedMountIds)) setPinnedMountIds(pinnedRenderIds);
+  const pinnedById = useMemo(
+    () =>
+      new Map(
+        pinnedSummaries.map((summary, slot) => [summary.bot.botId as string, { summary, slot }]),
+      ),
+    [pinnedSummaries],
+  );
 
   const movePinnedBySlot = (botId: string, delta: -1 | 1) => {
     const currentIds = pinnedIdsRef.current;
@@ -1057,18 +1255,28 @@ export function BotsScreen({
                 style={styles.pinnedScroller}
                 onScrollBeginDrag={closeAllSwipeRows}
               >
-                {pinnedSummaries.map((summary) => (
-                  <PinnedTile
-                    key={summary.bot.botId}
-                    summary={summary}
-                    now={now}
-                    onPress={() => openSummary(summary)}
-                    onLift={setPinnedDragging}
-                    onDrop={movePinnedByDrag}
-                    onMove={(delta) => movePinnedBySlot(summary.bot.botId as string, delta)}
-                    onOpenActions={() => setActionBot(summary)}
-                  />
-                ))}
+                {pinnedRenderIds.map((botId, renderIndex) => {
+                  const entry = pinnedById.get(botId);
+                  if (entry === undefined) return null;
+                  const { summary, slot } = entry;
+                  return (
+                    <PinnedTile
+                      key={botId}
+                      summary={summary}
+                      now={now}
+                      slot={slot}
+                      renderIndex={renderIndex}
+                      count={pinnedSummaries.length}
+                      restX={pinnedRestX(slot, renderIndex, pinnedDrag)}
+                      reduceMotion={reduceMotion}
+                      onPress={() => openSummary(summary)}
+                      onDragState={updatePinnedDrag}
+                      onDrop={movePinnedByDrag}
+                      onMove={(delta) => movePinnedBySlot(botId, delta)}
+                      onOpenActions={() => setActionBot(summary)}
+                    />
+                  );
+                })}
               </ScrollView>
             ) : null}
             {split.rest.length > 0 ? (
@@ -1251,6 +1459,8 @@ const styles = StyleSheet.create({
   },
   tile: { width: 72, alignItems: "center", gap: 6 },
   pinnedTileWrap: { zIndex: 2 },
+  // The lifted tile always draws above its siblings (no elevation: the avatar is round).
+  pinnedTileWrapRaised: { zIndex: 20 },
   tileAvatarBox: { height: 56, justifyContent: "center" },
   tileBadge: {
     position: "absolute",

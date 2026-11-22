@@ -45,3 +45,80 @@ export function moveTo<T>(ids: ReadonlyArray<T>, from: number, to: number): Read
   next.splice(target, 0, moved);
   return next;
 }
+
+/** A live drag: the slot the lifted tile came from and the slot it hovers over. */
+export interface PinnedDrag {
+  readonly from: number;
+  readonly hover: number;
+}
+
+/**
+ * How far the tile in visual slot `index` slides sideways while another tile is
+ * dragged from `from` to the hover slot `hover`, so a gap opens at the hover slot.
+ * The dragged tile itself follows the finger and returns 0 here.
+ */
+export function pinnedShiftFor(
+  index: number,
+  from: number,
+  hover: number,
+  step = PINNED_TILE_STEP,
+): number {
+  if (index === from || from === hover) return 0;
+  if (hover > from && index > from && index <= hover) return -step;
+  if (hover < from && index >= hover && index < from) return step;
+  return 0;
+}
+
+/** The finger offset, kept within half a tile past either end of the strip. */
+export function clampDragDx(
+  dx: number,
+  from: number,
+  count: number,
+  step = PINNED_TILE_STEP,
+): number {
+  const min = -from * step - step / 2;
+  const max = (Math.max(count, 1) - 1 - from) * step + step / 2;
+  return Math.max(min, Math.min(max, dx));
+}
+
+/** Where the dragged tile comes to rest, relative to its own slot, when dropped on `hover`. */
+export function pinnedSettleOffset(from: number, hover: number, step = PINNED_TILE_STEP): number {
+  return (hover - from) * step;
+}
+
+/**
+ * The strip's mount order: kept while the same bots are pinned, so a reorder
+ * moves tiles by translateX only and never re-lays out (no flash on commit).
+ * A new set of bots, or `normalize`, takes the visual order.
+ */
+export function pinnedRenderOrder(
+  previous: ReadonlyArray<string>,
+  visual: ReadonlyArray<string>,
+  normalize = false,
+): ReadonlyArray<string> {
+  if (normalize) return sameOrder(previous, visual) ? previous : visual;
+  const members = new Set(previous);
+  const sameMembers =
+    previous.length === visual.length &&
+    members.size === previous.length &&
+    visual.every((id) => members.has(id));
+  return sameMembers ? previous : visual;
+}
+
+export function sameOrder(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+/**
+ * The translateX that puts a tile mounted at `renderIndex` into visual slot
+ * `slot`, plus the reflow slide while another tile is dragged.
+ */
+export function pinnedRestX(
+  slot: number,
+  renderIndex: number,
+  drag: PinnedDrag | null,
+  step = PINNED_TILE_STEP,
+): number {
+  const base = (slot - renderIndex) * step;
+  return drag === null ? base : base + pinnedShiftFor(slot, drag.from, drag.hover, step);
+}
