@@ -1,4 +1,4 @@
-import { IconCamera, IconPhoto } from "../ui/icons";
+import { IconCamera, IconPhoto, IconVideo } from "../ui/icons";
 import { useRef, useState, type ComponentType } from "react";
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,10 +9,9 @@ import { addPhotosLabel, type AttachPhotos } from "./attachSheetModel";
 import { PhotoStrip, type PhotoStripHandle } from "./PhotoStrip";
 
 /**
- * Plus opens this sheet: Camera on top, recent photos under it at once. A tap on a photo selects
- * it (a badge shows its place), a second tap deselects it, and the Add button under the grid
- * copies the selection into the draft. One photo is plus, photo, Add. Closing the sheet with
- * nothing added drops the selection.
+ * Plus opens this sheet: Camera, then recent photos. Taps select (a badge shows the order) and Add
+ * copies the selection into the draft; closing drops it. The grid shows only photos, so a Video
+ * row opens the system picker for videos.
  */
 export function AttachSheet({
   visible,
@@ -20,6 +19,7 @@ export function AttachSheet({
   onClose,
   onCamera,
   onAllPhotos,
+  onVideos,
   onPicked,
   onUnavailable,
 }: {
@@ -28,6 +28,7 @@ export function AttachSheet({
   readonly onClose: () => void;
   readonly onCamera: () => void;
   readonly onAllPhotos: () => void;
+  readonly onVideos: () => void;
   readonly onPicked: (intakeId: string | null) => void;
   readonly onUnavailable: () => void;
 }) {
@@ -41,6 +42,9 @@ export function AttachSheet({
           testID="attach-all-photos"
           onPress={onAllPhotos}
         />
+      ) : null}
+      {photos.kind === "embedded" ? (
+        <SourceRow icon={IconVideo} label="Video" testID="attach-video" onPress={onVideos} />
       ) : null}
       {photos.kind === "full" ? <Text style={styles.full}>{photos.message}</Text> : null}
       {/* Mounted only while open: unmounting closes the picker session and its grants. */}

@@ -54,6 +54,7 @@ export { default as IconPencil } from "@tabler/icons-react-native/IconPencil";
 export { default as IconPhone } from "@tabler/icons-react-native/IconPhone";
 export { default as IconPhoneOff } from "@tabler/icons-react-native/IconPhoneOff";
 export { default as IconPhoto } from "@tabler/icons-react-native/IconPhoto";
+export { default as IconVideo } from "@tabler/icons-react-native/IconVideo";
 export { default as IconPin } from "@tabler/icons-react-native/IconPin";
 export { default as IconPinnedOff } from "@tabler/icons-react-native/IconPinnedOff";
 export { default as IconPlayerPlay } from "@tabler/icons-react-native/IconPlayerPlay";

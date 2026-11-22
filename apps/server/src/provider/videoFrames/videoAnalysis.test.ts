@@ -254,4 +254,9 @@ describe("motionTimeline", () => {
     const timeline = motionTimeline(samples(300, { 150: { mean: 12, changed: 900, revert: 13 } }));
     expect(timeline.moments).toEqual([{ kind: "jump", t: 2.5, n: 150, ratio: 8 }]);
   });
+
+  it("does not call a screen cut inside motion a jump", () => {
+    const timeline = motionTimeline(samples(300, { 150: { mean: 40, changed: 9000, revert: 41 } }));
+    expect(timeline.moments.filter((m) => m.kind === "jump")).toEqual([]);
+  });
 });

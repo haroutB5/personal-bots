@@ -441,6 +441,24 @@ lines.on("line", async (line) => {
       ? content
       : (content ?? []).map((part) => part.text ?? "").join(" ");
   log(`prompt ${JSON.stringify(text.slice(0, 6000))}`);
+  // Images in the turn (video frames, photos): logged and kept under <pidDir>/turn-images/ as proof.
+  const images = Array.isArray(content) ? content.filter((part) => part?.type === "image") : [];
+  if (images.length > 0) {
+    const dir = `${pidDir}/turn-images/${Date.now()}`;
+    NodeFS.mkdirSync(dir, { recursive: true });
+    NodeFS.writeFileSync(`${dir}/prompt.txt`, text);
+    images.forEach((part, index) => {
+      const data = part.source?.data ?? "";
+      const ext = String(part.source?.media_type ?? "").split("/")[1] ?? "bin";
+      NodeFS.writeFileSync(
+        `${dir}/${String(index + 1).padStart(2, "0")}.${ext}`,
+        Buffer.from(data, "base64"),
+      );
+    });
+    log(
+      `images ${images.length} ${images.map((part) => `${part.source?.media_type}:${Math.round(((part.source?.data ?? "").length * 3) / 4)}`).join(" ")} saved ${dir}`,
+    );
+  }
   // The server sends each owner prompt (a turn's own prompt or a steer) with
   // its own uuid; the CLI reports when it begins the command.
   if (typeof message.uuid === "string" && message.uuid.length > 0) {

@@ -399,7 +399,13 @@ export function motionTimeline(samples: ReadonlyArray<MotionSample>): MotionTime
   );
   for (let k = 2; k < changes.length - 2; k++) {
     const change = changes[k]!;
-    if (change.mean < JUMP_MIN_MEAN || flashFrames.has(change.n)) continue;
+    // A change as big as a scene cut is a screen transition (opening an app), not a glitch.
+    if (
+      change.mean < JUMP_MIN_MEAN ||
+      change.mean >= SCENE_CHANGE_MEAN ||
+      flashFrames.has(change.n)
+    )
+      continue;
     const gapsAround = [changeGaps[k - 2], changeGaps[k - 1], changeGaps[k], changeGaps[k + 1]];
     if (!gapsAround.every((gap) => gap !== undefined && gap <= Math.max(interval * 4, 0.1)))
       continue;

@@ -439,11 +439,12 @@ export function Composer({
     void addDrafts(result.drafts, intakeId);
   };
 
-  const pickPhotos = async () => {
+  /** The system picker: photos and videos, or only videos from the sheet's Video row. */
+  const pickPhotos = async (mediaTypes: ImagePicker.MediaType[] = ["images", "videos"]) => {
     setPicking(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images", "videos"],
+        mediaTypes,
         ...libraryPick(MAX_ATTACHMENTS - draftRef.current.attachments.length),
         quality: 1,
       });
@@ -1341,6 +1342,10 @@ export function Composer({
         onAllPhotos={() => {
           setAttachOpen(false);
           void pickPhotos();
+        }}
+        onVideos={() => {
+          setAttachOpen(false);
+          void pickPhotos(["videos"]);
         }}
         onPicked={(intakeId) => {
           setAttachOpen(false);
