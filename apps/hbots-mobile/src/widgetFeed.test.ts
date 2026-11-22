@@ -356,7 +356,7 @@ describe("the widget feed", () => {
         memUsedGB: null,
         memTotalGB: null,
         diskFreeGB: null,
-        health: "Apps 7/8 up · matchday down · DB ok",
+        health: "matchday down · Apps 7/8 up · DB ok",
         healthBad: true,
       });
       const lost = feed({

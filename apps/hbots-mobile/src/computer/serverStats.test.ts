@@ -34,6 +34,7 @@ const ALL_UP = {
 };
 
 const text = (parts: ReadonlyArray<{ text: string }>) => parts.map((p) => p.text).join(" · ");
+const line = (apps: ServerApps | null) => text(serverAppsParts(apps));
 
 describe("the server line", () => {
   it("reads 'Server · CPU 12% · RAM 5/15 GB · Disk 238 GB free'", () => {
@@ -70,7 +71,7 @@ describe("the server line", () => {
 describe("the app health line", () => {
   it("reads 'Apps 8/8 up · DB ok' when everything is up", () => {
     const apps = parseServerApps(ALL_UP);
-    expect(serverAppsText(apps)).toBe("Apps 8/8 up · DB ok");
+    expect(line(apps)).toBe("Apps 8/8 up · DB ok");
     expect(serverAppsParts(apps).some((p) => p.busy)).toBe(false);
   });
 
@@ -80,7 +81,7 @@ describe("the app health line", () => {
       appsUp: 7,
       problems: [{ kind: "app", name: "matchday", status: "down" }],
     });
-    expect(serverAppsText(apps)).toBe("Apps 7/8 up · matchday down · DB ok");
+    expect(line(apps)).toBe("Apps 7/8 up · matchday down · DB ok");
     expect(
       serverAppsParts(apps)
         .filter((p) => p.busy)
@@ -100,18 +101,35 @@ describe("the app health line", () => {
         { kind: "db", name: "apps-postgres", status: "down" },
       ],
     });
-    expect(serverAppsText(apps)).toBe(
+    expect(line(apps)).toBe(
       "Apps 5/8 up · matchday down, rainhb unhealthy, caltrack starting · apps-postgres down",
     );
   });
 
   it("says 'DBs ok' for several databases and leaves DB out when there is none", () => {
-    expect(serverAppsText(parseServerApps({ ...ALL_UP, dbsUp: 2, dbsTotal: 2 }))).toBe(
+    expect(line(parseServerApps({ ...ALL_UP, dbsUp: 2, dbsTotal: 2 }))).toBe(
       "Apps 8/8 up · DBs ok",
     );
-    expect(serverAppsText(parseServerApps({ ...ALL_UP, dbsUp: 0, dbsTotal: 0 }))).toBe(
-      "Apps 8/8 up",
-    );
+    expect(line(parseServerApps({ ...ALL_UP, dbsUp: 0, dbsTotal: 0 }))).toBe("Apps 8/8 up");
+  });
+
+  it("puts the named problems first in the widget text so a cut keeps the name", () => {
+    expect(serverAppsText(parseServerApps(ALL_UP))).toBe("Apps 8/8 up · DB ok");
+    expect(
+      serverAppsText(
+        parseServerApps({
+          ...ALL_UP,
+          appsUp: 7,
+          dbsUp: 0,
+          problems: [
+            { kind: "app", name: "matchday", status: "down" },
+            { kind: "db", name: "apps-postgres", status: "down" },
+          ],
+        }),
+      ),
+    ).toBe("matchday down · apps-postgres down · Apps 7/8 up");
+    expect(serverAppsText(parseServerApps({ state: "unreachable" }))).toBe("Coolify unreachable");
+    expect(serverAppsText(parseServerApps({ state: "starting" }))).toBeNull();
   });
 
   it("says 'Coolify unreachable' in amber, never a count", () => {

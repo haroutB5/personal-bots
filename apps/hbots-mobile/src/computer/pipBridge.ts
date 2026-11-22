@@ -9,7 +9,8 @@ interface PipNative {
   ): { remove(): void };
 }
 
-const native = Platform.OS === "android" ? requireOptionalNativeModule<PipNative>("HbotsLiveView") : null;
+const native =
+  Platform.OS === "android" ? requireOptionalNativeModule<PipNative>("HbotsLiveView") : null;
 
 /** Asks Android to enter PiP by itself on Home. False when this phone cannot do PiP. */
 export function setPip(enabled: boolean, width: number, height: number): boolean {

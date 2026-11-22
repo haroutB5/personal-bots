@@ -241,10 +241,18 @@ export function serverAriaLabel(
   return words.length === 0 ? null : words.join(" ");
 }
 
-/** The app health line as one plain string (the widget's), or null when it does not show. */
+/**
+ * The app health as one plain string for the widgets, or null when it does not show. Problems
+ * come first ("matchday down · Apps 7/8 up · DB ok") so a narrow widget cuts the counts, not the name.
+ */
 export function serverAppsText(apps: ServerApps | null): string | null {
   const parts = serverAppsParts(apps);
-  return parts.length === 0 ? null : parts.map((part) => part.text).join(" · ");
+  if (parts.length === 0) return null;
+  const named = (part: ServerLinePart) =>
+    part.key === "appProblems" || (part.key === "db" && part.busy);
+  return [...parts.filter(named), ...parts.filter((part) => !named(part))]
+    .map((part) => part.text)
+    .join(" · ");
 }
 
 /** Whether the app health has a problem worth amber (anything but all up and reachable). */

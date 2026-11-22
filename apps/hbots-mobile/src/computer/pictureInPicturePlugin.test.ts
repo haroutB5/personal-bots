@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 type Entry = { $: Record<string, string> };
-type Manifest = { manifest: { application: Array<{ $: Record<string, string>; activity: Entry[] }> } };
+type Manifest = {
+  manifest: { application: Array<{ $: Record<string, string>; activity: Entry[] }> };
+};
 
 const plugin = require("../../plugins/withPictureInPicture.cjs") as {
   applyPictureInPicture: (manifest: Manifest) => Manifest;
