@@ -18,6 +18,7 @@ Harout's rule (22 Nov): no bot touches the gaming PC unless he asks. The Bots he
 - **Bots working setting (`src/settings/notificationsScreenModel.ts`, `NotificationsScreen.tsx`).** Settings > Notifications > "Sound and alerts on this phone" now lists **Bots working** (after Sign-in and security). It is an ordinary ongoing notification on the `working` channel, not a foreground service, so Android lets the owner turn it off: the row opens Android's channel settings like the other rows. The notice is always posted silent, so the row shows only **Silent** or **Off**, never a sound level it cannot make.
 - **This phone: Notifications row removed (`src/settings/ThisPhoneScreen.tsx`).** It said "Off" while Settings > Notifications said "On for this phone" and did nothing on tap. Per Harout it is removed (notifications live in Settings > Notifications), with its model `thisPhoneModel.ts` and test. "Name" is now the last row when the phone cannot manage devices.
 - **What's new is a numbered list (`src/updateNotes.ts` `updateNoteItems`, `ThisPhoneScreen.tsx`).** Notes are one item per line in `latest.json` (`notes` stays a string so older phones still read it). Typed markers (`1.`, `-`, `•`) are dropped; an older one-paragraph note is split into its sentences. `publish-android-update.mjs` takes repeatable `--note "<item>"` (or `--notes` with one item per line) and refuses more than the 8 items the phone shows.
+- **Widget picker previews.** `hbots_preview_machines.png` and `hbots_preview_tiles.png` showed the gaming PC; they are now crops of the real widgets on the laptop emulator. The widgets' health text puts a named problem first ("matchday down · Apps 7/8 up · DB ok") so the narrow Machines panel cuts the counts, not the name.
 - **Version.** `scripts/personal/app-version.txt` and `apps/hbots-mobile/package.json` move to `1.67.48`.
 
 ## Server env change (ships with this release)
@@ -38,8 +39,6 @@ One item per line (pass each as `--notes $'…\n…'` to the finisher, or `--not
 2. The bots-working notification now has a setting in Notifications.
 3. Removed the This phone notifications row that showed the wrong state.
 4. What's new is now a numbered list.
-
-- **Widget picker previews.** `hbots_preview_machines.png` and `hbots_preview_tiles.png` showed the gaming PC; they are now crops of the real widgets on the laptop emulator. The widgets' health text puts a named problem first ("matchday down · Apps 7/8 up · DB ok") so the narrow Machines panel cuts the counts, not the name.
 
 ## Verification
 
