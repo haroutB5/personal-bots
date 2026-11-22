@@ -4,6 +4,7 @@ import {
   type TaskBucket,
   type TaskListFilter,
 } from "@hbots/personal-client/conversation/taskPresentation";
+import { projectHasScheduledWork } from "@hbots/personal-client/work/projectCards";
 import * as DateTime from "effect/DateTime";
 import type {
   PersonalBot,
@@ -53,9 +54,9 @@ export function unansweredQuestionCount(
 }
 
 /**
- * Top-level Work cards for live tasks: one per open project with live work,
- * one per standalone request row. A lead waiting on a shown helper adds
- * nothing. Null `projects` (not loaded) counts each project id once.
+ * Work cards: one per open project with work scheduled (`projectHasScheduledWork`),
+ * one per standalone request row. Tasks in a counted project, or a lead waiting
+ * on a shown helper, add nothing. Null `projects` counts each live project id once.
  */
 export function workCardCount(
   buckets: TaskBuckets,
@@ -97,6 +98,10 @@ export function workCardCount(
     return current.taskId;
   };
   const cards = new Set<string>();
+  const allTasks = [...live, ...buckets.completed];
+  for (const project of projects ?? []) {
+    if (projectHasScheduledWork(project, allTasks)) cards.add(`project:${project.projectId}`);
+  }
   const looseRows = new Map<string, boolean>();
   for (const task of live) {
     const projectId = projectOf(task);

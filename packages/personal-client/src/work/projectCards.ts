@@ -11,7 +11,6 @@ import * as DateTime from "effect/DateTime";
 import { isChatArchived } from "../bots/chatState.ts";
 
 export const PROJECT_CARDS_MAX = 4;
-export const PROJECT_QUIET_MS = 72 * 60 * 60_000;
 const FRESH_ESTIMATE_MS = 2 * 60 * 60_000;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -42,6 +41,8 @@ export interface ProjectCard {
   /** Linked tasks that are not finished, newest first. */
   readonly activeTaskIds: ReadonlyArray<string>;
   readonly lastActivityMs: number;
+  /** Work still scheduled (see `projectHasScheduledWork`): it counts in Work and never folds as quiet. */
+  readonly scheduled: boolean;
 }
 
 export interface ClosedProject {
@@ -59,7 +60,7 @@ export interface ProjectSummary {
   readonly cards: ReadonlyArray<ProjectCard>;
   /** Idle open projects past the card limit, behind "+N more". */
   readonly more: ReadonlyArray<ProjectCard>;
-  /** Open projects nobody works on and quiet for 72 h; still open, shown folded. */
+  /** Open projects with nothing scheduled (no unfinished task, every step done); shown folded. */
   readonly quiet: ReadonlyArray<ProjectCard>;
   /** Closed projects the server still lists (last 30 days), newest first. */
   readonly closed: ReadonlyArray<ClosedProject>;
@@ -91,6 +92,34 @@ export const formatTimeLeft = (ms: number): string => {
 };
 
 const isActive = (task: PersonalTask) => !PERSONAL_TASK_TERMINAL_STATUSES.includes(task.status);
+
+/** Finished for good: an interrupted task is paused, not finished, so it still holds work. */
+const FINISHED_STATUSES: ReadonlyArray<PersonalTask["status"]> = [
+  "completed",
+  "failed",
+  "cancelled",
+];
+
+/**
+ * Whether an open project still has work scheduled: an unfinished linked task
+ * (queued, running, waiting, rate limited or interrupted) or a step not done.
+ * Done and dropped projects never do. The Work badge counts exactly these.
+ */
+export function projectHasScheduledWork(
+  project: Pick<PersonalProject, "projectId" | "state"> & {
+    readonly steps?: ReadonlyArray<PersonalProjectStep> | undefined;
+  },
+  tasks: Iterable<PersonalTask>,
+): boolean {
+  if (project.state.kind !== "open") return false;
+  if ((project.steps ?? []).some((step) => step.state !== "done")) return true;
+  for (const task of tasks) {
+    if (task.projectId === project.projectId && !FINISHED_STATUSES.includes(task.status)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const namesOf = (botIds: ReadonlyArray<string>, botName: (botId: string) => string) => {
   const names = [...new Set(botIds)].map(botName);
@@ -316,6 +345,7 @@ const whoOf = (
   tasks: ReadonlyArray<PersonalTask>,
   botName: (botId: string) => string,
   quietMs: number,
+  idleLine: string | null,
 ): Pick<ProjectCard, "whoLine" | "whoTone" | "whoBotId"> => {
   const working = linked.filter((task) => task.status === "running");
   if (working.length > 0) {
@@ -356,7 +386,7 @@ const whoOf = (
     };
   }
   return {
-    whoLine: `Nobody on it · quiet ${formatSpan(quietMs)}`,
+    whoLine: idleLine ?? `Nobody on it · quiet ${formatSpan(quietMs)}`,
     whoTone: "idle",
     whoBotId: null,
   };
@@ -405,7 +435,18 @@ export function buildProjectCards(input: {
       steps: project.steps,
       segments: project.steps.map((step) => step.state),
       ...estimateOf(project, nowMs),
-      ...whoOf(active, tasks, botName, nowMs - lastActivityMs),
+      ...whoOf(
+        active,
+        tasks,
+        botName,
+        nowMs - lastActivityMs,
+        !projectHasScheduledWork(project, linked)
+          ? null
+          : linked.some((task) => task.status === "interrupted")
+            ? "Paused"
+            : "Not running",
+      ),
+      scheduled: projectHasScheduledWork(project, linked),
       stepLine: stepLineOf(project.steps),
       activeTaskIds: active.map((task) => task.taskId),
       lastActivityMs,
@@ -417,8 +458,9 @@ export function buildProjectCards(input: {
     card.activeTaskIds.length > 0 ? 0 : card.estimateTone === "overdue" ? 1 : 2;
   const byActivity = (a: ProjectCard, b: ProjectCard) =>
     rank(a) - rank(b) || b.lastActivityMs - a.lastActivityMs;
-  const isQuiet = (card: ProjectCard) =>
-    card.activeTaskIds.length === 0 && nowMs - card.lastActivityMs >= PROJECT_QUIET_MS;
+  // Only a project with nothing left to do folds as quiet, so every project the
+  // Work badge counts stays a card (or behind "+N more").
+  const isQuiet = (card: ProjectCard) => !card.scheduled;
   const awake = open.filter((card) => !isQuiet(card)).toSorted(byActivity);
   const live = awake.filter((card) => card.activeTaskIds.length > 0);
   const idle = awake.filter((card) => card.activeTaskIds.length === 0);

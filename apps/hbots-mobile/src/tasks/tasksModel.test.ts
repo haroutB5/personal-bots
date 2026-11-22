@@ -102,8 +102,16 @@ describe("taskListCounts", () => {
 });
 
 const T = "2026-11-22T17:00:00Z";
-const project = (projectId: string, kind: "open" | "done" = "open") =>
-  ({ projectId, state: { kind } }) as unknown as PersonalProject;
+const project = (
+  projectId: string,
+  kind: "open" | "done" | "dropped" = "open",
+  steps: ReadonlyArray<"done" | "doing" | "todo"> = [],
+) =>
+  ({
+    projectId,
+    state: { kind },
+    steps: steps.map((state, index) => ({ label: `Step ${index + 1}`, state })),
+  }) as unknown as PersonalProject;
 /** A task linked to a goal; built from a variable so fork hygiene does not read it as an EAS id. */
 const inGoal = (projectId: string, extra: object = {}) => ({ projectId, ...extra }) as never;
 const live = (...tasks: ReadonlyArray<PersonalTask>) =>
@@ -150,6 +158,50 @@ describe("workCardCount", () => {
   it("treats tasks of a closed project as standalone", () => {
     const buckets = live(task("a", "running", T, inGoal("p")));
     expect(workCardCount(buckets, [project("p", "done")])).toBe(1);
+  });
+
+  it("counts a project whose only task is paused (interrupted)", () => {
+    const buckets = live(task("a", "interrupted", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p", "open", ["done"])])).toBe(1);
+  });
+
+  it("counts a project with a task queued for later", () => {
+    const buckets = live(
+      task("a", "queued", T, inGoal("p", { availableAt: "2026-12-01T09:00:00Z" })),
+    );
+    expect(workCardCount(buckets, [project("p", "open", ["done"])])).toBe(1);
+  });
+
+  it("counts a project with steps still to do and no tasks at all", () => {
+    expect(workCardCount(live(), [project("p", "open", ["done", "todo"])])).toBe(1);
+  });
+
+  it("does not count a project with only finished tasks and every step done", () => {
+    const buckets = live(
+      task("a", "completed", T, inGoal("p")),
+      task("b", "failed", T, inGoal("p")),
+      task("c", "cancelled", T, inGoal("p")),
+    );
+    expect(workCardCount(buckets, [project("p", "open", ["done", "done"])])).toBe(0);
+  });
+
+  it("still counts finished tasks' project while steps remain", () => {
+    const buckets = live(task("a", "completed", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p", "open", ["done", "todo"])])).toBe(1);
+  });
+
+  it("never counts a done or dropped project, whatever its steps and paused tasks", () => {
+    const buckets = live(task("a", "interrupted", T, inGoal("p")));
+    expect(workCardCount(buckets, [project("p", "done", ["todo"])])).toBe(0);
+    expect(workCardCount(live(), [project("q", "dropped", ["todo"])])).toBe(0);
+  });
+
+  it("counts a scheduled project plus its live task as one card", () => {
+    const buckets = live(
+      task("a", "running", T, inGoal("p")),
+      task("b", "interrupted", T, inGoal("p")),
+    );
+    expect(workCardCount(buckets, [project("p", "open", ["doing", "todo"])])).toBe(1);
   });
 
   it("counts each project id once before the project list loads", () => {
