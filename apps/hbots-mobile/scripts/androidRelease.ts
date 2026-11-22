@@ -12,6 +12,20 @@ export const ANDROID_UPDATES_DIR = "android-updates";
 export const LATEST_MANIFEST = "latest.json";
 export const APK_CONTENT_TYPE = "application/vnd.android.package-archive";
 export const NOTES_MAX_LENGTH = 500;
+/** The phone's What's new shows at most this many items (src/updateNotes.ts MAX_NOTE_LINES). */
+export const NOTES_MAX_ITEMS = 8;
+
+/**
+ * The release notes as a list: one feature per `--note`, stored one per line in latest.json
+ * (`notes` stays a string so older phones still read it). Each item is trimmed and must be one line.
+ */
+export function joinNoteItems(items: ReadonlyArray<string>): string {
+  const kept = items.map((item) => item.trim()).filter((item) => item.length > 0);
+  for (const item of kept) {
+    if (/[\r\n]/u.test(item)) throw new Error("a --note item must be one line");
+  }
+  return kept.join("\n");
+}
 export const MIN_APK_BYTES = 1_000_000;
 export const MAX_APK_BYTES = 300_000_000;
 export const KEEP_APKS = 3;
@@ -154,6 +168,10 @@ export function releaseProblems(check: ReleaseCheck): ReadonlyArray<string> {
   } else if (notes.length > NOTES_MAX_LENGTH) {
     problems.push(
       `notes are ${String(notes.length)} characters, limit ${String(NOTES_MAX_LENGTH)}`,
+    );
+  } else if (notes.split("\n").length > NOTES_MAX_ITEMS) {
+    problems.push(
+      `notes have ${String(notes.split("\n").length)} items, the phone shows ${String(NOTES_MAX_ITEMS)}`,
     );
   }
   if (check.published !== null) {

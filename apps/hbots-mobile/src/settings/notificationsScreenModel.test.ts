@@ -26,7 +26,7 @@ describe("importanceText", () => {
 });
 
 describe("channelRows", () => {
-  it("lists sign-in first, then bots by name, and hides channels it does not own", () => {
+  it("lists sign-in, then bots working, then bots by name, and hides channels it does not own", () => {
     const rows = channelRows([
       channel("bot.b2", "Zed"),
       channel("working", "Bots working", 2),
@@ -34,8 +34,21 @@ describe("channelRows", () => {
       channel("bot.b1", "Ada", 0),
       channel("account", "Sign-in and security"),
     ]);
-    expect(rows.map((row) => row.id)).toEqual(["account", "bot.b1", "bot.b2"]);
-    expect(rows[1]).toEqual({ id: "bot.b1", title: "Ada", detail: "Off" });
+    expect(rows.map((row) => row.id)).toEqual(["account", "working", "bot.b1", "bot.b2"]);
+    expect(rows[1]).toEqual({ id: "working", title: "Bots working", detail: "Silent" });
+    expect(rows[2]).toEqual({ id: "bot.b1", title: "Ada", detail: "Off" });
+  });
+
+  it("shows the bots-working notice as Silent or Off, never a sound level it cannot make", () => {
+    for (const [importance, detail] of [
+      [0, "Off"],
+      [1, "Silent"],
+      [2, "Silent"],
+      [3, "Silent"],
+      [4, "Silent"],
+    ] as const) {
+      expect(channelRows([channel("working", "Bots working", importance)])[0]?.detail).toBe(detail);
+    }
   });
 
   it("is empty before any channel exists", () => {

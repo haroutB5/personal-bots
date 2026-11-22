@@ -9,7 +9,7 @@ import { hasScreenLock } from "../security/deviceAuth";
 import { saveLock, useLockSetting } from "../security/lockSetting";
 import { ChoiceSheet } from "../sheets/ChoiceSheet";
 import { tokens } from "../shell/tokens";
-import { sanitizeUpdateNotes } from "../updateNotes";
+import { updateNoteItems } from "../updateNotes";
 import { describeLastCheck, describeUpdate } from "../updateView";
 import { openReopenPermission, type UpdateSnapshot } from "../updater";
 import {
@@ -21,7 +21,6 @@ import {
   SettingsPage,
   TextButton,
 } from "./SettingsUi";
-import { phoneNotificationState } from "./thisPhoneModel";
 
 export function ThisPhoneScreen({
   native,
@@ -46,9 +45,7 @@ export function ThisPhoneScreen({
   readonly onOpenDevices: () => void;
   readonly onSignOut: () => void;
 }) {
-  const push = native.settings.usePushSettings(native.environmentId);
   const label = native.deviceLabel;
-  const notifications = phoneNotificationState(push.data?.devices ?? null, label);
   const now = useNow();
   const lock = useLockSetting();
   const [choosingLock, setChoosingLock] = useState(false);
@@ -70,7 +67,7 @@ export function ThisPhoneScreen({
     });
   };
   const description = describeUpdate(snapshot, latest);
-  const notes = sanitizeUpdateNotes(latest?.notes);
+  const notes = updateNoteItems(latest?.notes);
   const action =
     description.action === "install"
       ? onInstall
@@ -89,8 +86,7 @@ export function ThisPhoneScreen({
   return (
     <SettingsPage title="This phone" onBack={onBack}>
       <Section label="This phone">
-        <Row title="Name" value={label} />
-        <Row title="Notifications" value={notifications} last={!native.canManageDevices} />
+        <Row title="Name" value={label} last={!native.canManageDevices} />
         {native.canManageDevices ? (
           <Row
             title="Signed-in devices"
@@ -145,9 +141,16 @@ export function ThisPhoneScreen({
 
       {notes.length > 0 ? (
         <Section label="What's new">
-          <View style={styles.notes}>
-            {notes.map((line, index) => (
-              <BodyText key={`${String(index)}-${line}`}>{line.length > 0 ? line : " "}</BodyText>
+          <View style={styles.notes} accessibilityRole="list">
+            {notes.map((item, index) => (
+              <View key={`${String(index)}-${item}`} style={styles.noteItem}>
+                <Text style={styles.noteNumber} maxFontSizeMultiplier={1.5}>
+                  {`${String(index + 1)}.`}
+                </Text>
+                <View style={styles.noteText}>
+                  <BodyText>{item}</BodyText>
+                </View>
+              </View>
             ))}
           </View>
         </Section>
@@ -182,7 +185,17 @@ function Notice({ children }: { readonly children: string }) {
 
 const styles = StyleSheet.create({
   updateBody: { gap: 10, paddingHorizontal: 16, paddingBottom: 14, paddingTop: 4 },
-  notes: { gap: 6, padding: 16 },
+  notes: { gap: 8, padding: 16 },
+  noteItem: { flexDirection: "row", gap: 8 },
+  noteNumber: {
+    color: tokens.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    minWidth: 20,
+    paddingLeft: 4,
+    fontVariant: ["tabular-nums"],
+  },
+  noteText: { flex: 1 },
   meta: { color: tokens.textTertiary, fontSize: 13, lineHeight: 18 },
   notice: {
     borderRadius: 12,

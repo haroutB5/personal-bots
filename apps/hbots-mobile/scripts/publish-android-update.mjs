@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 
 import {
   ANDROID_UPDATES_DIR,
+  joinNoteItems,
   LATEST_SCHEMA,
   outputDirProblem,
   publishRelease,
@@ -17,11 +18,13 @@ import {
 import { requireReleaseVersion } from "./versionCode.ts";
 
 const USAGE =
-  'Usage: node publish-android-update.mjs <signed.apk> --out <data-root> --notes "<text>" [--minimum-native-version x.y.z] [--readback https://host]';
+  'Usage: node publish-android-update.mjs <signed.apk> --out <data-root> (--note "<item>" [--note "<item>" ...] | --notes "<item>\\n<item>") [--minimum-native-version x.y.z] [--readback https://host]\n' +
+  "  Each --note is one numbered item in the phone's What's new (at most 8). --notes takes the items one per line.";
 
 const args = process.argv.slice(2);
 let apk;
 const options = { notes: undefined, out: undefined, minimum: undefined, readback: undefined };
+const noteItems = [];
 
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
@@ -32,6 +35,7 @@ for (let index = 0; index < args.length; index += 1) {
     return next;
   };
   if (arg === "--notes") options.notes = value();
+  else if (arg === "--note") noteItems.push(value());
   else if (arg === "--out") options.out = value();
   else if (arg === "--minimum-native-version") options.minimum = value();
   else if (arg === "--readback") options.readback = value();
@@ -44,6 +48,21 @@ const fail = (message) => {
   console.error(`publish-android-update: ${message}`);
   process.exit(1);
 };
+
+if (noteItems.length > 0) {
+  if (options.notes !== undefined) {
+    console.error("publish-android-update: use --note or --notes, not both");
+    process.exit(2);
+  }
+  try {
+    options.notes = joinNoteItems(noteItems);
+  } catch (cause) {
+    console.error(
+      `publish-android-update: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    process.exit(2);
+  }
+}
 
 if (apk === undefined || options.out === undefined || options.notes === undefined) {
   console.error(USAGE);

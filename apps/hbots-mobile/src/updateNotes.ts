@@ -20,3 +20,20 @@ export function sanitizeUpdateNotes(raw: string | null | undefined): string[] {
     .slice(0, MAX_NOTE_LINES)
     .map((line) => line.trimEnd());
 }
+
+const MARKER = /^\s*(?:\d{1,2}[.)]|[-*\u2022])\s+/u;
+const SENTENCE_BREAK = /(?<=[.!?])\s+(?=[A-Z0-9"'(])/u;
+
+/**
+ * What's new as a list of features, for numbering on screen. Notes are one item per line; a
+ * marker someone typed ("1.", "-", "•") is dropped so the list is not numbered twice. An older
+ * release's single-paragraph note is split into its sentences, one item each.
+ */
+export function updateNoteItems(raw: string | null | undefined): string[] {
+  const lines = sanitizeUpdateNotes(raw)
+    .map((line) => line.replace(MARKER, "").trim())
+    .filter((line) => line.length > 0);
+  const items =
+    lines.length === 1 ? (lines[0] ?? "").split(SENTENCE_BREAK).map((item) => item.trim()) : lines;
+  return items.filter((item) => item.length > 0).slice(0, MAX_NOTE_LINES);
+}

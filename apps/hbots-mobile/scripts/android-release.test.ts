@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   atomicWriteFile,
+  joinNoteItems,
   outputDirProblem,
   publishRelease,
   pruneReleases,
@@ -119,6 +120,23 @@ describe("releaseProblems", () => {
     expect(releaseProblems(checkFor({ minimumNativeVersion: null }))).toEqual([
       "minimumNativeVersion is unavailable; pass --minimum-native-version",
     ]);
+  });
+
+  it("refuses notes with more items than the phone shows", () => {
+    const nine = Array.from({ length: 9 }, (_, index) => `item ${String(index)}`).join("\n");
+    expect(releaseProblems(checkFor({ notes: nine }))).toEqual([
+      "notes have 9 items, the phone shows 8",
+    ]);
+    expect(releaseProblems(checkFor({ notes: nine.split("\n").slice(0, 8).join("\n") }))).toEqual(
+      [],
+    );
+  });
+
+  it("joins --note items one per line and refuses an item with a line break", () => {
+    expect(joinNoteItems(["  Server stats  ", "", "Bots working setting"])).toBe(
+      "Server stats\nBots working setting",
+    );
+    expect(() => joinNoteItems(["one\ntwo"])).toThrow("one line");
   });
 
   it("refuses empty or oversized notes", () => {

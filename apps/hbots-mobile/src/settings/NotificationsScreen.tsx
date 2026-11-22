@@ -189,7 +189,10 @@ export function NotificationsScreen({
           ))}
         </Section>
       )}
-      <SectionNote>Each bot has its own sound and pop-up setting in Android.</SectionNote>
+      <SectionNote>
+        Each bot has its own sound and pop-up setting in Android. Bots working is always silent;
+        turn it off there to stop the ongoing notice.
+      </SectionNote>
 
       {devices.length === 0 ? null : (
         <Section label="Devices">

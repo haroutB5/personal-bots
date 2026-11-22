@@ -38,23 +38,33 @@ export function importanceText(importance: number): string {
   return "Sound and pop-up";
 }
 
-const FIXED_ORDER: Readonly<Record<string, number>> = { account: 0 };
+const WORKING_CHANNEL = "working";
+const FIXED_ORDER: Readonly<Record<string, number>> = { account: 0, [WORKING_CHANNEL]: 1 };
 
-/** One row per channel that carries messages: sign-in first, then bots by name. */
+/**
+ * The "bots working" notice is always posted silent, so Android's sound levels do not apply to it:
+ * it is either shown (silently) or off.
+ */
+function channelDetail(channel: ChannelState): string {
+  if (channel.id === WORKING_CHANNEL) return channel.importance <= 0 ? "Off" : "Silent";
+  return importanceText(channel.importance);
+}
+
+/** One row per channel hbots owns: sign-in, then the bots-working notice, then bots by name. */
 export function channelRows(channels: ReadonlyArray<ChannelState>): ReadonlyArray<ChannelRow> {
   const owned = channels.filter(
     (channel) => channel.id in FIXED_ORDER || channel.id.startsWith("bot."),
   );
   return owned
     .toSorted((a, b) => {
-      const rankA = FIXED_ORDER[a.id] ?? 2;
-      const rankB = FIXED_ORDER[b.id] ?? 2;
+      const rankA = FIXED_ORDER[a.id] ?? 3;
+      const rankB = FIXED_ORDER[b.id] ?? 3;
       return rankA !== rankB ? rankA - rankB : a.name.localeCompare(b.name);
     })
     .map((channel) => ({
       id: channel.id,
       title: channel.name,
-      detail: importanceText(channel.importance),
+      detail: channelDetail(channel),
     }));
 }
 
