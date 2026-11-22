@@ -974,7 +974,7 @@
       "scope": "personal",
       "layout": false,
       "logic": {
-        "files": 55,
+        "files": 56,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
@@ -1002,7 +1002,7 @@
       "scope": "personal",
       "layout": false,
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": [
           "voice/voiceCallApi.ts",
           "voice/callState.ts",
@@ -1067,7 +1067,7 @@
       "web": "ChatSettingsSheet.tsx:281",
       "component": "ChatSettingsSheet",
       "logic": {
-        "files": 39,
+        "files": 40,
         "inPackage": [
           "chatState.ts",
           "relativeTime.ts",
@@ -1252,7 +1252,7 @@
       "web": "TeamScreen.tsx:731",
       "primitive": "Sheet",
       "logic": {
-        "files": 62,
+        "files": 63,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -1291,7 +1291,7 @@
       "web": "WorkScreen.tsx:239",
       "component": "DetailSheet",
       "logic": {
-        "files": 55,
+        "files": 56,
         "inPackage": ["usePersonalBots.ts", "taskPresentation.ts"],
         "direct": [
           "packages/personal-client/src/bots/botSummaries.ts",
@@ -1351,7 +1351,7 @@
       "web": "providers/ProviderSheets.tsx:13",
       "component": "ProviderSheet",
       "logic": {
-        "files": 35,
+        "files": 36,
         "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
@@ -1366,7 +1366,7 @@
       "web": "providers/ProviderSheets.tsx:75",
       "component": "ConfirmSheet",
       "logic": {
-        "files": 35,
+        "files": 36,
         "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
@@ -1381,7 +1381,7 @@
       "web": "providers/ProviderSheets.tsx:144",
       "component": "InstallConfirmSheet",
       "logic": {
-        "files": 35,
+        "files": 36,
         "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
@@ -1396,7 +1396,7 @@
       "web": "providers/ProviderSheets.tsx:258",
       "component": "RemapSheet",
       "logic": {
-        "files": 35,
+        "files": 36,
         "inPackage": ["usagePresentation.ts", "conversationModel.ts", "botSummaries.ts"],
         "direct": ["providerRows.ts", "providers/providerFacts.ts"]
       },
@@ -1519,7 +1519,7 @@
       "web": "BotThreadsScreen.tsx:612",
       "via": "menu",
       "logic": {
-        "files": 84,
+        "files": 85,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -1567,7 +1567,7 @@
       "web": "BotThreadsScreen.tsx:619",
       "via": "menu",
       "logic": {
-        "files": 84,
+        "files": 85,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -1615,7 +1615,7 @@
       "web": "ChatsScreen.tsx:852",
       "via": "menu",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "relativeTime.ts",
           "perfFlags.ts",
@@ -1675,7 +1675,7 @@
       "web": "ChatsScreen.tsx:853",
       "via": "menu",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "relativeTime.ts",
           "perfFlags.ts",
@@ -1735,7 +1735,7 @@
       "web": "ChatsScreen.tsx:856",
       "via": "menu",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "relativeTime.ts",
           "perfFlags.ts",
@@ -1795,7 +1795,7 @@
       "web": "ConversationScreen.tsx:1491",
       "via": "menu",
       "logic": {
-        "files": 142,
+        "files": 143,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1897,7 +1897,7 @@
       "web": "ConversationScreen.tsx:1494",
       "via": "menu",
       "logic": {
-        "files": 142,
+        "files": 143,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -1999,7 +1999,7 @@
       "web": "ConversationScreen.tsx:1505",
       "via": "menu",
       "logic": {
-        "files": 142,
+        "files": 143,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2101,7 +2101,7 @@
       "web": "ConversationScreen.tsx:1517",
       "via": "menu",
       "logic": {
-        "files": 142,
+        "files": 143,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2203,7 +2203,7 @@
       "web": "ConversationScreen.tsx:1526",
       "via": "menu",
       "logic": {
-        "files": 142,
+        "files": 143,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2305,7 +2305,7 @@
       "web": "ConversationScreen.tsx:1540",
       "via": "menu",
       "logic": {
-        "files": 142,
+        "files": 143,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2452,7 +2452,7 @@
       "web": "GroupConversationScreen.tsx:546",
       "via": "menu",
       "logic": {
-        "files": 70,
+        "files": 71,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2492,7 +2492,7 @@
       "web": "GroupConversationScreen.tsx:548",
       "via": "menu",
       "logic": {
-        "files": 70,
+        "files": 71,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2532,7 +2532,7 @@
       "web": "GroupConversationScreen.tsx:559",
       "via": "menu",
       "logic": {
-        "files": 70,
+        "files": 71,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2572,7 +2572,7 @@
       "web": "GroupConversationScreen.tsx:562",
       "via": "menu",
       "logic": {
-        "files": 70,
+        "files": 71,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2612,7 +2612,7 @@
       "web": "GroupConversationScreen.tsx:566",
       "via": "menu",
       "logic": {
-        "files": 70,
+        "files": 71,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2652,7 +2652,7 @@
       "web": "GroupConversationScreen.tsx:570",
       "via": "menu",
       "logic": {
-        "files": 70,
+        "files": 71,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2692,7 +2692,7 @@
       "web": "GroupConversationScreen.tsx:572",
       "via": "menu",
       "logic": {
-        "files": 70,
+        "files": 71,
         "inPackage": [
           "usePersonalBots.ts",
           "groupModel.ts",
@@ -2777,7 +2777,7 @@
       "web": "MemoryScreen.tsx:536",
       "via": "menu",
       "logic": {
-        "files": 55,
+        "files": 56,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
@@ -2834,7 +2834,7 @@
       "web": "PersonalComposer.tsx:1310",
       "via": "menu",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2861,7 +2861,7 @@
       "web": "PersonalComposer.tsx:1318",
       "via": "menu",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2888,7 +2888,7 @@
       "web": "PersonalComposer.tsx:1327",
       "via": "menu",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2915,7 +2915,7 @@
       "web": "PersonalComposer.tsx:1461",
       "via": "menu",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2942,7 +2942,7 @@
       "web": "PersonalComposer.tsx:1470",
       "via": "menu",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -2969,7 +2969,7 @@
       "web": "PinnedStrip.tsx:442",
       "via": "menu",
       "logic": {
-        "files": 37,
+        "files": 38,
         "inPackage": ["unreadChats.ts", "groupModel.ts", "botSummaries.ts", "avatarMotion.ts"],
         "direct": [
           "avatarMotion.ts",
@@ -3096,7 +3096,7 @@
       "web": "computer/ComputerScreen.tsx:1269",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 68,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -3127,7 +3127,7 @@
       "web": "computer/ComputerScreen.tsx:1270",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 68,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -3158,7 +3158,7 @@
       "web": "computer/ComputerScreen.tsx:1274",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 68,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -3189,7 +3189,7 @@
       "web": "computer/ComputerScreen.tsx:1401",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 68,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -3220,7 +3220,7 @@
       "web": "computer/ComputerScreen.tsx:1406",
       "via": "menu",
       "logic": {
-        "files": 67,
+        "files": 68,
         "inPackage": ["perfFlags.ts", "usePersonalBots.ts", "botModelLabel.ts", "botSummaries.ts"],
         "direct": [
           "botSummaries.ts",
@@ -3251,7 +3251,7 @@
       "web": "BotThreadsScreen.tsx:203",
       "via": "gesture",
       "logic": {
-        "files": 84,
+        "files": 85,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -3299,7 +3299,7 @@
       "web": "BotThreadsScreen.tsx:241",
       "via": "gesture",
       "logic": {
-        "files": 84,
+        "files": 85,
         "inPackage": [
           "usePersonalBots.ts",
           "unreadChats.ts",
@@ -3377,7 +3377,7 @@
       "web": "ChatsScreen.tsx:1133",
       "via": "gesture",
       "logic": {
-        "files": 87,
+        "files": 88,
         "inPackage": [
           "relativeTime.ts",
           "perfFlags.ts",
@@ -3512,7 +3512,7 @@
       "web": "MemoryScreen.tsx:176",
       "via": "gesture",
       "logic": {
-        "files": 55,
+        "files": 56,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
@@ -3546,7 +3546,7 @@
       "web": "MessageSwipeTime.tsx:61",
       "via": "gesture",
       "logic": {
-        "files": 27,
+        "files": 28,
         "inPackage": ["greeting.ts", "conversationModel.ts"],
         "direct": ["messageTime.ts", "messageSwipe.ts", "useMessageSwipe.ts"]
       },
@@ -3709,7 +3709,7 @@
       "web": "TeamScreen.tsx:467",
       "via": "gesture",
       "logic": {
-        "files": 62,
+        "files": 63,
         "inPackage": [
           "usePersonalBots.ts",
           "perfFlags.ts",
@@ -3797,7 +3797,7 @@
       "title": "ContextUsedPanel",
       "web": "ContextUsedPanel.tsx:1",
       "logic": {
-        "files": 48,
+        "files": 49,
         "inPackage": [
           "usePersonalBots.ts",
           "relativeTime.ts",
@@ -3981,7 +3981,7 @@
       "title": "PinnedStrip",
       "web": "PinnedStrip.tsx:1",
       "logic": {
-        "files": 37,
+        "files": 38,
         "inPackage": ["unreadChats.ts", "groupModel.ts", "botSummaries.ts", "avatarMotion.ts"],
         "direct": [
           "avatarMotion.ts",
@@ -4836,7 +4836,7 @@
       "web": "PersonalProvidersSection.tsx:1",
       "section": "Providers",
       "logic": {
-        "files": 53,
+        "files": 54,
         "inPackage": [
           "usePersonalBots.ts",
           "usagePresentation.ts",
@@ -4931,7 +4931,7 @@
       "web": "BotFallbackSection.tsx:38",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
@@ -4946,7 +4946,7 @@
       "web": "BotForm.tsx:602",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -4971,7 +4971,7 @@
       "web": "BotForm.tsx:629",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -4996,7 +4996,7 @@
       "web": "BotForm.tsx:645",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5021,7 +5021,7 @@
       "web": "BotForm.tsx:664",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5046,7 +5046,7 @@
       "web": "BotForm.tsx:713",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5071,7 +5071,7 @@
       "web": "BotForm.tsx:744",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5096,7 +5096,7 @@
       "web": "BotForm.tsx:774",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5121,7 +5121,7 @@
       "web": "BotForm.tsx:805",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5146,7 +5146,7 @@
       "web": "BotForm.tsx:878",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5171,7 +5171,7 @@
       "web": "BotForm.tsx:905",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5196,7 +5196,7 @@
       "web": "BotForm.tsx:920",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5221,7 +5221,7 @@
       "web": "BotForm.tsx:935",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5246,7 +5246,7 @@
       "web": "BotForm.tsx:951",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5271,7 +5271,7 @@
       "web": "BotForm.tsx:981",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5296,7 +5296,7 @@
       "web": "BotForm.tsx:1011",
       "via": "field",
       "logic": {
-        "files": 58,
+        "files": 59,
         "inPackage": ["usePersonalBots.ts", "groupModel.ts", "botSummaries.ts", "botModelLabel.ts"],
         "direct": [
           "botFormModel.ts",
@@ -5336,7 +5336,7 @@
       "web": "BotModelPickFields.tsx:69",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
@@ -5351,7 +5351,7 @@
       "web": "BotModelPickFields.tsx:100",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
@@ -5366,7 +5366,7 @@
       "web": "BotModelPickFields.tsx:139",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
@@ -5381,7 +5381,7 @@
       "web": "BotModelPickFields.tsx:166",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botSummaries.ts", "botModelLabel.ts"],
         "direct": ["botFormModel.ts", "botSummaries.ts"]
       },
@@ -5396,7 +5396,7 @@
       "web": "BotScheduleSection.tsx:48",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
@@ -5411,7 +5411,7 @@
       "web": "BotScheduleSection.tsx:68",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
@@ -5426,7 +5426,7 @@
       "web": "BotScheduleSection.tsx:85",
       "via": "field",
       "logic": {
-        "files": 30,
+        "files": 31,
         "inPackage": ["botModelLabel.ts", "botSummaries.ts"],
         "direct": ["botFormModel.ts"]
       },
@@ -5501,7 +5501,7 @@
       "web": "MemoryScreen.tsx:566",
       "via": "field",
       "logic": {
-        "files": 55,
+        "files": 56,
         "inPackage": [
           "usePersonalBots.ts",
           "previewPrivacy.ts",
@@ -5821,7 +5821,7 @@
       "web": "PersonalComposer.tsx:1341",
       "via": "field",
       "logic": {
-        "files": 32,
+        "files": 33,
         "inPackage": ["conversationModel.ts"],
         "direct": [
           "packages/personal-client/src/conversation/wireTypes.ts",
@@ -6338,7 +6338,7 @@
       "web": "providers/ProviderPage.tsx:1597",
       "via": "field",
       "logic": {
-        "files": 59,
+        "files": 60,
         "inPackage": [
           "botSummaries.ts",
           "usagePresentation.ts",
