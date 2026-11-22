@@ -5,6 +5,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
@@ -53,8 +55,55 @@ class HbotsCameraModule : Module() {
     File(context.filesDir, "camera"),
   )
 
+  /**
+   * Length, picture size and a small JPEG still for a picked video, for the
+   * composer chip. The still goes to the cache folder, which sign-out wipes.
+   */
+  private fun videoInfo(uri: String): Map<String, Any?>? {
+    val context = context() ?: return null
+    val retriever = MediaMetadataRetriever()
+    return try {
+      val parsed = Uri.parse(uri)
+      if (parsed.scheme == "content") retriever.setDataSource(context, parsed)
+      else retriever.setDataSource(parsed.path ?: uri)
+      val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+      val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+      val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+      val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+      if (width == null || height == null) return null
+      // A frame a little in, so a recording that starts on a black screen still shows something.
+      val at = minOf(500_000L, (durationMs ?: 0L) * 500L)
+      val still = retriever.getScaledFrameAtTime(at, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 240, 240)
+      var thumbnailUri: String? = null
+      if (still != null) {
+        val dir = File(context.cacheDir, "hbots-video-thumbs").apply { mkdirs() }
+        val file = File(dir, "${Integer.toHexString(uri.hashCode())}-${System.currentTimeMillis()}.jpg")
+        file.outputStream().use { still.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+        still.recycle()
+        thumbnailUri = Uri.fromFile(file).toString()
+      }
+      val turned = rotation == 90 || rotation == 270
+      mapOf(
+        "durationMs" to durationMs?.toDouble(),
+        "width" to if (turned) height else width,
+        "height" to if (turned) width else height,
+        "thumbnailUri" to thumbnailUri,
+      )
+    } catch (_: Exception) {
+      null
+    } finally {
+      try {
+        retriever.release()
+      } catch (_: Exception) {
+      }
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("HbotsCamera")
+
+    /** Null when Android cannot read the file as a video. */
+    AsyncFunction("videoInfo") { uri: String -> videoInfo(uri) }
 
     // App start: drop camera files no launch can reach any more.
     OnCreate {

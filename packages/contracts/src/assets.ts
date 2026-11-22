@@ -8,7 +8,8 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  fileAttachmentSizeCheck,
+  PROVIDER_SEND_TURN_MAX_VIDEO_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "./chatAttachment.ts";
@@ -146,9 +147,9 @@ const FileAttachmentCreateUploadUrlInput = Schema.Struct({
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   sizeBytes: NonNegativeInt.check(
     Schema.isGreaterThanOrEqualTo(1),
-    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_VIDEO_BYTES),
   ),
-});
+}).check(fileAttachmentSizeCheck);
 
 export const AttachmentCreateUploadUrlInput = Schema.Union([
   ImageAttachmentCreateUploadUrlInput,

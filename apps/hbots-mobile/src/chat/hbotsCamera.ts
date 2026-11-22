@@ -17,6 +17,24 @@ interface HbotsCameraNative {
   pending(): Promise<PendingCameraLaunch | null>;
   /** Drops this chat's launch and its file once its chat no longer exists. */
   discard(owner: string): Promise<void>;
+  /** Length, picture size and a still for the composer chip; null when Android cannot read it. */
+  videoInfo?(uri: string): Promise<VideoInfo | null>;
+}
+
+export interface VideoInfo {
+  readonly durationMs: number | null;
+  readonly width: number;
+  readonly height: number;
+  readonly thumbnailUri: string | null;
+}
+
+/** Null on a build without the helper or for a file Android cannot read as a video. */
+export async function readVideoInfo(uri: string): Promise<VideoInfo | null> {
+  try {
+    return (await native?.videoInfo?.(uri)) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 const native = requireOptionalNativeModule<HbotsCameraNative>("HbotsCamera");

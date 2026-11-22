@@ -27,6 +27,8 @@ const ATTACHMENT_ID_PATTERN = new RegExp(
 );
 
 export const PENDING_ATTACHMENT_THREAD_SEGMENT = "pending";
+/** Same as `VIDEO_FRAMES_SUFFIX` in provider/videoFrames; kept here so the store has no provider import. */
+const VIDEO_FRAMES_DIR_SUFFIX = ".frames";
 const PENDING_ATTACHMENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PARTIAL_UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -274,9 +276,15 @@ export function sweepStalePendingAttachments(input: {
   let deleted = 0;
   for (const entry of entries) {
     const isPartial = entry.endsWith(".part");
+    // A pending video's extracted frames live in `<file>.frames/` and go with it.
+    const sidecarBase = entry.endsWith(".txt")
+      ? entry.slice(0, -4)
+      : entry.endsWith(VIDEO_FRAMES_DIR_SUFFIX)
+        ? entry.slice(0, -VIDEO_FRAMES_DIR_SUFFIX.length)
+        : null;
     if (!isPartial) {
       const attachmentId = parseAttachmentIdFromRelativePath(
-        entry.endsWith(".txt") && entry.slice(0, -4).includes(".") ? entry.slice(0, -4) : entry,
+        sidecarBase !== null && sidecarBase.includes(".") ? sidecarBase : entry,
       );
       if (
         !attachmentId ||
@@ -295,8 +303,10 @@ export function sweepStalePendingAttachments(input: {
     }
     try {
       const maxAgeMs = isPartial ? PARTIAL_UPLOAD_MAX_AGE_MS : PENDING_ATTACHMENT_MAX_AGE_MS;
-      if (input.nowMs - NodeFS.statSync(resolved).mtimeMs > maxAgeMs) {
-        NodeFS.unlinkSync(resolved);
+      const stat = NodeFS.statSync(resolved);
+      if (input.nowMs - stat.mtimeMs > maxAgeMs) {
+        if (stat.isDirectory()) NodeFS.rmSync(resolved, { recursive: true, force: true });
+        else NodeFS.unlinkSync(resolved);
         deleted += 1;
       }
     } catch {

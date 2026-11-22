@@ -1,5 +1,12 @@
 import * as DocumentText from "../../provider/DocumentText.ts";
 import {
+  awaitVideoManifest,
+  isVideoAttachment,
+  videoContextText,
+  videoTurnImages,
+} from "../../provider/videoFrames/videoTurnInput.ts";
+import { videoFramesDir, type VideoManifest } from "../../provider/videoFrames/VideoFrames.ts";
+import {
   compactDynamicToolOutput,
   mcpToolResultOutput,
   toolOutputImages,
@@ -2836,6 +2843,8 @@ const estimateClaudePdfPages = (bytes: Buffer): number | null => {
 
 const CLAUDE_ATTACHMENT_MAX_BYTES = 28 * 1024 * 1024;
 const CLAUDE_ATTACHMENT_MAX_PAGES = 100;
+/** Anthropic accepts at most 100 images in one request. */
+const CLAUDE_MAX_IMAGES_PER_MESSAGE = 100;
 
 const makeClaudeAttachmentBudget = (used?: { pagesUsed: number; bytesUsed: number }) => ({
   committed: { pages: used?.pagesUsed ?? 0, bytes: used?.bytesUsed ?? 0 },
@@ -2903,6 +2912,14 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     return message;
   }
 
+  // Videos arrive as frames: wait for extraction once, then reuse the manifest for text and images.
+  const videos = new Map<number, { path: string; manifest: VideoManifest | null }>();
+  for (const [index, attachment] of input.attachments.entries()) {
+    if (!isVideoAttachment(attachment)) continue;
+    const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
+    if (path === null) continue;
+    videos.set(index, { path, manifest: yield* awaitVideoManifest(path) });
+  }
   const textWithAttachmentPaths = yield* providerMessageTextWithAttachmentPaths({
     text: input.text,
     attachments: input.attachments,
@@ -2912,6 +2929,15 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
       ),
     resolveAttachmentPath: (attachment) =>
       resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment }),
+    resolveAttachmentContext: (attachment, path) => {
+      const index = input.attachments.indexOf(attachment);
+      const video = videos.get(index);
+      return Effect.succeed(
+        video === undefined
+          ? undefined
+          : videoContextText({ name: attachment.name, path, manifest: video.manifest }),
+      );
+    },
   });
 
   const dispatch =
@@ -2987,7 +3013,51 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     };
     images.set(index, block);
   }
+  // Contact sheets first, then frames in time order, while the image budget lasts.
+  const videoBlocks = new Map<number, Array<ClaudeUserContentBlock>>();
+  let imageCount = images.size;
+  for (const [index, video] of videos) {
+    const blocks: Array<ClaudeUserContentBlock> = [];
+    const wanted = videoTurnImages(video.path, video.manifest);
+    for (const image of wanted) {
+      // Anthropic takes at most 100 images per request, history included, so each
+      // frame also spends one of the session's 100 document pages.
+      if (imageCount >= CLAUDE_MAX_IMAGES_PER_MESSAGE) break;
+      if (input.pdfReservation.budget.remainingPages <= 0) break;
+      const bytes = yield* input.fileSystem
+        .readFile(image.path)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (bytes === null) continue;
+      const retainedBytes = 4 * Math.ceil(bytes.length / 3) + 128;
+      if (retainedBytes > input.pdfReservation.budget.remainingBytes) break;
+      input.pdfReservation.budget.pending.bytes += retainedBytes;
+      input.pdfReservation.bytes += retainedBytes;
+      input.pdfReservation.budget.pending.pages += 1;
+      input.pdfReservation.pages += 1;
+      blocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: image.mimeType,
+          data: Buffer.from(bytes).toString("base64"),
+        },
+      });
+      imageCount++;
+    }
+    if (blocks.length < wanted.length) {
+      blocks.push({
+        type: "text",
+        text: `[Video "${input.attachments[index]!.name}": only ${blocks.length} of ${wanted.length} extracted images fit this chat's image budget. The rest are in ${videoFramesDir(video.path)}/ and can be read from disk.]`,
+      });
+    }
+    videoBlocks.set(index, blocks);
+  }
   for (const [index, attachment] of input.attachments.entries()) {
+    const video = videoBlocks.get(index);
+    if (video !== undefined) {
+      content.push(...video);
+      continue;
+    }
     if (attachment.type === "file") {
       if (
         input.pdfReservation.budget.remainingPages <= 0 ||

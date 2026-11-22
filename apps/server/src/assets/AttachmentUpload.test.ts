@@ -29,6 +29,7 @@ import {
   deletePendingAttachment,
   issueAttachmentUploadUrl,
   storeAttachmentUpload,
+  storeAttachmentUploadChunk,
   validateAttachmentUploadToken,
 } from "./AttachmentUpload.ts";
 
@@ -62,6 +63,64 @@ const encodeLegacyAttachmentUploadClaims = Schema.encodeEffect(
 );
 
 describe("AttachmentUpload", () => {
+  it.effect("assembles a chunked upload, resumes at the held offset and publishes once", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const bytes = new Uint8Array(10).map((_, i) => i + 1);
+      // Not a decodable video: the background frame extraction records a rejection and nothing else.
+      const issued = yield* issueAttachmentUploadUrl({
+        type: "file",
+        name: "clip.bin",
+        mimeType: "application/octet-stream",
+        sizeBytes: bytes.length,
+      });
+      const claims = yield* validateAttachmentUploadToken(
+        issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      if (!claims) throw new Error("Expected upload claims");
+      const chunk = (offset: number, piece: Uint8Array, length = piece.length) =>
+        storeAttachmentUploadChunk(claims, offset, length, Stream.make(piece));
+      expect(yield* chunk(0, bytes.subarray(0, 4))).toEqual({
+        ok: true,
+        received: 4,
+        complete: false,
+      });
+      // A lost answer: the client retries a piece the server already has.
+      expect(yield* chunk(0 + 2, bytes.subarray(2, 6))).toEqual({
+        ok: false,
+        status: 409,
+        detail: "Expected the chunk at offset 4.",
+        received: 4,
+      });
+      // A torn piece is dropped so the same offset can be sent again.
+      expect(yield* chunk(4, bytes.subarray(4, 6), 4)).toMatchObject({
+        ok: false,
+        status: 400,
+        received: 4,
+      });
+      expect(yield* chunk(4, bytes.subarray(4, 8))).toEqual({
+        ok: true,
+        received: 8,
+        complete: false,
+      });
+      expect(yield* chunk(8, bytes.subarray(8, 12), 4)).toMatchObject({ ok: false, status: 400 });
+      expect(yield* chunk(8, bytes.subarray(8))).toEqual({
+        ok: true,
+        received: 10,
+        complete: true,
+      });
+      // Repeating the last piece after publishing is harmless.
+      expect(yield* chunk(8, bytes.subarray(8))).toEqual({
+        ok: true,
+        received: 10,
+        complete: true,
+      });
+      const path = NodePath.join(config.attachmentsDir, `${issued.attachmentId}.bin`);
+      expect(NodeFS.readFileSync(path)).toEqual(Buffer.from(bytes));
+      expect(NodeFS.existsSync(`${path}.chunked.part`)).toBe(false);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "persists and replays immutable uploads (hard links unsupported: %s)",
     (unsupported) =>

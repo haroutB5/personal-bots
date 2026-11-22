@@ -36,6 +36,9 @@ import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/Med
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
   storeAttachmentUpload,
+  storeAttachmentUploadChunk,
+  ATTACHMENT_UPLOAD_RECEIVED_HEADER,
+  CHUNKED_UPLOAD_GRACE_MS,
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
@@ -481,9 +484,33 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
     if (!token) {
       return answered("Not Found", 404);
     }
-    const claims = yield* validateAttachmentUploadToken(token);
+    const offsetParam = url.value.searchParams.get("offset");
+    const offset = offsetParam === null ? null : Number(offsetParam);
+    const claims = yield* validateAttachmentUploadToken(
+      token,
+      offset !== null && offset > 0 ? CHUNKED_UPLOAD_GRACE_MS : 0,
+    );
     if (!claims) {
       return answered("Not Found", 404);
+    }
+
+    if (offset !== null) {
+      // Chunked: each request carries one piece at an explicit offset.
+      const length = Number(request.headers["content-length"]);
+      const bodyPull = yield* Stream.toPull(request.stream);
+      const chunk = yield* storeAttachmentUploadChunk(
+        claims,
+        offset,
+        length,
+        Stream.fromPull(Effect.succeed(bodyPull)),
+      );
+      const headers =
+        "received" in chunk && chunk.received !== undefined
+          ? { ...answeredHeaders, [ATTACHMENT_UPLOAD_RECEIVED_HEADER]: String(chunk.received) }
+          : answeredHeaders;
+      return chunk.ok
+        ? HttpServerResponse.empty({ status: chunk.complete ? 204 : 202, headers })
+        : HttpServerResponse.text(chunk.detail, { status: chunk.status, headers });
     }
 
     const contentLengthHeader = request.headers["content-length"];

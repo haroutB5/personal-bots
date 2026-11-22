@@ -32,6 +32,8 @@ import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerConfig from "../config.ts";
 import { inferImageExtension } from "../imageMime.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
+import { isVideoFile } from "../provider/videoFrames/videoAnalysis.ts";
+import { ensureVideoFrames, videoFramesDir } from "../provider/videoFrames/VideoFrames.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
@@ -117,8 +119,16 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
   };
 });
 
+/**
+ * A chunked upload keeps using the URL it started with: a 200 MB video on a
+ * slow link outlives the 10 minute URL, so a continuation chunk may arrive up
+ * to this long after expiry. The partial file only lives an hour anyway.
+ */
+export const CHUNKED_UPLOAD_GRACE_MS = 60 * 60_000;
+
 export const validateAttachmentUploadToken = Effect.fn("AttachmentUpload.validateToken")(function* (
   token: string,
+  graceMs = 0,
 ) {
   const [encodedPayload, signature, unexpectedSegment] = token.split(".");
   if (!encodedPayload || !signature || unexpectedSegment) {
@@ -137,7 +147,7 @@ export const validateAttachmentUploadToken = Effect.fn("AttachmentUpload.validat
   }
 
   const claims = decodeClaims(encodedPayload);
-  if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) {
+  if (!claims || claims.expiresAt + graceMs <= (yield* Clock.currentTimeMillis)) {
     return null;
   }
   return claims;
@@ -247,6 +257,10 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     }
     const documents = yield* DocumentText.DocumentText;
     yield* documents.ensure(finalPath);
+    if (claims.type === "file" && isVideoFile(claims)) {
+      // Frames are ready by the time the message is sent; the upload does not wait.
+      yield* Effect.sync(() => void ensureVideoFrames(finalPath).catch(() => undefined));
+    }
     return { ok: true } satisfies StoreAttachmentUploadResult;
   }).pipe(
     Effect.catch((cause) =>
@@ -264,6 +278,145 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     Effect.ensuring(
       fileSystem.remove(partPath, { force: true }).pipe(Effect.orElseSucceed(() => undefined)),
     ),
+  );
+});
+
+export const ATTACHMENT_UPLOAD_RECEIVED_HEADER = "x-hbots-upload-received";
+
+export type StoreAttachmentChunkResult =
+  | { readonly ok: true; readonly received: number; readonly complete: boolean }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly detail: string;
+      /** Bytes the server holds, so the client resumes from there. */
+      readonly received?: number;
+    };
+
+const chunkWriters = new Set<string>();
+
+/**
+ * Appends one chunk (the tunnel caps bodies at 100 MB). A wrong offset is refused with the size
+ * already held so the client resumes; the last chunk publishes like a single-request upload.
+ */
+export const storeAttachmentUploadChunk = Effect.fn("AttachmentUpload.storeChunk")(function* (
+  claims: AttachmentUploadClaims,
+  offset: number,
+  length: number,
+  body: HttpServerRequest.HttpServerRequest["stream"],
+) {
+  if (
+    !Number.isSafeInteger(offset) ||
+    !Number.isSafeInteger(length) ||
+    offset < 0 ||
+    length <= 0 ||
+    offset + length > claims.sizeBytes
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      detail: "Chunk is outside the upload.",
+    } satisfies StoreAttachmentChunkResult;
+  }
+  const config = yield* ServerConfig.ServerConfig;
+  const extension =
+    claims.type === "file"
+      ? attachmentFileExtension(claims.name)
+      : inferImageExtension({ mimeType: claims.mimeType, fileName: claims.name });
+  const relativePath = `${claims.attachmentId}${extension}`;
+  const finalPath = resolveAttachmentRelativePath({
+    attachmentsDir: config.attachmentsDir,
+    relativePath,
+  });
+  const partPath = resolveAttachmentRelativePath({
+    attachmentsDir: config.attachmentsDir,
+    relativePath: `${relativePath}.chunked.part`,
+  });
+  if (!finalPath || !partPath) {
+    return { ok: false, status: 500, detail: "Failed to resolve attachment path." };
+  }
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const sizeOf = (file: string) =>
+    fileSystem.stat(file).pipe(
+      Effect.map((info) => Number(info.size)),
+      Effect.orElseSucceed(() => null),
+    );
+  if ((yield* sizeOf(finalPath)) === claims.sizeBytes) {
+    return {
+      ok: true,
+      received: claims.sizeBytes,
+      complete: true,
+    } satisfies StoreAttachmentChunkResult;
+  }
+  if (chunkWriters.has(partPath)) {
+    return {
+      ok: false,
+      status: 409,
+      detail: "Another chunk of this upload is still being written.",
+    };
+  }
+  chunkWriters.add(partPath);
+  return yield* Effect.gen(function* () {
+    yield* fileSystem.makeDirectory(path.dirname(finalPath), { recursive: true });
+    const held = offset === 0 ? 0 : ((yield* sizeOf(partPath)) ?? 0);
+    if (held !== offset) {
+      return {
+        ok: false,
+        status: 409,
+        detail: `Expected the chunk at offset ${held}.`,
+        received: held,
+      } satisfies StoreAttachmentChunkResult;
+    }
+    let chunkBytes = 0;
+    yield* Stream.run(
+      body.pipe(
+        Stream.takeWhile((chunk) => {
+          chunkBytes += chunk.byteLength;
+          return chunkBytes <= length;
+        }),
+      ),
+      fileSystem.sink(partPath, { flag: offset === 0 ? "w" : "a" }),
+    );
+    if (chunkBytes !== length) {
+      // Drop the torn tail so the next attempt can resume at this offset.
+      yield* Effect.tryPromise(() => NodeFSP.truncate(partPath, offset)).pipe(Effect.ignore);
+      return {
+        ok: false,
+        status: 400,
+        detail: `Chunk was ${chunkBytes} bytes, expected ${length}.`,
+        received: offset,
+      } satisfies StoreAttachmentChunkResult;
+    }
+    const received = offset + length;
+    if (received < claims.sizeBytes) {
+      return { ok: true, received, complete: false } satisfies StoreAttachmentChunkResult;
+    }
+    const published = yield* fileSystem.rename(partPath, finalPath).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!published) return { ok: false, status: 500, detail: "Failed to persist upload." };
+    const documents = yield* DocumentText.DocumentText;
+    yield* documents.ensure(finalPath);
+    if (claims.type === "file" && isVideoFile(claims)) {
+      yield* Effect.sync(() => void ensureVideoFrames(finalPath).catch(() => undefined));
+    }
+    return { ok: true, received, complete: true } satisfies StoreAttachmentChunkResult;
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logError("Failed to persist attachment upload chunk.", {
+        attachmentId: claims.attachmentId,
+        cause,
+      }).pipe(
+        Effect.as({
+          ok: false,
+          status: 500,
+          detail: "Failed to persist upload.",
+        } satisfies StoreAttachmentChunkResult),
+      ),
+    ),
+    Effect.ensuring(Effect.sync(() => chunkWriters.delete(partPath))),
   );
 });
 
@@ -286,4 +439,7 @@ export const deletePendingAttachment = Effect.fn("AttachmentUpload.deletePending
   const fileSystem = yield* FileSystem.FileSystem;
   yield* fileSystem.remove(attachmentPath, { force: true }).pipe(Effect.orElseSucceed(() => {}));
   yield* fileSystem.remove(`${attachmentPath}.txt`, { force: true }).pipe(Effect.ignore);
+  yield* fileSystem
+    .remove(videoFramesDir(attachmentPath), { recursive: true, force: true })
+    .pipe(Effect.ignore);
 });

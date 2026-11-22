@@ -1,5 +1,12 @@
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
+import {
+  awaitVideoManifest,
+  isVideoAttachment,
+  videoContextText,
+  videoTurnImages,
+} from "../../provider/videoFrames/videoTurnInput.ts";
+import type { VideoManifest } from "../../provider/videoFrames/VideoFrames.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -3730,6 +3737,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           >,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+          const videos = new Map<
+            ChatAttachment,
+            { path: string; manifest: VideoManifest | null }
+          >();
+          for (const attachment of turnInput.message.attachments) {
+            if (!isVideoAttachment(attachment)) continue;
+            const path = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment,
+            });
+            if (path !== null)
+              videos.set(attachment, { path, manifest: yield* awaitVideoManifest(path) });
+          }
           const text = yield* providerMessageTextWithAttachmentPaths({
             text: codexSkillMentionText(turnInput.message.text),
             attachments: turnInput.message.attachments,
@@ -3739,6 +3759,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             resolveAttachmentPath: (attachment) =>
               resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+            resolveAttachmentContext: (attachment, path) => {
+              const video = videos.get(attachment);
+              return Effect.succeed(
+                video === undefined
+                  ? undefined
+                  : videoContextText({ name: attachment.name, path, manifest: video.manifest }),
+              );
+            },
           });
           if (text.length > 0) {
             inputItems.push({
@@ -3752,6 +3780,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             { concurrency: 1 },
           );
           inputItems.push(...attachmentItems);
+          // Contact sheets first, then frames in time order.
+          for (const video of videos.values()) {
+            for (const image of videoTurnImages(video.path, video.manifest)) {
+              const bytes = yield* fileSystem
+                .readFile(image.path)
+                .pipe(Effect.orElseSucceed(() => null));
+              if (bytes === null) continue;
+              inputItems.push({
+                type: "image",
+                url: `data:${image.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
+              });
+            }
+          }
           if (inputItems.length === 0) {
             return yield* toProtocolError("Turn requires non-empty text or attachments.");
           }

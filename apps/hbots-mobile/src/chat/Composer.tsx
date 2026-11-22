@@ -65,6 +65,9 @@ import {
   type SendMeta,
 } from "./composerSendModel";
 import { uploadDraftAttachments, type DraftAttachment } from "./outboxNative";
+import { readVideoInfo } from "./hbotsCamera";
+import { reportUploadProgress, useUploadProgress } from "./uploadProgress";
+import { attachmentLimitMessage, formatDuration, formatSize, isVideoMime } from "./videoDrafts";
 import { discardOutgoingFiles, readableOutgoingFiles, retainOutgoingFiles } from "./outgoingFiles";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
@@ -102,7 +105,6 @@ import { discardCameraDraft, discardShare, readShare, shrinkPhoto } from "../sha
 import { SheetAction, SheetCancel, SheetShell } from "../sheets/SheetShell";
 
 const MAX_ATTACHMENTS = 10;
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const DRAFT_DEBOUNCE_MS = 400;
 const MAX_TITLE_SEED = 80;
 
@@ -112,8 +114,46 @@ function titleSeedFor(text: string, attachments: ReadonlyArray<DraftAttachment>)
       ? text.trim()
       : attachments[0] === undefined
         ? "New chat"
-        : `${attachments[0].kind === "image" ? "Image" : "File"}: ${attachments[0].name}`;
+        : `${attachments[0].kind === "image" ? "Image" : attachments[0].video !== undefined ? "Video" : "File"}: ${attachments[0].name}`;
   return seed.slice(0, MAX_TITLE_SEED);
+}
+
+/** A picked video's name keeps its extension; the laptop names the stored file by it. */
+function videoName(fileName: string | null | undefined, mimeType: string, index: number): string {
+  const extension = mimeType.split("/")[1]?.split(";")[0]?.replace("quicktime", "mov") ?? "mp4";
+  const named = attachmentName({ fileName, camera: false, index });
+  if (named !== `Photo ${String(index + 1)}.jpg`) {
+    return /\.[a-z0-9]{1,5}$/i.test(named) ? named : `${named}.${extension}`;
+  }
+  return `Video ${String(index + 1)}.${extension}`;
+}
+
+async function videoDraft(
+  asset: {
+    readonly uri: string;
+    readonly fileName?: string | null;
+    readonly mimeType?: string | null;
+    readonly fileSize?: number | null;
+    readonly duration?: number | null;
+  },
+  index: number,
+): Promise<DraftAttachment> {
+  const mimeType =
+    asset.mimeType != null && isVideoMime(asset.mimeType) ? asset.mimeType : "video/mp4";
+  const info = await readVideoInfo(asset.uri);
+  return {
+    id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: "file",
+    name: videoName(asset.fileName, mimeType, index),
+    mimeType,
+    sizeBytes: sizeOf(asset.uri, asset.fileSize ?? 0),
+    uri: asset.uri,
+    video: {
+      durationMs:
+        info?.durationMs ?? (asset.duration != null && asset.duration > 0 ? asset.duration : null),
+      thumbnailUri: info?.thumbnailUri ?? null,
+    },
+  };
 }
 
 function sizeOf(uri: string, fallback: number): number {
@@ -183,6 +223,9 @@ export function Composer({
   const draftRef = useRef<ComposerDraft>(draft);
   const activeSends = useRef(new Map<string, ActiveSend>());
   const sendAborts = useRef(new Map<string, AbortController>());
+  /** Messages whose upload Cancel was pressed for, so the abort reads as a cancel. */
+  const uploadCancels = useRef(new Set<string>());
+  const uploads = useUploadProgress();
   const claimedIntakes = useRef(new Map<string, Map<string, string>>());
   const setDraft = (update: ComposerDraft | ((current: ComposerDraft) => ComposerDraft)) => {
     const next = typeof update === "function" ? update(draftRef.current) : update;
@@ -287,12 +330,18 @@ export function Composer({
    */
   const addDrafts = async (next: ReadonlyArray<DraftAttachment>, intakeId: string | null) => {
     const shrunk = await shrinkDrafts(next, shrinkPhoto);
-    const tooBig = shrunk.filter((attachment) => attachment.sizeBytes > MAX_ATTACHMENT_BYTES);
-    if (tooBig.length > 0) {
+    const refusals = shrunk.flatMap((attachment) => {
+      const message = attachmentLimitMessage({
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        durationMs: attachment.video?.durationMs ?? null,
+      });
+      return message === null ? [] : [message];
+    });
+    if (refusals.length > 0) {
       if (intakeId !== null) discardShare(intakeId);
-      setNotice(
-        plainNotice(`Files must be 25 MB or less: ${tooBig.map((item) => item.name).join(", ")}`),
-      );
+      setNotice(plainNotice(refusals.join(" ")));
       return;
     }
     if (intakeId !== null) {
@@ -394,28 +443,33 @@ export function Composer({
     setPicking(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
+        mediaTypes: ["images", "videos"],
         ...libraryPick(MAX_ATTACHMENTS - draftRef.current.attachments.length),
         quality: 1,
       });
       if (result.canceled) return;
       await addPicked(
-        result.assets.map((asset, index) => {
-          const uri = asset.uri;
-          const name = attachmentName({
-            fileName: asset.fileName,
-            camera: false,
-            index,
-          });
-          return {
-            id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
-            kind: "image",
-            name,
-            mimeType: asset.mimeType ?? "image/jpeg",
-            sizeBytes: sizeOf(uri, asset.fileSize ?? 0),
-            uri,
-          };
-        }),
+        await Promise.all(
+          result.assets.map(async (asset, index): Promise<DraftAttachment> => {
+            if (asset.type === "video" || (asset.mimeType != null && isVideoMime(asset.mimeType))) {
+              return videoDraft(asset, index);
+            }
+            const uri = asset.uri;
+            const name = attachmentName({
+              fileName: asset.fileName,
+              camera: false,
+              index,
+            });
+            return {
+              id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+              kind: "image",
+              name,
+              mimeType: asset.mimeType ?? "image/jpeg",
+              sizeBytes: sizeOf(uri, asset.fileSize ?? 0),
+              uri,
+            };
+          }),
+        ),
       );
     } catch (error) {
       const failure = cameraFailure(error);
@@ -527,18 +581,26 @@ export function Composer({
       });
       if (result.canceled) return;
       await addPicked(
-        result.assets.map((asset, index) => {
-          const name = asset.name ?? `File ${index + 1}`;
-          const mimeType = asset.mimeType ?? "application/octet-stream";
-          return {
-            id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
-            kind: mimeType.startsWith("image/") ? "image" : "file",
-            name,
-            mimeType,
-            sizeBytes: sizeOf(asset.uri, asset.size ?? 0),
-            uri: asset.uri,
-          };
-        }),
+        await Promise.all(
+          result.assets.map(async (asset, index): Promise<DraftAttachment> => {
+            const name = asset.name ?? `File ${index + 1}`;
+            const mimeType = asset.mimeType ?? "application/octet-stream";
+            if (isVideoMime(mimeType)) {
+              return videoDraft(
+                { uri: asset.uri, fileName: name, mimeType, fileSize: asset.size ?? null },
+                index,
+              );
+            }
+            return {
+              id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+              kind: mimeType.startsWith("image/") ? "image" : "file",
+              name,
+              mimeType,
+              sizeBytes: sizeOf(asset.uri, asset.size ?? 0),
+              uri: asset.uri,
+            };
+          }),
+        ),
       );
     } catch {
       setNotice(plainNotice("Couldn't open the file picker."));
@@ -732,9 +794,32 @@ export function Composer({
           setNotice(plainNotice("An attachment didn't upload. Try again."));
           return false;
         }
-        uploaded = (await uploadDraftAttachments(native, chat, readable)) ?? [];
+        uploaded =
+          (await uploadDraftAttachments(native, chat, readable, {
+            signal: abort.signal,
+            onProgress: (attachment, sent) =>
+              reportUploadProgress(messageId, {
+                chatKey: key,
+                name: attachment.name,
+                sent,
+                total: attachment.sizeBytes,
+              }),
+          })) ?? [];
       } finally {
+        reportUploadProgress(messageId, null);
         setPreparing(false);
+      }
+      if (abort.signal.aborted && uploadCancels.current.delete(messageId)) {
+        // Cancelled from the progress bar: the message goes back into the composer unsent.
+        sendAborts.current.delete(messageId);
+        dropActive(outgoing);
+        if (meta.clearDraftAfter) {
+          reholdClaimedIntakes(messageId);
+          restoreIntoComposer(outgoing);
+        }
+        void discardOutgoingFiles(messageId);
+        setNotice(plainNotice("Upload cancelled. Your message is back in the box."));
+        return false;
       }
       if (uploaded.length !== snapshot.length) {
         sendAborts.current.delete(messageId);
@@ -1043,6 +1128,44 @@ export function Composer({
           </Pressable>
         </View>
       ) : null}
+      {[...uploads].map(([messageId, upload]) =>
+        upload.chatKey === key ? (
+          <View key={messageId} style={styles.upload} testID="composer-upload-progress">
+            <View style={styles.uploadBody}>
+              <Text style={styles.uploadText} numberOfLines={1}>
+                {`Uploading ${upload.name} · ${formatSize(upload.sent)} of ${formatSize(upload.total)}`}
+              </Text>
+              <View
+                style={styles.uploadTrack}
+                accessibilityRole="progressbar"
+                accessibilityValue={{
+                  min: 0,
+                  max: 100,
+                  now: Math.round((upload.sent / Math.max(1, upload.total)) * 100),
+                }}
+              >
+                <View
+                  style={[
+                    styles.uploadFill,
+                    { width: `${Math.min(100, (upload.sent / Math.max(1, upload.total)) * 100)}%` },
+                  ]}
+                />
+              </View>
+            </View>
+            <Pressable
+              onPress={() => {
+                uploadCancels.current.add(messageId);
+                sendAborts.current.get(messageId)?.abort();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Cancel uploading ${upload.name}`}
+              hitSlop={8}
+            >
+              <Text style={styles.errorAction}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : null,
+      )}
       {attachments.length > 0 ? (
         <View style={styles.tray}>
           {attachments.map((attachment, index) => (
@@ -1055,6 +1178,27 @@ export function Composer({
               >
                 {attachment.kind === "image" ? (
                   <Image source={{ uri: attachment.uri }} style={styles.thumbImage} />
+                ) : attachment.video !== undefined ? (
+                  <>
+                    {attachment.video.thumbnailUri !== null ? (
+                      <Image
+                        source={{ uri: attachment.video.thumbnailUri }}
+                        style={styles.thumbImage}
+                      />
+                    ) : (
+                      <IconFile size={20} color={tokens.textSecondary} strokeWidth={1.75} />
+                    )}
+                    <View style={styles.videoBadge} testID="composer-video-chip">
+                      <Text style={styles.videoBadgeText} numberOfLines={1}>
+                        {attachment.video.durationMs !== null
+                          ? `▶ ${formatDuration(attachment.video.durationMs)}`
+                          : "▶"}
+                      </Text>
+                      <Text style={styles.videoBadgeText} numberOfLines={1}>
+                        {formatSize(attachment.sizeBytes)}
+                      </Text>
+                    </View>
+                  </>
                 ) : (
                   <IconFile size={20} color={tokens.textSecondary} strokeWidth={1.75} />
                 )}
@@ -1164,7 +1308,14 @@ export function Composer({
         title={previewAttachment?.name ?? "Attachment"}
         onClose={() => setPreviewAttachment(null)}
       >
-        {previewAttachment?.kind === "image" ? (
+        {previewAttachment?.video?.thumbnailUri != null ? (
+          <Image
+            source={{ uri: previewAttachment.video.thumbnailUri }}
+            style={styles.previewImage}
+            resizeMode="contain"
+            accessibilityLabel={`${previewAttachment.name}, ${previewAttachment.video.durationMs !== null ? formatDuration(previewAttachment.video.durationMs) : "video"}, ${formatSize(previewAttachment.sizeBytes)}`}
+          />
+        ) : previewAttachment?.kind === "image" ? (
           <Image
             source={{ uri: previewAttachment.uri }}
             style={styles.previewImage}
@@ -1308,6 +1459,34 @@ const styles = StyleSheet.create({
   },
   thumbBody: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center" },
   thumbImage: { width: "100%", height: "100%" },
+  videoBadge: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  videoBadgeText: { color: "#ffffff", fontSize: 9, lineHeight: 11, fontWeight: "600" },
+  upload: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 10,
+    backgroundColor: tokens.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  uploadBody: { flex: 1, gap: 6 },
+  uploadText: { color: tokens.text, fontSize: 12, lineHeight: 16 },
+  uploadTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: tokens.fillMuted,
+    overflow: "hidden",
+  },
+  uploadFill: { height: 4, borderRadius: 2, backgroundColor: tokens.primary },
   thumbRemove: {
     position: "absolute",
     top: 2,

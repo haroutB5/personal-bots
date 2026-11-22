@@ -12,6 +12,7 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import { videoFramesDir } from "../provider/videoFrames/VideoFrames.ts";
 
 export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupError>()(
   "ResourceCleanupError",
@@ -123,6 +124,9 @@ export const layer = Layer.effect(
               ? Effect.void
               : fileSystem.remove(path, { force: true }).pipe(
                   Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true })),
+                  Effect.andThen(
+                    fileSystem.remove(videoFramesDir(path), { recursive: true, force: true }),
+                  ),
                   Effect.mapError(
                     (cause) =>
                       new ResourceCleanupError({ operation: "attachment", attachmentId, cause }),

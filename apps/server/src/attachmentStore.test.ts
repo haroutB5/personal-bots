@@ -140,8 +140,18 @@ describe("attachmentStore", () => {
         NodeFS.writeFileSync(filePath, Buffer.from("pixels"));
         NodeFS.utimesSync(filePath, oldTimeSeconds, oldTimeSeconds);
       }
+      // Video frames are folders: a pending one goes, a thread's stays.
+      const pendingFrames = NodePath.join(attachmentsDir, `pending-${uuid}-mp4.mp4.frames`);
+      const threadFrames = NodePath.join(attachmentsDir, `thread-1-${uuid}-mp4.mp4.frames`);
+      for (const dir of [pendingFrames, threadFrames]) {
+        NodeFS.mkdirSync(dir);
+        NodeFS.writeFileSync(NodePath.join(dir, "f_00m00.0s.jpg"), "jpeg");
+        NodeFS.utimesSync(dir, oldTimeSeconds, oldTimeSeconds);
+      }
 
-      expect(sweepStalePendingAttachments({ attachmentsDir, nowMs: now })).toEqual({ deleted: 4 });
+      expect(sweepStalePendingAttachments({ attachmentsDir, nowMs: now })).toEqual({ deleted: 5 });
+      expect(NodeFS.existsSync(pendingFrames)).toBe(false);
+      expect(NodeFS.existsSync(threadFrames)).toBe(true);
       expect(NodeFS.existsSync(pendingPath)).toBe(false);
       expect(NodeFS.existsSync(pendingFilePath)).toBe(false);
       expect(NodeFS.existsSync(sidecarPath)).toBe(false);

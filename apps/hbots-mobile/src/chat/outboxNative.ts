@@ -32,7 +32,20 @@ import {
 import type { NativeBlob } from "../platform/nativePorts";
 import { appAtomRegistry } from "../personal/atomRegistry";
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { evictConnectionPool, uploadFileNative } from "../personal/networkReset";
+import {
+  cancelRangeUpload,
+  evictConnectionPool,
+  rangedUploadAvailable,
+  uploadFileNative,
+  uploadRangeNative,
+} from "../personal/networkReset";
+import {
+  nextChunk,
+  rangeStep,
+  usesRangedUpload,
+  type RangeAnswer,
+  type VideoMeta,
+} from "./videoDrafts";
 import type { ChatEnvironment } from "./chatEnvironment";
 import { useEffect, useRef } from "react";
 
@@ -79,13 +92,90 @@ export function failedAttachmentOutcome(result: FailedUpload, connected: boolean
   return connected ? { kind: "interrupted" } : { kind: "not-sent" };
 }
 
+const RANGE_ATTEMPTS = 4;
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Sends a file in pieces at explicit offsets. A dropped piece is retried, and
+ * the server's byte count after a lost answer says where to carry on, so a
+ * flaky network costs one piece, not the whole video.
+ */
+async function uploadRanged(
+  uri: string,
+  url: string,
+  meta: { readonly mimeType: string; readonly sizeBytes: number },
+  signal: AbortSignal,
+  onProgress: ((sent: number) => void) | undefined,
+): Promise<void> {
+  const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const onAbort = () => cancelRangeUpload(uploadId);
+  signal.addEventListener("abort", onAbort);
+  let offset = 0;
+  let failures = 0;
+  try {
+    for (;;) {
+      if (signal.aborted) throw new Error("Upload cancelled.");
+      const chunk = nextChunk(offset, meta.sizeBytes);
+      if (chunk === null) throw new Error("Upload ended without the server's receipt.");
+      let answer: RangeAnswer;
+      try {
+        answer = await uploadRangeNative({
+          url: `${url}${url.includes("?") ? "&" : "?"}offset=${chunk.offset}`,
+          uri,
+          mimeType: meta.mimeType,
+          endpointHeader: ATTACHMENT_UPLOAD_ENDPOINT_HEADER,
+          offset: chunk.offset,
+          length: chunk.length,
+          uploadId,
+          ...(onProgress === undefined ? {} : { onProgress }),
+        });
+      } catch (error) {
+        if (signal.aborted) throw new Error("Upload cancelled.", { cause: error });
+        if (++failures >= RANGE_ATTEMPTS) throw error;
+        await pause(1000 * failures);
+        continue;
+      }
+      const step = rangeStep(answer, chunk);
+      switch (step.kind) {
+        case "done":
+          onProgress?.(meta.sizeBytes);
+          return;
+        case "next":
+          if (step.offset > offset) failures = 0;
+          offset = step.offset;
+          onProgress?.(offset);
+          continue;
+        case "cancelled":
+          throw new Error("Upload cancelled.");
+        case "refused":
+          throw new UploadRefusedError(step.status);
+        case "unreached":
+          if (++failures >= RANGE_ATTEMPTS) {
+            throw new Error(`Upload did not reach the endpoint (${step.status}).`);
+          }
+          await pause(1000 * failures);
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 async function uploadFile(
   uri: string,
   url: string,
-  mimeType: string,
+  meta: { readonly mimeType: string; readonly sizeBytes: number },
   signal: AbortSignal,
+  onProgress?: (sent: number) => void,
 ): Promise<void> {
   if (signal.aborted) throw new Error("Upload cancelled.");
+  if (usesRangedUpload(meta) && rangedUploadAvailable()) {
+    return uploadRanged(uri, url, meta, signal, onProgress);
+  }
+  const mimeType = meta.mimeType;
   const result = await uploadFileNative(url, uri, mimeType, ATTACHMENT_UPLOAD_ENDPOINT_HEADER);
   switch (classifyUploadAnswer(result.status, result.endpoint)) {
     case "uploaded":
@@ -120,6 +210,18 @@ export interface DraftAttachment {
   readonly mimeType: string;
   readonly sizeBytes: number;
   readonly uri: string;
+  /** Set for a video: what its composer chip shows. */
+  readonly video?: VideoMeta;
+}
+
+export interface UploadOptions {
+  /** Aborting it cancels the upload in flight. */
+  readonly signal?: AbortSignal;
+  /** Bytes sent of one attachment, for ranged uploads. */
+  readonly onProgress?: (
+    attachment: { readonly name: string; readonly sizeBytes: number },
+    sent: number,
+  ) => void;
 }
 
 type AttachmentUpload =
@@ -136,9 +238,13 @@ async function uploadOne(
     readonly kind: "image" | "file";
   },
   uri: string,
+  options: UploadOptions = {},
 ): Promise<AttachmentUpload> {
   await prepareNetworkForUpload(native);
   const controller = new AbortController();
+  const outer = options.signal;
+  if (outer?.aborted) controller.abort();
+  outer?.addEventListener("abort", () => controller.abort(), { once: true });
   const result = await runAttachmentUploadCycle({
     registry: appAtomRegistry,
     createUploadUrl: chat.attachments.createUploadUrl,
@@ -160,7 +266,13 @@ async function uploadOne(
           } as never),
     resolveUploadUrl: (relativeUrl) => new URL(relativeUrl, native.httpBaseUrl).toString(),
     transport: (url) => ({
-      done: uploadFile(uri, url, meta.mimeType, controller.signal),
+      done: uploadFile(
+        uri,
+        url,
+        meta,
+        controller.signal,
+        options.onProgress === undefined ? undefined : (sent) => options.onProgress?.(meta, sent),
+      ),
       abort: () => controller.abort(),
     }),
   });
@@ -194,10 +306,12 @@ export async function uploadDraftAttachments(
   native: NativePersonal,
   chat: ChatEnvironment,
   attachments: ReadonlyArray<DraftAttachment>,
+  options: UploadOptions = {},
 ): Promise<ReadonlyArray<ChatAttachment> | null> {
   const uploaded: ChatAttachment[] = [];
   for (const attachment of attachments) {
-    const next = await uploadOne(native, chat, attachment, attachment.uri);
+    if (options.signal?.aborted) return null;
+    const next = await uploadOne(native, chat, attachment, attachment.uri, options);
     if (next.kind === "failed") return null;
     uploaded.push(next.attachment);
   }

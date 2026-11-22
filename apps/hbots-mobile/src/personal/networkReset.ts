@@ -1,5 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 
+import type { RangeAnswer } from "../chat/videoDrafts";
+
 interface NetworkResetModule {
   readonly reset: () => Promise<boolean>;
   readonly evictPool?: () => Promise<boolean>;
@@ -9,6 +11,20 @@ interface NetworkResetModule {
     mimeType: string,
     endpointHeader: string,
   ) => Promise<{ readonly status: number; readonly endpoint: boolean }>;
+  readonly uploadRange?: (
+    url: string,
+    uri: string,
+    mimeType: string,
+    endpointHeader: string,
+    offset: number,
+    length: number,
+    uploadId: string,
+  ) => Promise<RangeAnswer>;
+  readonly cancelUpload?: (uploadId: string) => boolean;
+  readonly addListener?: (
+    event: "onUploadProgress",
+    listener: (event: { readonly uploadId: string; readonly sent: number }) => void,
+  ) => { remove: () => void };
   readonly isOnline: () => boolean;
   readonly canReachNetwork: () => Promise<boolean>;
 }
@@ -118,4 +134,55 @@ export async function phoneHasInternet(): Promise<boolean> {
     }
   }
   return jsProbe();
+}
+
+/** True when this build can upload a file in pieces with progress and cancel. */
+export function rangedUploadAvailable(): boolean {
+  return native?.uploadRange !== undefined;
+}
+
+/**
+ * Uploads `length` bytes of the file from `offset`, reporting the absolute
+ * byte count sent so far. `cancelRangeUpload(uploadId)` stops it; the answer
+ * then says `cancelled`.
+ */
+export async function uploadRangeNative(input: {
+  readonly url: string;
+  readonly uri: string;
+  readonly mimeType: string;
+  readonly endpointHeader: string;
+  readonly offset: number;
+  readonly length: number;
+  readonly uploadId: string;
+  readonly onProgress?: (sent: number) => void;
+}): Promise<RangeAnswer> {
+  const upload = native?.uploadRange;
+  if (upload === undefined) throw new Error("This build has no ranged upload.");
+  const subscription =
+    input.onProgress === undefined
+      ? null
+      : (native?.addListener?.("onUploadProgress", (event) => {
+          if (event.uploadId === input.uploadId) input.onProgress?.(event.sent);
+        }) ?? null);
+  try {
+    return await upload(
+      input.url,
+      input.uri,
+      input.mimeType,
+      input.endpointHeader,
+      input.offset,
+      input.length,
+      input.uploadId,
+    );
+  } finally {
+    subscription?.remove();
+  }
+}
+
+export function cancelRangeUpload(uploadId: string): void {
+  try {
+    native?.cancelUpload?.(uploadId);
+  } catch {
+    // Nothing in flight under that id.
+  }
 }

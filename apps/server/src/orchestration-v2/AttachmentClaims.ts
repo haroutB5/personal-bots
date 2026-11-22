@@ -16,6 +16,8 @@ import {
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
+import { isVideoFile } from "../provider/videoFrames/videoAnalysis.ts";
+import { claimVideoFrames, videoFramesDir } from "../provider/videoFrames/VideoFrames.ts";
 
 export class AttachmentClaimError extends Schema.TaggedError<AttachmentClaimError>()(
   "AttachmentClaimError",
@@ -54,6 +56,11 @@ export const releaseClaimedAttachments = Effect.fn("AttachmentClaims.releaseClai
           .pipe(
             Effect.ignore,
             Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true }).pipe(Effect.ignore)),
+            Effect.andThen(
+              fileSystem
+                .remove(videoFramesDir(path), { recursive: true, force: true })
+                .pipe(Effect.ignore),
+            ),
           ),
       {
         concurrency: 1,
@@ -162,6 +169,13 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           } else {
             const extracted = yield* documents.ensure(claim.finalPath);
             if (extracted) claimedPaths.push(extracted);
+          }
+          if (normalized.type === "file" && isVideoFile(normalized)) {
+            const pendingPath = claim.currentPath;
+            const finalPath = claim.finalPath;
+            yield* Effect.promise(() =>
+              claimVideoFrames(pendingPath, finalPath).catch(() => undefined),
+            );
           }
           return normalized;
         }),

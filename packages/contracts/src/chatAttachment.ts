@@ -15,6 +15,21 @@ export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 100;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES = 80 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_MAX_FILE_BYTES = 50 * 1024 * 1024;
+/** Videos are turned into frames on the server, so they may be bigger than other files. */
+export const PROVIDER_SEND_TURN_MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+
+export function isVideoAttachmentMimeType(mimeType: string): boolean {
+  return mimeType.trim().toLowerCase().startsWith("video/");
+}
+
+/** Shared by the attachment and the upload-URL schemas: 200 MB for a video, 50 MB otherwise. */
+export const fileAttachmentSizeCheck = Schema.makeFilter(
+  (file: { readonly mimeType: string; readonly sizeBytes: number }) =>
+    file.sizeBytes <= PROVIDER_SEND_TURN_MAX_FILE_BYTES ||
+    (isVideoAttachmentMimeType(file.mimeType) &&
+      file.sizeBytes <= PROVIDER_SEND_TURN_MAX_VIDEO_BYTES) ||
+    `Files can be up to 50 MB (videos up to 200 MB).`,
+);
 export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
   "image/jpeg",
@@ -165,11 +180,11 @@ export const ChatFileAttachment = Schema.Struct({
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   sizeBytes: NonNegativeInt.check(
     Schema.isGreaterThanOrEqualTo(1),
-    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_VIDEO_BYTES),
   ),
   /** Keep path-only so agents inspect selectively without consuming the context folding preserves. */
   source: Schema.optional(PastedTextAttachmentSource),
-});
+}).check(fileAttachmentSizeCheck);
 export type ChatFileAttachment = typeof ChatFileAttachment.Type;
 
 /** Accepts unknown attachment types for older readers; malformed known types must fail their own schema. */

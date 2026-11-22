@@ -166,6 +166,10 @@ export const providerMessageTextWithAttachmentPaths = Effect.fn(
   readonly resolveExtractedTextPath?:
     | ((path: string) => Effect.Effect<string | undefined>)
     | undefined;
+  /** Extra text a server derives for one attachment (a video's frame list), placed under its line. */
+  readonly resolveAttachmentContext?:
+    | ((attachment: ChatAttachment, path: string) => Effect.Effect<string | undefined>)
+    | undefined;
 }) {
   let text = input.text;
   // The text-input budget must never hide the existence of an attachment.
@@ -179,7 +183,12 @@ export const providerMessageTextWithAttachmentPaths = Effect.fn(
       path === null
         ? `[Attached ${attachment.type} "${attachment.name}" is unavailable: could not resolve a saved path for attachment '${attachment.id}'.]`
         : `[Attached ${attachment.type} "${attachment.name}" is saved at: ${path}${extracted ? ` (text extracted to: ${extracted})` : ""}]`;
-    text = text ? `${text}\n\n${context}` : context;
+    const derived =
+      path === null || !input.resolveAttachmentContext
+        ? undefined
+        : yield* input.resolveAttachmentContext(attachment, path);
+    const block = derived ? `${context}\n${derived}` : context;
+    text = text ? `${text}\n\n${block}` : block;
   }
 
   const truncationNotice =

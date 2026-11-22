@@ -79,6 +79,14 @@ export interface NativeBlob {
 const BLOB_DIRECTORY = "hbots-blobs";
 /** Plain copies made for one upload. They live in the cache folder and go as soon as the message leaves the queue. */
 const OPEN_DIRECTORY = "hbots-blobs-open";
+/**
+ * Large attachments (videos) are kept as plain copies in the app's private
+ * folder instead of sealed ones: the Keystore's AES-GCM releases plaintext only
+ * after the tag check, so opening a 200 MB sealed copy holds the whole file in
+ * memory. They go when the message leaves the queue, and on sign-out.
+ */
+const LARGE_DIRECTORY = "hbots-blobs-large";
+const LARGE_BLOB_BYTES = 24 * 1024 * 1024;
 
 /** Set by a wipe: a copy that was already running cannot recreate the folder after it. */
 let blobsSealed = false;
@@ -91,6 +99,7 @@ export function wipeBlobDirectory(): void {
   blobsSealed = true;
   for (const root of [
     new Directory(Paths.document, BLOB_DIRECTORY),
+    new Directory(Paths.document, LARGE_DIRECTORY),
     new Directory(Paths.cache, OPEN_DIRECTORY),
   ]) {
     if (root.exists) root.delete();
@@ -226,6 +235,7 @@ export function createFileBlobStore(): BlobStore<NativeBlob> {
   blobsSealed = false;
   const root = new Directory(Paths.document, BLOB_DIRECTORY);
   const open = new Directory(Paths.cache, OPEN_DIRECTORY);
+  const large = new Directory(Paths.document, LARGE_DIRECTORY);
   // Plain copies from a run that ended mid-upload do not outlive that run.
   if (open.exists) open.delete();
   const ensure = (directory: Directory) => {
@@ -249,12 +259,27 @@ export function createFileBlobStore(): BlobStore<NativeBlob> {
       if (blobsSealed) throw new Error("Local data was removed on sign-out.");
       const target = fileFor(key);
       if (target.exists) target.delete();
+      const plain = new File(ensure(large), nameOf(key));
+      if (plain.exists) plain.delete();
+      if (payload.size > LARGE_BLOB_BYTES) {
+        new File(payload.uri).copy(plain);
+        return;
+      }
       if (!(await encryptFile(payload.uri, target.uri))) {
         throw new Error("The attachment could not be stored.");
       }
     },
     get: async (key) => {
       if (blobsSealed) return null;
+      const plainCopy = new File(ensure(large), nameOf(key));
+      if (plainCopy.exists) {
+        return {
+          uri: plainCopy.uri,
+          size: plainCopy.size ?? 0,
+          mimeType: "application/octet-stream",
+          name: nameOf(key),
+        };
+      }
       const stored = fileFor(key);
       if (!stored.exists) return null;
       const plain = new File(ensure(open), nameOf(key));
@@ -270,15 +295,18 @@ export function createFileBlobStore(): BlobStore<NativeBlob> {
     deletePrefix: async (prefix) => {
       if (blobsSealed) return;
       removeMatching(ensure(root), nameOf(prefix));
+      removeMatching(large, nameOf(prefix));
       removeMatching(open, nameOf(prefix));
     },
     keys: async () =>
       blobsSealed
         ? []
-        : ensure(root)
-            .list()
-            .filter((entry): entry is File => entry instanceof File)
-            .map((file) => file.name),
+        : [ensure(root), ensure(large)].flatMap((directory) =>
+            directory
+              .list()
+              .filter((entry): entry is File => entry instanceof File)
+              .map((file) => file.name),
+          ),
     sizeOf: (payload) => payload.size,
   };
 }

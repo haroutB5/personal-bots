@@ -36,6 +36,20 @@ it.effect("rejects malformed known attachment types instead of tolerating them",
       decodeAttachment({ ...base, type: "file", sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 }),
     );
     assert.strictEqual(Exit.isFailure(oversizedFile), true);
+    // Videos get 200 MB because the server reviews them as frames; other files keep 50 MB.
+    const video = { ...base, type: "file", name: "rec.mp4", mimeType: "video/mp4" };
+    assert.strictEqual(
+      Exit.isSuccess(
+        yield* Effect.exit(decodeAttachment({ ...video, sizeBytes: 150 * 1024 * 1024 })),
+      ),
+      true,
+    );
+    assert.strictEqual(
+      Exit.isFailure(
+        yield* Effect.exit(decodeAttachment({ ...video, sizeBytes: 200 * 1024 * 1024 + 1 })),
+      ),
+      true,
+    );
     const badMimeImage = yield* Effect.exit(
       decodeAttachment({ ...base, type: "image", mimeType: "application/pdf", sizeBytes: 12 }),
     );
