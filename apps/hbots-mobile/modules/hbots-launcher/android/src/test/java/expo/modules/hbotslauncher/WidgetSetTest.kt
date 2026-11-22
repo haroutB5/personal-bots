@@ -64,7 +64,7 @@ class WidgetSetTest {
     val state = TileGridModel.build(
       feed(cfo, builder, poteto, WidgetBot("a", "Assistant", false)).copy(
         laptop = WidgetMachine(23, 11, 32, tempC = 54),
-        gamingPc = WidgetMachine(32, 12, 16, users = listOf("Builder")),
+        server = WidgetMachine(12, 5, 16, diskFreeGB = 238, health = "Apps 7/8 up · matchday down · DB ok", healthBad = true),
         usage = WidgetUsage("Claude", 62, 85, ""),
       ),
       now,
@@ -73,7 +73,8 @@ class WidgetSetTest {
     assertEquals("1 working · 1 waiting", state.side)
     assertEquals(listOf("Builder" to "18 min", "Poteto" to "needs you", "CFO" to "3 unread", "Assistant" to "idle"), state.tiles.map { it.line.name to it.status })
     assertEquals("CPU 23% · RAM 11/32 GB · 54°", state.laptop)
-    assertEquals("CPU 32% · RAM 12/16 GB · Builder", state.gaming)
+    assertEquals("CPU 12% · RAM 5/16 GB · Apps 7/8 up · matchday down · DB ok", state.server)
+    assertTrue(state.serverBad)
     assertEquals("85%", state.usage)
     assertTrue(state.usageHot)
   }
@@ -82,7 +83,8 @@ class WidgetSetTest {
     val state = TileGridModel.build(WidgetFeed((1..8).map { WidgetBot("b$it", "B$it", false) }, now), now, utc) as TileGridState.Data
     assertEquals(TileGridModel.MAX_TILES, state.tiles.size)
     assertEquals("", state.laptop)
-    assertEquals("", state.gaming)
+    assertEquals("", state.server)
+    assertFalse(state.serverBad)
     assertEquals("", state.usage)
     assertEquals(TileGridState.Empty, TileGridModel.build(feed(), now, utc))
     assertEquals(TileGridState.SignedOut, TileGridModel.build(null, now, utc))
@@ -139,25 +141,30 @@ class WidgetSetTest {
   // Widget D
   @Test fun machinesShowsBothPanelsWithTheirGauges() {
     val state = MachinesModel.build(
-      feed().copy(laptop = WidgetMachine(23, 11, 32, tempC = 54, diskFreeGB = 212), gamingPc = WidgetMachine(92, 15, 16, gpuPct = 4, users = listOf("Builder"))),
+      feed().copy(laptop = WidgetMachine(23, 11, 32, tempC = 54, diskFreeGB = 212), server = WidgetMachine(92, 15, 16, diskFreeGB = 238, health = "Apps 8/8 up · DB ok")),
       now,
       utc,
     ) as MachinesState.Data
     assertEquals("54° · disk 212 GB free", state.laptop.sub)
     assertEquals(listOf(WidgetGauge("CPU", "23%", 23, false), WidgetGauge("RAM", "11/32", 34, false)), state.laptop.gauges)
-    assertEquals("In use: Builder", state.gaming.sub)
-    assertEquals(listOf(WidgetGauge("CPU", "92%", 92, true), WidgetGauge("RAM", "15/16", 93, true), WidgetGauge("GPU", "4%", 4, false)), state.gaming.gauges)
+    assertEquals("Server", state.server.title)
+    assertEquals("Apps 8/8 up · DB ok", state.server.sub)
+    assertFalse(state.server.subBad)
+    assertEquals(listOf(WidgetGauge("CPU", "92%", 92, true), WidgetGauge("RAM", "15/16", 93, true)), state.server.gauges)
   }
 
-  @Test fun machinesSaysWhenTheGamingPcIsOffOrFreeAndMarksOldFigures() {
+  @Test fun machinesSaysWhenTheServerIsNotReportingOrTroubledAndMarksOldFigures() {
     val laptop = WidgetMachine(null, null, null)
     val off = MachinesModel.build(feed(at = stale).copy(laptop = laptop), now, utc) as MachinesState.Data
-    assertEquals(MachinesModel.GAMING_OFF, off.gaming.sub)
-    assertTrue(off.gaming.gauges.isEmpty())
+    assertEquals(MachinesModel.SERVER_OFF, off.server.sub)
+    assertTrue(off.server.gauges.isEmpty())
     assertTrue(off.laptop.gauges.isEmpty())
     assertEquals("as of 14:41", off.asOf)
-    val free = MachinesModel.build(feed().copy(laptop = laptop, gamingPc = WidgetMachine(1, 2, 16)), now, utc) as MachinesState.Data
-    assertEquals("Free", free.gaming.sub)
+    val bare = MachinesModel.build(feed().copy(laptop = laptop, server = WidgetMachine(1, 2, 16, diskFreeGB = 238)), now, utc) as MachinesState.Data
+    assertEquals("disk 238 GB free", bare.server.sub)
+    val down = MachinesModel.build(feed().copy(laptop = laptop, server = WidgetMachine(null, null, null, health = "Coolify unreachable", healthBad = true)), now, utc) as MachinesState.Data
+    assertEquals("Coolify unreachable", down.server.sub)
+    assertTrue(down.server.subBad)
     assertEquals(MachinesState.Empty, MachinesModel.build(feed(), now, utc))
     assertEquals(MachinesState.SignedOut, MachinesModel.build(null, now, utc))
   }

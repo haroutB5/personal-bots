@@ -16,7 +16,7 @@ class WidgetFeedTest {
     updatedAt = 42L,
     usage = WidgetUsage("Claude", 62, 38, "17:10"),
     laptop = WidgetMachine(23, 11, 32, tempC = 54, diskFreeGB = 212),
-    gamingPc = WidgetMachine(32, 12, 16, gpuPct = 4, users = listOf("Builder")),
+    server = WidgetMachine(12, 5, 16, diskFreeGB = 238, health = "Apps 7/8 up · matchday down · DB ok", healthBad = true),
     today = WidgetToday(4, 1, 2, listOf(WidgetEvent(false, "hbots is live", "Shipper", 500L), WidgetEvent(true, "Review failed", "Verifier", 400L)), "Tennis Friday", 9_000L),
     question = WidgetQuestion("p", "Poteto", "Hbots", "Ship now, or wait?", listOf("Ship now", "Wait"), "hbots://chat/p/t-1", 300L),
   )
@@ -73,7 +73,7 @@ class WidgetFeedTest {
       .put("bots", org.json.JSONArray().put(org.json.JSONObject().put("botId", "a").put("name", long).put("working", true).put("activity", "line one\nline\u0000two  $long").put("color", "red").put("unread", 5000)))
       .put("question", org.json.JSONObject().put("botId", "a").put("botName", long).put("chatTitle", long).put("text", "a\tb\n$long").put("link", "hbots://chat/a/t").put("choices", org.json.JSONArray(listOf(long, "B", "", "C", "D"))))
       .put("today", org.json.JSONObject().put("done", 1).put("events", org.json.JSONArray((1..9).map { org.json.JSONObject().put("kind", "done").put("title", long).put("bot", long).put("atMs", it) })))
-      .put("gamingPc", org.json.JSONObject().put("cpuPct", 250).put("users", org.json.JSONArray((1..9).map { long })))
+      .put("server", org.json.JSONObject().put("cpuPct", 250).put("health", "Apps\n$long").put("healthBad", true))
       .toString()
     val feed = WidgetFeedCodec.decode(raw)!!
     val bot = feed.bots.single()
@@ -89,8 +89,10 @@ class WidgetFeedTest {
     assertEquals(WidgetFeedCodec.MAX_CHOICE, question.choices[0].length)
     assertEquals(WidgetFeedCodec.MAX_EVENTS, feed.today!!.events.size)
     assertEquals(WidgetFeedCodec.MAX_TITLE, feed.today!!.events[0].title.length)
-    assertEquals(100, feed.gamingPc!!.cpuPct)
-    assertEquals(WidgetFeedCodec.MAX_USERS, feed.gamingPc!!.users.size)
+    assertEquals(100, feed.server!!.cpuPct)
+    assertEquals(WidgetFeedCodec.MAX_HEALTH, feed.server!!.health.length)
+    assertTrue(feed.server!!.health.startsWith("Apps x"))
+    assertTrue(feed.server!!.healthBad)
     val stored = WidgetFeedCodec.encode(feed)
     assertFalse(stored.contains(long))
     assertFalse(stored.contains("\\n") || stored.contains("\\u0000"))
@@ -112,7 +114,17 @@ class WidgetFeedTest {
     assertNull(feed.usage)
     assertNull(feed.today)
     assertNull(feed.laptop)
-    assertNull(feed.gamingPc)
+    assertNull(feed.server)
     assertNull(feed.question)
+  }
+
+  @Test fun anOldStoredGamingPcIsDroppedAndHealthBadNeedsAHealthLine() {
+    val feed = WidgetFeedCodec.decode(
+      org.json.JSONObject().put("v", 2).put("bots", org.json.JSONArray())
+        .put("gamingPc", org.json.JSONObject().put("cpuPct", 30).put("users", org.json.JSONArray(listOf("Builder"))))
+        .put("server", org.json.JSONObject().put("cpuPct", 12).put("healthBad", true)).toString(),
+    )!!
+    assertEquals(WidgetMachine(12, null, null), feed.server)
+    assertFalse(WidgetFeedCodec.encode(feed).contains("gamingPc"))
   }
 }

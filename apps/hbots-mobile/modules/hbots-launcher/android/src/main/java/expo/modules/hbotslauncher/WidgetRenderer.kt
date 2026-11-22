@@ -107,7 +107,7 @@ object WidgetRenderer {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget_tiles)
     header(context, views, model.title, model.side, model.asOf)
     clear(views, R.id.hbots_tiles1, R.id.hbots_tiles2)
-    val lines = listOf(model.laptop, model.gaming, model.usage).count { it.isNotEmpty() }
+    val lines = listOf(model.laptop, model.server, model.usage).count { it.isNotEmpty() }
     val wanted = (model.tiles.size + 2) / 3
     val bands = WidgetFit.rows(height, PAD + HEADER + lines * 18, 80, wanted)
     model.tiles.take(bands * 3).forEachIndexed { index, tile ->
@@ -121,7 +121,8 @@ object WidgetRenderer {
       views.addView(if (index < 3) R.id.hbots_tiles1 else R.id.hbots_tiles2, item)
     }
     line(views, R.id.hbots_laptop, "Laptop", model.laptop)
-    line(views, R.id.hbots_gaming, "Gaming PC", model.gaming)
+    line(views, R.id.hbots_server, "Server", model.server)
+    views.setTextColor(R.id.hbots_server, if (model.serverBad) AMBER else MUTED)
     line(views, R.id.hbots_usage, "Usage", model.usage)
     views.setTextColor(R.id.hbots_usage, if (model.usageHot) AMBER else MUTED)
     return views
@@ -170,10 +171,11 @@ object WidgetRenderer {
   private fun machines(context: Context, model: MachinesState.Data): RemoteViews {
     val views = RemoteViews(context.packageName, R.layout.hbots_widget_machines)
     clear(views, R.id.hbots_panels)
-    for (panel in listOf(model.laptop, model.gaming)) {
+    for (panel in listOf(model.laptop, model.server)) {
       val item = RemoteViews(context.packageName, R.layout.hbots_w_panel)
       item.setTextViewText(R.id.hbots_name, panel.title)
       item.setTextViewText(R.id.hbots_sub, panel.sub)
+      if (panel.subBad) item.setTextColor(R.id.hbots_sub, AMBER)
       for (gauge in panel.gauges) item.addView(R.id.hbots_gauges, gauge(context, gauge))
       val spoken = listOf(panel.title, panel.sub).plus(panel.gauges.map { "${it.label} ${it.value}" })
       item.setContentDescription(R.id.hbots_item, spoken.filter { it.isNotEmpty() }.joinToString(", "))

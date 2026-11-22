@@ -1,11 +1,10 @@
-import type { SystemSummary } from "@hbots/personal-client/computer/systemStats";
-import { parseSystemSummary } from "@hbots/personal-client/computer/systemStats";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { parsePhoneSystemSummary, type PhoneSystemSummary } from "./serverStats";
 import { startSummaryPoller } from "./systemSummaryPoller";
 
-const summary = (gamingPc?: unknown): SystemSummary => {
-  const parsed = parseSystemSummary({ cpuPct: 5, gamingPc });
+const summary = (server?: unknown, serverApps?: unknown): PhoneSystemSummary => {
+  const parsed = parsePhoneSystemSummary({ cpuPct: 5, server, serverApps });
   if (parsed === null) throw new Error("fixture");
   return parsed;
 };
@@ -18,9 +17,9 @@ describe("startSummaryPoller", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  const setup = (reads: Array<SystemSummary | null>, active = true) => {
+  const setup = (reads: Array<PhoneSystemSummary | null>, active = true) => {
     const read = vi.fn(async () => reads.shift() ?? null);
-    const seen: SystemSummary[] = [];
+    const seen: PhoneSystemSummary[] = [];
     const poller = startSummaryPoller({
       read,
       onSummary: (next) => seen.push(next),
@@ -40,13 +39,24 @@ describe("startSummaryPoller", () => {
     poller.stop();
   });
 
-  it("asks again after 3 s while the gaming PC link is starting", async () => {
-    const { read, poller } = setup([summary({ state: "starting" }), summary()]);
+  it.each([
+    ["the server stats link", [{ state: "starting" }, undefined]],
+    ["the Coolify app health", [undefined, { state: "starting" }]],
+  ] as const)("asks again after 3 s while %s is starting", async (_name, [server, apps]) => {
+    const { read, poller } = setup([summary(server, apps), summary()]);
     await flush();
     await vi.advanceTimersByTimeAsync(2_999);
     expect(read).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(read).toHaveBeenCalledTimes(2);
+    poller.stop();
+  });
+
+  it("keeps 10 s once Coolify answered, even when it is unreachable", async () => {
+    const { read, poller } = setup([summary(undefined, { state: "unreachable" }), summary()]);
+    await flush();
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(read).toHaveBeenCalledTimes(1);
     poller.stop();
   });
 
@@ -87,10 +97,10 @@ describe("startSummaryPoller", () => {
   });
 
   it("does not schedule when the app went to the background during a read", async () => {
-    let finish: (value: SystemSummary | null) => void = () => {};
+    let finish: (value: PhoneSystemSummary | null) => void = () => {};
     const read = vi.fn(
       () =>
-        new Promise<SystemSummary | null>((resolve) => {
+        new Promise<PhoneSystemSummary | null>((resolve) => {
           finish = resolve;
         }),
     );
@@ -105,10 +115,10 @@ describe("startSummaryPoller", () => {
   });
 
   it("never runs two reads at once", async () => {
-    let finish: (value: SystemSummary | null) => void = () => {};
+    let finish: (value: PhoneSystemSummary | null) => void = () => {};
     const read = vi.fn(
       () =>
-        new Promise<SystemSummary | null>((resolve) => {
+        new Promise<PhoneSystemSummary | null>((resolve) => {
           finish = resolve;
         }),
     );

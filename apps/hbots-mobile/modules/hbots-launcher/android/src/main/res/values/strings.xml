@@ -12,7 +12,7 @@
   <string name="hbots_bot_label">hbots · One bot</string>
   <string name="hbots_bot_description">The bot that is working now</string>
   <string name="hbots_machines_label">hbots · Machines</string>
-  <string name="hbots_machines_description">Laptop and gaming PC load</string>
+  <string name="hbots_machines_description">Laptop and app server load</string>
   <string name="hbots_today_label">hbots · Today</string>
   <string name="hbots_today_description">What finished today and the next routine</string>
   <string name="hbots_new_chat">New chat</string>

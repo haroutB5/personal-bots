@@ -10,18 +10,28 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import { HttpRouter } from "effect/http";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentAuth, ServerAuthMissingCredentialError } from "../../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { HostResources } from "../../resourceTelemetry/HostResources.ts";
+import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
 import {
-  makeGamingPcReader,
-  makeLiveGamingPcReader,
-  type GamingPcReader,
+  makeCoolifyHealthReader,
+  makeLiveCoolifyHealthReader,
+  type CoolifyFetchList,
+  type CoolifyHealthReader,
+} from "./coolifyHealth.ts";
+import {
+  makeLiveServerStatsReader,
+  makeServerStatsReader,
   type LinkHandle,
-} from "./gamingPc.ts";
+  type ServerStatsReader,
+} from "./serverStats.ts";
 import {
   PERSONAL_SYSTEM_SUMMARY_PATH,
   diskLabelOf,
@@ -39,17 +49,40 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0)) await dispose();
 });
 
+/** A token that must never leave the server: not in a body, not in a log. */
+const TOKEN = "7|cooLifyTokenValue-DO-NOT-LEAK-91af0c";
+
+const secretLayers = (saved: string | null) =>
+  Layer.mergeAll(
+    Layer.succeed(ServerSecretStore.ServerSecretStore, {
+      get: (name: string) =>
+        Effect.succeed(
+          saved !== null && name === "personal-secret-COOLIFY_API_TOKEN"
+            ? Option.some(new TextEncoder().encode(`${saved}\n`))
+            : Option.none(),
+        ),
+    } as unknown as ServerSecretStore.ServerSecretStore["Service"]),
+    Layer.succeed(PersonalSecretRepository.PersonalSecretRepository, {
+      listByStatus: () => Effect.succeed([]),
+    } as unknown as PersonalSecretRepository.PersonalSecretRepository["Service"]),
+  );
+
 const fixture = (options: {
   auth: "missing" | ReadonlyArray<AuthEnvironmentScope>;
   onRead?: () => void;
-  gamingPc?: GamingPcReader;
+  serverStats?: ServerStatsReader;
+  serverApps?: CoolifyHealthReader;
+  savedToken?: string | null;
 }) => {
   const { handler, dispose } = HttpRouter.toWebHandler(
     makePersonalSystemSummaryRouteLayer({
-      gamingPc:
-        options.gamingPc ??
-        makeGamingPcReader({ config: null, spawnLink: neverLink, readRigHolder: async () => null }),
+      serverStats:
+        options.serverStats ?? makeServerStatsReader({ config: null, spawnLink: neverLink }),
+      serverApps: options.serverApps ?? makeCoolifyHealthReader({ config: null }),
     }).pipe(
+      Layer.provideMerge(
+        secretLayers(options.savedToken === undefined ? TOKEN : options.savedToken),
+      ),
       Layer.provideMerge(
         Layer.succeed(ServerConfig.ServerConfig, {
           baseDir: NodeOS.tmpdir(),
@@ -135,70 +168,72 @@ const BODY_KEYS = [
   "memUsedPct",
 ];
 
-describe("the gaming PC key in the summary", () => {
+const fakeStats = (overrides: Partial<ServerStatsReader> = {}): ServerStatsReader => ({
+  enabled: true,
+  touch: () => undefined,
+  current: () => null,
+  tick: () => undefined,
+  stop: () => undefined,
+  ...overrides,
+});
+
+describe("the server key in the summary", () => {
   it("is absent, not null, when the feature is not configured, and nothing is spawned", async () => {
     const handler = fixture({ auth: [AuthOrchestrationReadScope] });
     const body = (await (await handler(get())).json()) as Record<string, unknown>;
     expect(Object.keys(body).toSorted()).toEqual(BODY_KEYS);
   });
 
-  it("is absent when the environment has no host", async () => {
-    const reader = makeLiveGamingPcReader({}, () => undefined);
+  it("is absent when the environment has no host, and the old gaming PC variable is ignored", async () => {
+    const reader = makeLiveServerStatsReader(
+      { T3CODE_PERSONAL_GAMINGPC_HOST: "gamingpc", T3CODE_PERSONAL_GAMINGPC_RIG_DIR: "/tmp" },
+      () => undefined,
+    );
     expect(reader.enabled).toBe(false);
-    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: reader });
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], serverStats: reader });
     const body = (await (await handler(get())).json()) as Record<string, unknown>;
     expect(Object.keys(body).toSorted()).toEqual(BODY_KEYS);
+    expect(JSON.stringify(body)).not.toContain("gamingPc");
   });
 
   it("is absent and logs once when the host is not a plain alias", async () => {
     const logs: string[] = [];
-    const reader = makeLiveGamingPcReader(
-      { T3CODE_PERSONAL_GAMINGPC_HOST: "-oProxyCommand=x" },
+    const reader = makeLiveServerStatsReader(
+      { T3CODE_PERSONAL_SERVER_STATS_HOST: "-oProxyCommand=x" },
       (l) => logs.push(l),
     );
-    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: reader });
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], serverStats: reader });
     const body = (await (await handler(get())).json()) as Record<string, unknown>;
     expect(Object.keys(body).toSorted()).toEqual(BODY_KEYS);
     expect(logs).toEqual([
-      "gaming PC stats off: T3CODE_PERSONAL_GAMINGPC_HOST is not a plain ssh host alias",
+      "server stats off: T3CODE_PERSONAL_SERVER_STATS_HOST is not a plain ssh host alias",
     ]);
   });
 
   it("carries the reader's answer when configured", async () => {
     const view = {
       state: "on",
-      cpuPct: 32,
-      gpuPct: 4,
-      memUsedGB: 12,
-      memTotalGB: 16,
-      memUsedPct: 75,
+      cpuPct: 12,
+      memUsedGB: 5.4,
+      memTotalGB: 15.3,
+      memUsedPct: 35,
+      diskFreeGB: 238,
+      diskTotalGB: 474.9,
       ageMs: 1200,
-      users: [{ kind: "game", game: "league-match", label: "League of Legends" }],
     } as const;
-    const fake: GamingPcReader = {
-      enabled: true,
-      touch: () => undefined,
-      current: () => view,
-      tick: () => undefined,
-      stop: () => undefined,
-    };
-    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: fake });
+    const handler = fixture({
+      auth: [AuthOrchestrationReadScope],
+      serverStats: fakeStats({ current: () => view }),
+    });
     const body = (await (await handler(get())).json()) as Record<string, unknown>;
-    expect(body.gamingPc).toEqual(view);
+    expect(body.server).toEqual(view);
     expect(body.cpuPct).toBe(12);
   });
 
-  it("is null, with the laptop line intact, when the PC has nothing fresh", async () => {
-    const fake: GamingPcReader = {
-      enabled: true,
-      touch: () => undefined,
-      current: () => null,
-      tick: () => undefined,
-      stop: () => undefined,
-    };
-    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: fake });
+  it("is null, with the laptop line intact, when the server has nothing fresh", async () => {
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], serverStats: fakeStats() });
     const body = (await (await handler(get())).json()) as Record<string, unknown>;
-    expect(body.gamingPc).toBeNull();
+    expect(body.server).toBeNull();
     expect(body.memTotalGB).toBe(16);
   });
 
@@ -210,55 +245,152 @@ describe("the gaming PC key in the summary", () => {
       onExit: () => undefined,
       kill: () => (kills += 1),
     };
-    const reader = makeGamingPcReader({
-      config: { host: "gamingpc", rigDir: null },
+    const reader = makeServerStatsReader({
+      config: { host: "omarchy-old" },
       spawnLink: (host) => {
         hosts.push(host);
         return link;
       },
-      readRigHolder: async () => null,
       startTimer: () => () => undefined,
     });
-    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: reader });
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], serverStats: reader });
     const first = await handler(get());
-    expect(((await first.json()) as Record<string, unknown>).gamingPc).toEqual({
+    expect(((await first.json()) as Record<string, unknown>).server).toEqual({
       state: "starting",
     });
     const t0 = performance.now();
     for (let i = 0; i < 5; i += 1) await (await handler(get())).json();
     expect((performance.now() - t0) / 5).toBeLessThan(100);
-    expect(hosts).toEqual(["gamingpc"]);
+    expect(hosts).toEqual(["omarchy-old"]);
     expect(kills).toBe(0);
   });
 
-  it("does not touch the link for a caller with no session", async () => {
+  it("does not touch the link or Coolify for a caller with no session", async () => {
     let touches = 0;
-    const fake: GamingPcReader = {
+    let appTouches = 0;
+    const apps: CoolifyHealthReader = {
       enabled: true,
-      touch: () => (touches += 1),
+      touch: () => (appTouches += 1),
       current: () => null,
-      tick: () => undefined,
-      stop: () => undefined,
+      settled: () => Promise.resolve(),
     };
-    const handler = fixture({ auth: "missing", gamingPc: fake });
+    const handler = fixture({
+      auth: "missing",
+      serverStats: fakeStats({ touch: () => (touches += 1) }),
+      serverApps: apps,
+    });
     expect((await handler(get())).status).toBe(401);
     expect(touches).toBe(0);
+    expect(appTouches).toBe(0);
   });
 
   it("stops the link when the server scope ends", async () => {
     let stops = 0;
-    const fake: GamingPcReader = {
-      enabled: true,
-      touch: () => undefined,
-      current: () => null,
-      tick: () => undefined,
-      stop: () => (stops += 1),
-    };
-    const handler = fixture({ auth: [AuthOrchestrationReadScope], gamingPc: fake });
+    const handler = fixture({
+      auth: [AuthOrchestrationReadScope],
+      serverStats: fakeStats({ stop: () => (stops += 1) }),
+    });
     await handler(get());
     expect(stops).toBe(0);
     await disposers.splice(0).reduce((p, d) => p.then(d), Promise.resolve());
     expect(stops).toBe(1);
+  });
+});
+
+const LISTS = {
+  applications: [
+    { name: "caltrack", status: "running:unknown", uuid: "a1" },
+    { name: "matchday", status: "exited:unhealthy", uuid: "a2" },
+  ],
+  services: [],
+  databases: [{ name: "apps-postgres", status: "running:healthy" }],
+} as const;
+
+describe("the serverApps key in the summary", () => {
+  it("is absent when T3CODE_PERSONAL_COOLIFY_URL is unset, and no token is read", async () => {
+    const reader = makeLiveCoolifyHealthReader({}, () => undefined);
+    expect(reader.enabled).toBe(false);
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], serverApps: reader });
+    const body = (await (await handler(get())).json()) as Record<string, unknown>;
+    expect(Object.keys(body).toSorted()).toEqual(BODY_KEYS);
+  });
+
+  it("reads the saved token for the fetch, and the token is never in a response", async () => {
+    const seen: string[] = [];
+    const fetchList: CoolifyFetchList = async (origin, list, token) => {
+      seen.push(`${origin} ${list} ${Redacted.value(token)}`);
+      return { ok: true, body: LISTS[list] };
+    };
+    const reader = makeCoolifyHealthReader({
+      config: { origin: "http://100.117.220.14:8000" },
+      fetchList,
+    });
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], serverApps: reader });
+    const first = await (await handler(get())).text();
+    expect(JSON.parse(first).serverApps).toEqual({ state: "starting" });
+    await reader.settled();
+    const second = await (await handler(get())).text();
+    expect(JSON.parse(second).serverApps).toMatchObject({
+      state: "on",
+      appsUp: 1,
+      appsTotal: 2,
+      dbsUp: 1,
+      dbsTotal: 1,
+      problems: [{ kind: "app", name: "matchday", status: "down" }],
+    });
+    expect(seen.toSorted()).toEqual([
+      `http://100.117.220.14:8000 applications ${TOKEN}`,
+      `http://100.117.220.14:8000 databases ${TOKEN}`,
+      `http://100.117.220.14:8000 services ${TOKEN}`,
+    ]);
+    for (const text of [first, second]) {
+      expect(text).not.toContain(TOKEN);
+      expect(text).not.toContain("cooLifyToken");
+      expect(text).not.toContain("Bearer");
+    }
+  });
+
+  it("says unreachable, with no token in the body or the log, when a fetch throws with the token in its message", async () => {
+    const logs: string[] = [];
+    const reader = makeCoolifyHealthReader({
+      config: { origin: "http://100.117.220.14:8000" },
+      fetchList: async (_origin, _list, token) => {
+        throw new Error(`connect failed for Bearer ${Redacted.value(token)}`);
+      },
+      log: (line) => logs.push(line),
+    });
+    const handler = fixture({ auth: [AuthOrchestrationReadScope], serverApps: reader });
+    await handler(get());
+    await reader.settled();
+    const text = await (await handler(get())).text();
+    expect(JSON.parse(text).serverApps).toEqual({ state: "unreachable" });
+    expect(text).not.toContain(TOKEN);
+    expect(logs.join("\n")).not.toContain(TOKEN);
+    expect(logs).toEqual(["Coolify health unreachable: error"]);
+  });
+
+  it("says unreachable when no token is saved, and never fetches", async () => {
+    let fetches = 0;
+    const logs: string[] = [];
+    const reader = makeCoolifyHealthReader({
+      config: { origin: "http://100.117.220.14:8000" },
+      fetchList: async () => {
+        fetches += 1;
+        return { ok: true, body: [] };
+      },
+      log: (line) => logs.push(line),
+    });
+    const handler = fixture({
+      auth: [AuthOrchestrationReadScope],
+      serverApps: reader,
+      savedToken: null,
+    });
+    await handler(get());
+    await reader.settled();
+    const body = (await (await handler(get())).json()) as Record<string, unknown>;
+    expect(body.serverApps).toEqual({ state: "unreachable" });
+    expect(fetches).toBe(0);
+    expect(logs).toEqual(["Coolify health unreachable: COOLIFY_API_TOKEN is not saved"]);
   });
 });
 

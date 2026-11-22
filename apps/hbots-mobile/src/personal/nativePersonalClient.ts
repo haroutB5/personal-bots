@@ -31,10 +31,8 @@ import { createProviderSetupClient } from "@hbots/personal-client/settings/provi
 import { createPersonalComputerClient } from "@hbots/personal-client/computer/personalComputer";
 import { createVoiceCallApi } from "@hbots/personal-client/conversation/voice/voiceCallApi";
 import {
-  parseSystemSummary,
   SYSTEM_SUMMARY_TIMEOUT_MS,
   SYSTEM_SUMMARY_URL,
-  type SystemSummary,
 } from "@hbots/personal-client/computer/systemStats";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -51,6 +49,7 @@ import {
   type ServerUpdate,
 } from "@hbots/personal-client/update/serverUpdate";
 
+import { parsePhoneSystemSummary, type PhoneSystemSummary } from "../computer/serverStats";
 import { authorizedFetch } from "../authorizedRequest";
 import { wipeOutgoingThread } from "../chat/composerSendModel";
 import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
@@ -161,7 +160,7 @@ export interface NativePersonal {
   readonly voice: ReturnType<typeof createVoiceCallApi>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
   readonly useProviders: () => ReadonlyArray<ServerProvider>;
-  readonly readSystemSummary: () => Promise<SystemSummary | null>;
+  readonly readSystemSummary: () => Promise<PhoneSystemSummary | null>;
   /** Where a server update is; null when the server did not answer. */
   readonly readServerUpdate: () => Promise<ServerUpdate | null>;
   /** Freshly ticketed browser and desktop live-view sockets. */
@@ -556,7 +555,7 @@ export function createNativePersonal(
           },
         );
         if (!response.ok) return null;
-        return parseSystemSummary(await response.json());
+        return parsePhoneSystemSummary(await response.json());
       } catch {
         return null;
       } finally {

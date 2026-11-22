@@ -50,8 +50,9 @@ pass("auth token minted", `${token.length} characters`);
 const logFile = NodePath.join(root, "server.log");
 const log = NodeFS.openSync(logFile, "a");
 const smokeEnv: NodeJS.ProcessEnv = { ...process.env, T3CODE_NO_BROWSER: "1" };
-delete smokeEnv["T3CODE_PERSONAL_GAMINGPC_HOST"];
-delete smokeEnv["T3CODE_PERSONAL_GAMINGPC_RIG_DIR"];
+// The boot smoke opens no ssh link to the stats server and makes no Coolify call.
+delete smokeEnv["T3CODE_PERSONAL_SERVER_STATS_HOST"];
+delete smokeEnv["T3CODE_PERSONAL_COOLIFY_URL"];
 const server = NodeChildProcess.spawn(
   process.execPath,
   [bin, "serve", "--base-dir", root, "--port", String(port), "--host", "127.0.0.1", "--no-browser"],

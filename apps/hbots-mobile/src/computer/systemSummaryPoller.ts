@@ -1,11 +1,11 @@
-import { systemPollDelayMs, type SystemSummary } from "@hbots/personal-client/computer/systemStats";
+import { phonePollDelayMs, type PhoneSystemSummary } from "./serverStats";
 
 export const SUMMARY_POLL_MS = 10_000;
 export const SUMMARY_RETRY_MS = 30_000;
 
 export interface SummaryPollerDeps {
-  readonly read: () => Promise<SystemSummary | null>;
-  readonly onSummary: (summary: SystemSummary) => void;
+  readonly read: () => Promise<PhoneSystemSummary | null>;
+  readonly onSummary: (summary: PhoneSystemSummary) => void;
   readonly initiallyActive: boolean;
 }
 
@@ -16,10 +16,9 @@ export interface SummaryPoller {
 }
 
 /**
- * Polls the summary every 10 s while the app is in the foreground: 30 s after
- * a failed read, 3 s while the gaming PC link is starting. In the background
- * it asks nothing (so the server's gaming PC link can idle out), and it asks
- * at once on return. One read at a time.
+ * Polls every 10 s in the foreground (30 s after a failure, 3 s while a server
+ * part is starting), one read at a time. Silent in the background so the
+ * server's ssh link idles out; asks at once on return.
  */
 export function startSummaryPoller(deps: SummaryPollerDeps): SummaryPoller {
   let active = deps.initiallyActive;
@@ -52,7 +51,7 @@ export function startSummaryPoller(deps: SummaryPollerDeps): SummaryPoller {
       return;
     }
     deps.onSummary(next);
-    schedule(systemPollDelayMs(next, SUMMARY_POLL_MS));
+    schedule(phonePollDelayMs(next, SUMMARY_POLL_MS));
   };
 
   void ask();

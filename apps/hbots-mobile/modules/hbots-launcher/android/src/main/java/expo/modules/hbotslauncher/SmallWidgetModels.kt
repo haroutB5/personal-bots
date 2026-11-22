@@ -82,37 +82,38 @@ object OneBotModel {
   }
 }
 
-data class MachinePanel(val title: String, val sub: String, val gauges: List<WidgetGauge>)
+data class MachinePanel(val title: String, val sub: String, val gauges: List<WidgetGauge>, val subBad: Boolean = false)
 
 sealed interface MachinesState {
   data object SignedOut : MachinesState
   data object Empty : MachinesState
-  data class Data(val laptop: MachinePanel, val gaming: MachinePanel, val asOf: String) : MachinesState
+  data class Data(val laptop: MachinePanel, val server: MachinePanel, val asOf: String) : MachinesState
 }
 
-/** Widget D, Machines: the laptop and the gaming PC, as the app last read them. */
+/** Widget D, Machines: the laptop and the app server, as the app last read them. */
 object MachinesModel {
   const val EMPTY_TEXT = "Open hbots for machine figures"
-  const val GAMING_OFF = "Off or not reporting"
+  const val SERVER_OFF = "Not reporting"
 
   fun build(feed: WidgetFeed?, now: Long, zone: ZoneId = ZoneId.systemDefault()): MachinesState {
     if (feed == null) return MachinesState.SignedOut
     val laptop = feed.laptop ?: return MachinesState.Empty
-    val pc = feed.gamingPc
+    val server = feed.server
     return MachinesState.Data(
       laptop = MachinePanel(
         "Laptop",
         listOfNotNull(laptop.tempC?.let { "$it°" }, laptop.diskFreeGB?.let { "disk $it GB free" }).joinToString(" · "),
         gauges(laptop),
       ),
-      gaming = MachinePanel(
-        "Gaming PC",
+      server = MachinePanel(
+        "Server",
         when {
-          pc == null -> GAMING_OFF
-          pc.users.isEmpty() -> "Free"
-          else -> "In use: ${pc.users.joinToString(", ")}"
+          server == null -> SERVER_OFF
+          server.health.isNotEmpty() -> server.health
+          else -> server.diskFreeGB?.let { "disk $it GB free" }.orEmpty()
         },
-        pc?.let { gauges(it) + listOfNotNull(WidgetCommon.gauge("GPU", it.gpuPct)) }.orEmpty(),
+        server?.let(::gauges).orEmpty(),
+        subBad = server?.healthBad == true,
       ),
       asOf = WidgetCommon.asOf(feed, now, zone),
     )

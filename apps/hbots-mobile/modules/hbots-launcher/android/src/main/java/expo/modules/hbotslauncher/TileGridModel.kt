@@ -14,14 +14,17 @@ sealed interface TileGridState {
     val tiles: List<BotTile>,
     /** "CPU 23% · RAM 11/32 GB · 54°", or empty when the laptop reports nothing. */
     val laptop: String,
-    val gaming: String,
+    /** "CPU 12% · RAM 5/16 GB · Apps 7/8 up · matchday down", or empty when the server reports nothing. */
+    val server: String,
+    /** The server line names an app problem: inked amber. */
+    val serverBad: Boolean,
     /** "62%", the further spent of the two windows, or empty. */
     val usage: String,
     val usageHot: Boolean,
   ) : TileGridState
 }
 
-/** Widget 3, the Tile grid: one tile per bot, the two machines in a line each, and usage in a word. */
+/** Widget 3, the Tile grid: one tile per bot, the laptop and the app server in a line each, and usage in a word. */
 object TileGridModel {
   const val MAX_TILES = 6
 
@@ -36,7 +39,8 @@ object TileGridModel {
       asOf = WidgetCommon.asOf(feed, now, zone),
       tiles = lines.take(MAX_TILES).map { BotTile(it, status(it)) },
       laptop = feed.laptop?.let { machine(it, null) }.orEmpty(),
-      gaming = feed.gamingPc?.let { machine(it, it.users.firstOrNull()) }.orEmpty(),
+      server = feed.server?.let { machine(it, it.health.ifEmpty { null }) }.orEmpty(),
+      serverBad = feed.server?.healthBad == true,
       usage = worst?.let { "$it%" }.orEmpty(),
       usageHot = (worst ?: 0) >= WidgetCommon.HOT_PCT,
     )
@@ -48,10 +52,10 @@ object TileGridModel {
     BotTone.IDLE -> if (line.sub.endsWith("unread")) line.sub else "idle"
   }
 
-  fun machine(machine: WidgetMachine, user: String?): String = listOfNotNull(
+  fun machine(machine: WidgetMachine, extra: String?): String = listOfNotNull(
     machine.cpuPct?.let { "CPU $it%" },
     if (machine.memUsedGB != null && machine.memTotalGB != null) "RAM ${machine.memUsedGB}/${machine.memTotalGB} GB" else null,
     machine.tempC?.let { "$it°" },
-    user,
+    extra,
   ).joinToString(" · ")
 }

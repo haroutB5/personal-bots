@@ -28,8 +28,10 @@ data class WidgetMachine(
   val memTotalGB: Int?,
   val tempC: Int? = null,
   val diskFreeGB: Int? = null,
-  val gpuPct: Int? = null,
-  val users: List<String> = emptyList(),
+  /** The app server only: its app health, e.g. "Apps 8/8 up · DB ok", or empty. */
+  val health: String = "",
+  /** Whether [health] names a problem (an app down, Coolify unreachable). */
+  val healthBad: Boolean = false,
 )
 
 data class WidgetEvent(val failed: Boolean, val title: String, val bot: String, val atMs: Long)
@@ -60,7 +62,8 @@ data class WidgetFeed(
   val updatedAt: Long,
   val usage: WidgetUsage? = null,
   val laptop: WidgetMachine? = null,
-  val gamingPc: WidgetMachine? = null,
+  /** The app server (the Coolify box): CPU, RAM, disk and app health. */
+  val server: WidgetMachine? = null,
   val today: WidgetToday? = null,
   val question: WidgetQuestion? = null,
 )
@@ -78,7 +81,7 @@ object WidgetFeedCodec {
   const val MAX_CHOICE = 40
   const val MAX_EVENTS = 3
   const val MAX_TITLE = 60
-  const val MAX_USERS = 3
+  const val MAX_HEALTH = 60
   private const val MAX_NAME = 40
   private const val MAX_SHORT = 24
   private const val MAX_ID = 128
@@ -116,7 +119,7 @@ object WidgetFeedCodec {
       json.put("usage", JSONObject().put("title", it.title).putOpt("sessionPct", it.sessionPct).putOpt("weekPct", it.weekPct).put("resets", it.resets))
     }
     feed.laptop?.let { json.put("laptop", machine(it)) }
-    feed.gamingPc?.let { json.put("gamingPc", machine(it)) }
+    feed.server?.let { json.put("server", machine(it)) }
     feed.today?.let { today ->
       val events = JSONArray()
       for (event in today.events) {
@@ -149,7 +152,7 @@ object WidgetFeedCodec {
         updatedAt = json.optLong("updatedAt", 0L),
         usage = json.optJSONObject("usage")?.let(::usage),
         laptop = json.optJSONObject("laptop")?.let(::machine),
-        gamingPc = json.optJSONObject("gamingPc")?.let(::machine),
+        server = json.optJSONObject("server")?.let(::machine),
         today = json.optJSONObject("today")?.let(::today),
         question = json.optJSONObject("question")?.let(::question),
       )
@@ -186,22 +189,25 @@ object WidgetFeedCodec {
   }
 
   private fun machine(item: JSONObject): WidgetMachine {
-    val users = item.optJSONArray("users")
+    val health = clean(text(item, "health"), MAX_HEALTH)
     return WidgetMachine(
       cpuPct = pct(item, "cpuPct"),
       memUsedGB = int(item, "memUsedGB")?.coerceIn(0, 9999),
       memTotalGB = int(item, "memTotalGB")?.coerceIn(0, 9999),
       tempC = int(item, "tempC")?.coerceIn(-99, 199),
       diskFreeGB = int(item, "diskFreeGB")?.coerceIn(0, 99999),
-      gpuPct = pct(item, "gpuPct"),
-      users = strings(users, MAX_USERS, MAX_SHORT),
+      health = health,
+      healthBad = health.isNotEmpty() && item.opt("healthBad") == true,
     )
   }
 
   private fun machine(machine: WidgetMachine): JSONObject =
     JSONObject().putOpt("cpuPct", machine.cpuPct).putOpt("memUsedGB", machine.memUsedGB).putOpt("memTotalGB", machine.memTotalGB)
-      .putOpt("tempC", machine.tempC).putOpt("diskFreeGB", machine.diskFreeGB).putOpt("gpuPct", machine.gpuPct)
-      .put("users", JSONArray(machine.users))
+      .putOpt("tempC", machine.tempC).putOpt("diskFreeGB", machine.diskFreeGB)
+      .apply {
+        if (machine.health.isNotEmpty()) put("health", machine.health)
+        if (machine.healthBad) put("healthBad", true)
+      }
 
   private fun today(item: JSONObject): WidgetToday {
     val array = item.optJSONArray("events")

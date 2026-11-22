@@ -7,6 +7,12 @@ import type {
   WidgetMachine,
   WidgetQuestion,
 } from "./launcher/nativeLauncher";
+import {
+  serverAppsText,
+  serverAppsTroubled,
+  type ServerApps,
+  type ServerStats,
+} from "./computer/serverStats";
 import { humanStep } from "./working/workingFeed";
 
 /** Native draws at most six bots; this keeps the bridge payload small. */
@@ -18,6 +24,8 @@ export const MAX_CHOICE = 40;
 export const MAX_EVENTS = 3;
 export const MAX_TITLE = 60;
 export const FEED_VERSION = 2;
+/** The app health line on a widget, e.g. "Apps 7/8 up · matchday down · DB ok". */
+export const MAX_HEALTH = 60;
 
 export interface WidgetBotInput {
   readonly botId: string;
@@ -75,20 +83,10 @@ export interface WidgetSystemInput {
   readonly memTotalGB: number | null;
   readonly cpuTempC: number | null;
   readonly diskFreeGB: number | null;
-  readonly gamingPc:
-    | { readonly state: "starting" }
-    | {
-        readonly state: "on";
-        readonly cpuPct: number;
-        readonly gpuPct: number | null;
-        readonly memUsedGB: number;
-        readonly memTotalGB: number;
-        readonly users: ReadonlyArray<
-          | { readonly kind: "game"; readonly label: string }
-          | { readonly kind: "bot"; readonly bot: string }
-        >;
-      }
-    | null;
+  /** The app server's CPU, RAM and disk (absent on an older server). */
+  readonly server?: ServerStats | null;
+  /** The Coolify app health (absent on an older server). */
+  readonly serverApps?: ServerApps | null;
 }
 
 export interface WidgetFeedInput {
@@ -258,7 +256,7 @@ function buildToday(input: WidgetFeedInput): WidgetFeed["today"] {
 
 function buildMachines(system: WidgetSystemInput): {
   readonly laptop: WidgetMachine;
-  readonly gamingPc?: WidgetMachine;
+  readonly server?: WidgetMachine;
 } {
   const tenth = (value: number | null) =>
     value === null || !Number.isFinite(value) ? null : Math.round(value);
@@ -269,19 +267,21 @@ function buildMachines(system: WidgetSystemInput): {
     tempC: whole(system.cpuTempC),
     diskFreeGB: whole(system.diskFreeGB),
   };
-  const pc = system.gamingPc;
-  if (pc === null || pc.state !== "on") return { laptop };
+  const stats = system.server ?? null;
+  const apps = system.serverApps ?? null;
+  const health = serverAppsText(apps);
+  const on = stats !== null && stats.state === "on" ? stats : null;
+  if (on === null && health === null) return { laptop };
   return {
     laptop,
-    gamingPc: {
-      cpuPct: pct(pc.cpuPct),
-      memUsedGB: tenth(pc.memUsedGB),
-      memTotalGB: tenth(pc.memTotalGB),
-      gpuPct: pct(pc.gpuPct),
-      users: pc.users
-        .slice(0, 3)
-        .map((user) => widgetText(user.kind === "bot" ? user.bot : user.label, 24))
-        .filter((name) => name.length > 0),
+    server: {
+      cpuPct: on === null ? null : pct(on.cpuPct),
+      memUsedGB: on === null ? null : tenth(on.memUsedGB),
+      memTotalGB: on === null ? null : tenth(on.memTotalGB),
+      diskFreeGB: on === null ? null : whole(on.diskFreeGB),
+      ...(health === null
+        ? {}
+        : { health: widgetText(health, MAX_HEALTH), healthBad: serverAppsTroubled(apps) }),
     },
   };
 }

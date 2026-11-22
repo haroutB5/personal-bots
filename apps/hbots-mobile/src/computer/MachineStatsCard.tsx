@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
+import { laptopSummary } from "./serverStats";
 import { useSystemSummary } from "./useSystemSummary";
 
 /**
@@ -11,7 +12,7 @@ import { useSystemSummary } from "./useSystemSummary";
  */
 export function MachineStatsCard({ native }: { readonly native: NativePersonal }) {
   const summary = useSystemSummary(native);
-  const rows = summary === null ? [] : machineStatRows(summary);
+  const rows = summary === null ? [] : machineStatRows(laptopSummary(summary));
   if (rows.length === 0) return null;
 
   return (

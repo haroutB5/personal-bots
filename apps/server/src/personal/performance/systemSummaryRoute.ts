@@ -10,9 +10,15 @@
  * caller), and the disk from one `statfs` of the drive the server's data lives
  * on, cached a minute. A phone and a desktop polling together cost one reading.
  *
- * The optional `gamingPc` key (gamingPc.ts) is present only when
- * T3CODE_PERSONAL_GAMINGPC_HOST is set. The route only reads the last reading
- * from memory and never waits on ssh.
+ * Two optional keys describe the app server (the Coolify box):
+ * - `server` (serverStats.ts), present only when
+ *   T3CODE_PERSONAL_SERVER_STATS_HOST is set: its CPU, RAM and free disk,
+ *   read from memory; the route never waits on ssh.
+ * - `serverApps` (coolifyHealth.ts), present only when
+ *   T3CODE_PERSONAL_COOLIFY_URL is set: app and database health from the
+ *   Coolify API, read from memory; a fetch round (at most once a minute) runs
+ *   apart from the request. The Coolify token is read by the server for that
+ *   round only and never appears in this answer.
  */
 import * as NodeFSP from "node:fs/promises";
 
@@ -20,13 +26,27 @@ import { AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { ServerConfig } from "../../config.ts";
 import { HostResources } from "../../resourceTelemetry/HostResources.ts";
 import { authenticatePersonalRoute, personalRouteAuthResponses } from "../browser/routes.ts";
-import { makeLiveGamingPcReader, type GamingPcReader, type GamingPcWire } from "./gamingPc.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as PersonalSecretRepository from "../secrets/PersonalSecretRepository.ts";
+import { readSavedSecretValue } from "../secrets/savedSecretValue.ts";
+import {
+  COOLIFY_TOKEN_SECRET_NAME,
+  makeLiveCoolifyHealthReader,
+  type CoolifyHealthReader,
+  type CoolifyHealthWire,
+} from "./coolifyHealth.ts";
+import {
+  makeLiveServerStatsReader,
+  type ServerStatsReader,
+  type ServerStatsWire,
+} from "./serverStats.ts";
 import { makeHostSensorReader, type HostSensors } from "./hostSensors.ts";
 
 export const PERSONAL_SYSTEM_SUMMARY_PATH = "/api/personal/performance/summary";
@@ -53,8 +73,11 @@ export interface SystemSummary {
   readonly fans: ReadonlyArray<{ readonly label: string; readonly rpm: number }>;
 }
 
-/** The answer body: absent `gamingPc` means the feature is not configured. */
-export type SystemSummaryBody = SystemSummary & { readonly gamingPc?: GamingPcWire | null };
+/** The answer body: an absent `server` or `serverApps` key means that part is not configured. */
+export type SystemSummaryBody = SystemSummary & {
+  readonly server?: ServerStatsWire | null;
+  readonly serverApps?: CoolifyHealthWire | null;
+};
 
 interface DiskReading {
   readonly label: string;
@@ -113,8 +136,9 @@ export const makePersonalSystemSummaryRouteLayer = (
   options: {
     readonly diskCacheMs?: number;
     readonly sensorCacheMs?: number;
-    /** Tests pass a fake; the server builds the real one from the environment. */
-    readonly gamingPc?: GamingPcReader;
+    /** Tests pass fakes; the server builds the real ones from the environment. */
+    readonly serverStats?: ServerStatsReader;
+    readonly serverApps?: CoolifyHealthReader;
   } = {},
 ) => {
   const diskCacheMs = options.diskCacheMs ?? DISK_CACHE_MS;
@@ -124,9 +148,9 @@ export const makePersonalSystemSummaryRouteLayer = (
   const sensorReader = makeHostSensorReader({ staleAfterMs: sensorCacheMs });
   // Warm the cache at startup so the first phone poll already has a reading.
   sensorReader.revalidate(0);
-  const gamingPc =
-    options.gamingPc ??
-    makeLiveGamingPcReader(process.env, (line) => console.log(`[performance] ${line}`));
+  const performanceLog = (line: string) => console.log(`[performance] ${line}`);
+  const serverStats = options.serverStats ?? makeLiveServerStatsReader(process.env, performanceLog);
+  const serverApps = options.serverApps ?? makeLiveCoolifyHealthReader(process.env, performanceLog);
 
   const route = HttpRouter.add(
     "GET",
@@ -146,8 +170,26 @@ export const makePersonalSystemSummaryRouteLayer = (
       // a request never waits on `/sys`.
       sensorReader.revalidate(nowMs);
       const sensors: HostSensors = sensorReader.current();
-      // Both calls are synchronous and read memory: the ssh link lives apart.
-      gamingPc.touch(nowMs);
+      // Synchronous and memory-only: the ssh link and the Coolify round live apart.
+      serverStats.touch(nowMs);
+      if (serverApps.enabled) {
+        const store = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
+        const rows = yield* Effect.serviceOption(PersonalSecretRepository.PersonalSecretRepository);
+        serverApps.touch(nowMs, () =>
+          Option.isSome(store) && Option.isSome(rows)
+            ? Effect.runPromise(
+                readSavedSecretValue(COOLIFY_TOKEN_SECRET_NAME).pipe(
+                  Effect.provideService(ServerSecretStore.ServerSecretStore, store.value),
+                  Effect.provideService(
+                    PersonalSecretRepository.PersonalSecretRepository,
+                    rows.value,
+                  ),
+                  Effect.map(Option.getOrNull),
+                ),
+              )
+            : Promise.resolve(null),
+        );
+      }
       const host = yield* (yield* HostResources).read;
       const summary = systemSummaryFrom({
         cpuUtilization: host.cpuUtilization,
@@ -156,9 +198,11 @@ export const makePersonalSystemSummaryRouteLayer = (
         disk,
         sensors,
       });
-      const body: SystemSummaryBody = gamingPc.enabled
-        ? { ...summary, gamingPc: gamingPc.current(nowMs) }
-        : summary;
+      const body: SystemSummaryBody = {
+        ...summary,
+        ...(serverStats.enabled ? { server: serverStats.current(nowMs) } : {}),
+        ...(serverApps.enabled ? { serverApps: serverApps.current(nowMs) } : {}),
+      };
       return yield* HttpServerResponse.json(body, { headers: HEADERS }).pipe(
         Effect.orElseSucceed(() =>
           HttpServerResponse.text("Internal Server Error", { status: 500 }),
@@ -169,7 +213,7 @@ export const makePersonalSystemSummaryRouteLayer = (
   // The ssh child ends with the server's scope, not only with the 30 s idle rule.
   return Layer.merge(
     route,
-    Layer.effectDiscard(Effect.addFinalizer(() => Effect.sync(() => gamingPc.stop()))),
+    Layer.effectDiscard(Effect.addFinalizer(() => Effect.sync(() => serverStats.stop()))),
   );
 };
 

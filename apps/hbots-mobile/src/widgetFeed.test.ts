@@ -282,14 +282,15 @@ describe("the widget feed", () => {
       });
     });
 
-    it("rounds the laptop figures and adds the gaming PC only when it is on", () => {
+    it("rounds the laptop figures and adds the app server only when it reports", () => {
       const system = {
         cpuPct: 22.6,
         memUsedGB: 11.2,
         memTotalGB: 31.3,
         cpuTempC: 54.4,
         diskFreeGB: 212.4,
-        gamingPc: { state: "starting" as const },
+        server: { state: "starting" as const },
+        serverApps: { state: "starting" as const },
       };
       const off = feed({ system });
       expect(off.laptop).toEqual({
@@ -299,30 +300,70 @@ describe("the widget feed", () => {
         tempC: 54,
         diskFreeGB: 212,
       });
+      expect(off).not.toHaveProperty("server");
       expect(off).not.toHaveProperty("gamingPc");
       const on = feed({
         system: {
           ...system,
-          gamingPc: {
+          server: {
             state: "on",
-            cpuPct: 32,
-            gpuPct: null,
-            memUsedGB: 12.4,
-            memTotalGB: 16,
-            users: [
-              { kind: "bot", bot: "Builder" },
-              { kind: "game", label: "League" },
-            ],
+            cpuPct: 12,
+            memUsedGB: 5.4,
+            memTotalGB: 15.3,
+            memUsedPct: 36,
+            diskFreeGB: 238.4,
+            diskTotalGB: 474.9,
+          },
+          serverApps: {
+            state: "on",
+            appsUp: 8,
+            appsTotal: 8,
+            dbsUp: 1,
+            dbsTotal: 1,
+            problems: [],
           },
         },
       });
-      expect(on.gamingPc).toEqual({
-        cpuPct: 32,
-        memUsedGB: 12,
-        memTotalGB: 16,
-        gpuPct: null,
-        users: ["Builder", "League"],
+      expect(on.server).toEqual({
+        cpuPct: 12,
+        memUsedGB: 5,
+        memTotalGB: 15,
+        diskFreeGB: 238,
+        health: "Apps 8/8 up · DB ok",
+        healthBad: false,
       });
+      expect(on).not.toHaveProperty("gamingPc");
+    });
+
+    it("names a problem and an unreachable Coolify on the widget, never a wrong count", () => {
+      const base = { cpuPct: 1, memUsedGB: 1, memTotalGB: 2, cpuTempC: null, diskFreeGB: 1 };
+      const down = feed({
+        system: {
+          ...base,
+          server: null,
+          serverApps: {
+            state: "on",
+            appsUp: 7,
+            appsTotal: 8,
+            dbsUp: 1,
+            dbsTotal: 1,
+            problems: [{ kind: "app", name: "matchday", status: "down" }],
+          },
+        },
+      });
+      expect(down.server).toEqual({
+        cpuPct: null,
+        memUsedGB: null,
+        memTotalGB: null,
+        diskFreeGB: null,
+        health: "Apps 7/8 up · matchday down · DB ok",
+        healthBad: true,
+      });
+      const lost = feed({
+        system: { ...base, server: null, serverApps: { state: "unreachable" } },
+      });
+      expect(lost.server?.health).toBe("Coolify unreachable");
+      expect(lost.server?.healthBad).toBe(true);
     });
   });
 

@@ -1,27 +1,48 @@
-import {
-  gamingPcAriaLabel,
-  gamingPcParts,
-  gamingPcUsersText,
-  systemStatParts,
-} from "@hbots/personal-client/computer/systemStats";
+import { systemStatParts } from "@hbots/personal-client/computer/systemStats";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
+import {
+  laptopSummary,
+  serverAppsParts,
+  serverAriaLabel,
+  serverStatParts,
+  type ServerLinePart,
+} from "../computer/serverStats";
 import { useSystemSummary } from "../computer/useSystemSummary";
 import { tokens } from "./tokens";
 
+function PartsText({ parts }: { readonly parts: ReadonlyArray<ServerLinePart> }) {
+  return (
+    <Text
+      style={styles.text}
+      numberOfLines={1}
+      maxFontSizeMultiplier={1.2}
+      ellipsizeMode="tail"
+      importantForAccessibility="no"
+    >
+      {parts.map((part, index) => (
+        <Text key={part.key} style={part.busy ? styles.busy : undefined}>
+          {index > 0 ? " · " : ""}
+          {part.text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
 /**
- * The PC at a glance under the Bots header: CPU, RAM and free disk, a busy
- * figure inked amber. Keeps its 16px row from the first paint so the list
- * never jumps, exactly as the web line does. Under it, while the gaming PC is
- * on, a "Gaming PC" line and an "In use" line; they take no room when it is off.
+ * The laptop line (16px from first paint so the list never jumps), then the
+ * app server's stats and Coolify health lines, which take no room when the
+ * server sends nothing. Busy figures are amber.
  */
 export function SystemStatsLine({ native }: { readonly native: NativePersonal }) {
   const summary = useSystemSummary(native);
-  const parts = summary === null ? [] : systemStatParts(summary);
-  const pc = summary?.gamingPc ?? null;
-  const pcParts = gamingPcParts(pc);
-  const users = gamingPcUsersText(pc);
+  const parts = summary === null ? [] : systemStatParts(laptopSummary(summary));
+  const server = summary?.server ?? null;
+  const apps = summary?.serverApps ?? null;
+  const serverParts = serverStatParts(server);
+  const appParts = serverAppsParts(apps);
   return (
     <>
       <View style={styles.line}>
@@ -41,38 +62,15 @@ export function SystemStatsLine({ native }: { readonly native: NativePersonal })
           </Text>
         ) : null}
       </View>
-      {pcParts.length > 0 ? (
+      {serverParts.length > 0 || appParts.length > 0 ? (
         <View
-          style={styles.pcBlock}
+          style={styles.serverBlock}
           accessible
           accessibilityRole="text"
-          accessibilityLabel={gamingPcAriaLabel(pc) ?? undefined}
+          accessibilityLabel={serverAriaLabel(server, apps) ?? undefined}
         >
-          <Text
-            style={styles.text}
-            numberOfLines={1}
-            maxFontSizeMultiplier={1.2}
-            ellipsizeMode="tail"
-            importantForAccessibility="no"
-          >
-            {pcParts.map((part, index) => (
-              <Text key={part.key} style={part.busy ? styles.busy : undefined}>
-                {index > 0 ? " · " : ""}
-                {part.text}
-              </Text>
-            ))}
-          </Text>
-          {users === null ? null : (
-            <Text
-              style={styles.text}
-              numberOfLines={1}
-              maxFontSizeMultiplier={1.2}
-              ellipsizeMode="tail"
-              importantForAccessibility="no"
-            >
-              {users}
-            </Text>
-          )}
+          {serverParts.length > 0 ? <PartsText parts={serverParts} /> : null}
+          {appParts.length > 0 ? <PartsText parts={appParts} /> : null}
         </View>
       ) : null}
     </>
@@ -87,7 +85,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     justifyContent: "center",
   },
-  pcBlock: { marginBottom: 4, paddingHorizontal: 20 },
+  serverBlock: { marginBottom: 4, paddingHorizontal: 20 },
   text: { color: tokens.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "500" },
   busy: { color: tokens.reviewText },
 });

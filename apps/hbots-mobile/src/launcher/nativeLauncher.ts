@@ -36,9 +36,10 @@ export interface WidgetMachine {
   readonly memTotalGB: number | null;
   readonly tempC?: number | null;
   readonly diskFreeGB?: number | null;
-  readonly gpuPct?: number | null;
-  /** Who is using the machine: bot names and game labels. */
-  readonly users?: ReadonlyArray<string>;
+  /** The app server only: Coolify app health in one line, at most 60 characters. */
+  readonly health?: string;
+  /** The app server only: the health line names a problem (amber on the widget). */
+  readonly healthBad?: boolean;
 }
 
 export interface WidgetEvent {
@@ -66,7 +67,8 @@ export interface WidgetFeed {
   readonly bots: ReadonlyArray<WidgetBot>;
   readonly usage?: WidgetUsage;
   readonly laptop?: WidgetMachine;
-  readonly gamingPc?: WidgetMachine;
+  /** The app server (Coolify box): CPU, RAM, free disk and app health. */
+  readonly server?: WidgetMachine;
   readonly today?: {
     readonly done: number;
     readonly failed: number;
