@@ -39,6 +39,20 @@ One item per line (pass each as `--notes $'…\n…'` to the finisher, or `--not
 3. Removed the This phone notifications row that showed the wrong state.
 4. What's new is now a numbered list.
 
+- **Widget picker previews.** `hbots_preview_machines.png` and `hbots_preview_tiles.png` showed the gaming PC; they are now crops of the real widgets on the laptop emulator. The widgets' health text puts a named problem first ("matchday down · Apps 7/8 up · DB ok") so the narrow Machines panel cuts the counts, not the name.
+
+## Verification
+
+Laptop emulator `FindX9Pro-QA` only (driven through the T3 device tools / agent-device), x86_64 QA build of this branch signed with the release key, paired over a quick tunnel to a throwaway server root running the staged release with `T3CODE_PERSONAL_SERVER_STATS_HOST=omarchy-old`. The gaming PC was not contacted. Evidence in `dev-team/qa/hbots-16748/ev/`:
+
+- Bots header with real omarchy-old figures ("Server · CPU 1% · RAM 5/15 GB · Disk 238 GB free"), and "Coolify unreachable" in amber while the throwaway had no token: PASS (`1-bots-server-lines.png`).
+- App health through the saved-token path: the throwaway pointed at a local fake Coolify with a dummy token (the real `COOLIFY_API_TOKEN` was not copied anywhere). "Apps 8/8 up · DB ok" (`7-bots-apps-up-fake-coolify.png`) and "Apps 7/8 up · matchday down · DB ok" (`10-bots-matchday-down-fake-coolify.png`): PASS. Live Coolify was read in-process from the bot env: 8/8 apps up, 1/1 DB, no log lines (`../live-coolify.txt`).
+- Widgets: Tile grid "Server" line (`8-tile-grid-widget.png`), Machines "Server" panel (`9-machines-widget.png`), problem first in amber (`12-widgets-matchday-first.png`): PASS.
+- Settings > Notifications lists Bots working (Silent), opens Android's channel page, shows Off after it is switched off there: PASS (`2-…`, `3-…`, `4-bots-working-off.png`).
+- This phone has no Notifications row; What's new is a numbered list of the four items published with `--note`: PASS (`5-this-phone-top.png`, `6-whats-new-list.png`).
+- No gaming PC access: the throwaway server's only child was `ssh … omarchy-old exec timeout 170 sh -s`; no `gamingpc`/`rig.sh` process (`ps-no-gamingpc.txt`). The built server bundle has no gaming PC code (one comment naming the old spec path); `dist/client` still has the parked web app's shared helpers.
+- Emulator shut down after the run (`emulator-shutdown.txt`).
+
 ## Migration
 
 None. Max migration is 160 on trunk and on the head. Params use `--migration-before 160 --migration-after 160`, so the runner skips the backup.
