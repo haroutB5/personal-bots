@@ -66,3 +66,12 @@ describe("the goal owner line itself", () => {
     expect(botName).not.toContain("numberOfLines");
   });
 });
+
+describe("the goal owner line's subtitle on a card", () => {
+  it("shows the goal's own why or current step, not the chat it started in", () => {
+    const card = component(cards, "Card");
+    expect(card).toContain("subtitle={projectCardSubtitle(card)}");
+    expect(owner).toContain("const label = subtitle === undefined ? line.chatTitle : subtitle;");
+    expect(owner).toMatch(/styles\.ownerChat[\s\S]*?\{label\}/);
+  });
+});
