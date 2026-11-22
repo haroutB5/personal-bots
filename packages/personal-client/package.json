@@ -281,6 +281,10 @@
       "types": "./src/conversation/connectionApprovalCards.ts",
       "import": "./src/conversation/connectionApprovalCards.ts"
     },
+    "./conversation/toolApprovalCards": {
+      "types": "./src/conversation/toolApprovalCards.ts",
+      "import": "./src/conversation/toolApprovalCards.ts"
+    },
     "./conversation/leadBotChangeCards": {
       "types": "./src/conversation/leadBotChangeCards.ts",
       "import": "./src/conversation/leadBotChangeCards.ts"

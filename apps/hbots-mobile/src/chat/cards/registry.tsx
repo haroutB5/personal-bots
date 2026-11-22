@@ -9,6 +9,7 @@ import { LoginRequestCard } from "./LoginRequestCard";
 import { MemoryChangeCard } from "./MemoryChangeCard";
 import { QuestionCard } from "./QuestionCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { ToolApprovalCard } from "./ToolApprovalCard";
 import { CallCardView } from "../../voice/CallCardView";
 import { CallTranscript } from "../../voice/CallTranscript";
 import type { CardContext } from "./types";
@@ -33,6 +34,7 @@ const CARD_REGISTRY: Renderers = {
   "connection-approval": (item, context) => (
     <ConnectionApprovalCard card={item.card} context={context} />
   ),
+  "tool-approval": (item, context) => <ToolApprovalCard card={item.card} context={context} />,
   "lead-bot-change": (item, context) => <LeadBotChangeCard card={item.card} context={context} />,
   "memory-change": (item, context) => <MemoryChangeCard item={item.card} context={context} />,
   call: (item, context) => (
@@ -67,6 +69,8 @@ export function renderChatCard(item: ChatCardItem, context: CardContext): ReactE
       return CARD_REGISTRY.login(item, context);
     case "connection-approval":
       return CARD_REGISTRY["connection-approval"](item, context);
+    case "tool-approval":
+      return CARD_REGISTRY["tool-approval"](item, context);
     case "lead-bot-change":
       return CARD_REGISTRY["lead-bot-change"](item, context);
     case "memory-change":

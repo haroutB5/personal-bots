@@ -51,6 +51,9 @@
 //     the session has an autoCompactWindow: status "compacting", a compact_boundary (trigger auto,
 //     pre_tokens = window - 33000, the CLI 2.1.304 threshold), status back, then carries on and answers
 //     with the CTXSETTINGS line. Without a window it answers "not compacted" plus that line.
+//   SAFETYQ  asks for a Bash approval the way the real CLI's safety check does under bypassPermissions
+//     (can_use_tool for Bash with a decision_reason, 1.67.50), waits, then answers "Approved: ..." or
+//     "Denied: <the message it got back>", so a test sees the approve, deny and timeout paths.
 //   anything else  "Got it." plus the reply quote it received, if any.
 // Usage-probe flags (files in <pidDir>, so a test flips them while the server runs; all off by default):
 //   usage-weekly  adds a seven_day window (31%, resets in 3 days) beside the five-hour one.
@@ -275,6 +278,7 @@ const finish = (text, isError) => {
 };
 
 let askRequest = null;
+let safetyRequest = null;
 let setServers = null;
 const mcpConfigArg = (() => {
   const i = args.indexOf("--mcp-config");
@@ -430,6 +434,22 @@ lines.on("line", async (line) => {
     log(`ask answered ${JSON.stringify(message.response).slice(0, 600)}`);
     assistant(
       `Thanks, I got your answer: ${JSON.stringify(message.response?.response?.updatedInput?.answers ?? message.response)}`,
+    );
+    finish("ok", false);
+    return;
+  }
+  if (
+    message.type === "control_response" &&
+    safetyRequest !== null &&
+    message.response?.request_id === safetyRequest
+  ) {
+    safetyRequest = null;
+    log(`safety answered ${JSON.stringify(message.response).slice(0, 800)}`);
+    const verdict = message.response?.response;
+    assistant(
+      verdict?.behavior === "allow"
+        ? "Approved: the command ran."
+        : `Denied: ${verdict?.message ?? JSON.stringify(message.response)}`,
     );
     finish("ok", false);
     return;
@@ -1078,6 +1098,26 @@ ${fence}`);
         finish("ok", false);
       }, 25_000);
     }, seconds * 1000);
+    return;
+  }
+  if (text.includes("SAFETYQ")) {
+    safetyRequest = `safety-${NodeCrypto.randomUUID()}`;
+    out({
+      type: "control_request",
+      request_id: safetyRequest,
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "Bash",
+        tool_use_id: `toolu_${NodeCrypto.randomUUID().replaceAll("-", "").slice(0, 20)}`,
+        input: {
+          command:
+            "AD=/opt/agent-device; for f in $(ls /tmp/qa-shots); do $AD snapshot -i > /tmp/qa-shots/$f.txt; done; pgrep -a 'qemu-system|netsimd'; echo exit=$?",
+          description: "Snapshot the QA screens",
+        },
+        decision_reason:
+          "Claude Code can't be sure it read this command the way the shell will, so it can't rule out a dangerous removal.",
+      },
+    });
     return;
   }
   if (text.includes("ASKQ")) {

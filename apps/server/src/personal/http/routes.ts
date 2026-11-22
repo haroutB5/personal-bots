@@ -17,6 +17,7 @@ import { personalClientCompatRouteLayer } from "../clientCompat/clientCompatRout
 import { personalAndroidApkRouteLayer } from "../androidUpdates/androidApkRoute.ts";
 import { personalPerformanceStreamRouteLayer } from "../performance/routes.ts";
 import { personalSystemSummaryRouteLayer } from "../performance/systemSummaryRoute.ts";
+import { makePersonalSystemRebootRouteLayer } from "../system/rebootRoute.ts";
 import {
   personalRoutineHookMethodRouteLayer,
   personalRoutineHookRouteLayer,
@@ -52,6 +53,9 @@ export const personalHttpRoutesLayer = Layer.mergeAll(
   // Signed-in only: CPU, RAM and disk for the Bots page header line; never
   // starts the sampler (see personal/performance/systemSummaryRoute.ts).
   personalSystemSummaryRouteLayer,
+  // Owner phone only (Bearer/DPoP + environment:maintain, never MCP): restart
+  // the laptop. No DB or file writes on this path (see personal/system/rebootRoute.ts).
+  makePersonalSystemRebootRouteLayer(),
   // Unauthenticated by necessity; the URL token is the whole credential.
   personalRoutineHookRouteLayer,
   personalRoutineHookMethodRouteLayer,

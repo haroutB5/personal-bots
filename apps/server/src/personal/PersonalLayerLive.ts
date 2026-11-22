@@ -5,6 +5,7 @@ import { forkParked } from "../serverActivation.ts";
 import { layer as PersonalPrewarmSessionLayer } from "./engine/PersonalPrewarmSession.ts";
 import { layer as PersonalProviderSessionsLayer } from "./engine/PersonalProviderSessions.ts";
 import { PersonalProvidersV2Live } from "./engine/PersonalProvidersV2Live.ts";
+import * as PersonalApprovalTimeout from "./approvals/PersonalApprovalTimeoutService.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
 import * as PersonalBotService from "./PersonalBotService.ts";
 import * as PersonalBotShellStream from "./PersonalBotShellStream.ts";
@@ -115,6 +116,9 @@ const PersonalReactorsLive = Layer.effectDiscard(
     yield* (yield* PersonalLeadBots.PersonalLeadBotService).start();
     // Archives finished delegated-task chats after 48 idle hours (startup + every 5 min).
     yield* (yield* PersonalTaskChatArchive.PersonalTaskChatArchive).start();
+    // Declines a bot's approval request nobody answered in 2 minutes, with
+    // feedback on how to retry (T3CODE_PERSONAL_APPROVAL_TIMEOUT=off disables).
+    yield* (yield* PersonalApprovalTimeout.PersonalApprovalTimeout).start();
     // Posts the release waiter's "landed / rolled back" notice into the chat
     // that asked for the release (startup + every 5s; notify-release.ps1).
     yield* (yield* PersonalReleaseNotices.PersonalReleaseNotices).start();
@@ -136,7 +140,13 @@ const PersonalReactorsLive = Layer.effectDiscard(
 // the runtime layers the whole group is merged above.
 const PersonalLayerLive = PersonalReactorsLive.pipe(
   // Both consume the push service, bot repository and provider port below.
-  Layer.provideMerge(Layer.mergeAll(PersonalProviderUpdates.layer, DeepSeekBalanceWatcher.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      PersonalProviderUpdates.layer,
+      DeepSeekBalanceWatcher.layer,
+      PersonalApprovalTimeout.layer,
+    ),
+  ),
   // Consumes the routine service and the bot service/repository below.
   Layer.provideMerge(PersonalClaudeCodeReview.layer),
   Layer.provideMerge(PersonalTurnRetry.layer),

@@ -21,6 +21,7 @@ import {
   type ConnectionApprovalOutcome,
 } from "@hbots/personal-client/conversation/connectionApprovalCards";
 import { placeChatCards } from "@hbots/personal-client/conversation/feedCards";
+import { deriveToolApprovalCards } from "@hbots/personal-client/conversation/toolApprovalCards";
 import { deriveLeadBotChangeCards } from "@hbots/personal-client/conversation/leadBotChangeCards";
 import { deriveMemoryCards } from "@hbots/personal-client/conversation/memoryCards";
 import {
@@ -112,6 +113,14 @@ export function useChatCards(input: {
             seen.threadId === threadId ? seen.requests : new Map(),
           ),
     [input.projection, projectQuestions, seen, threadId],
+  );
+
+  // Tool calls the bot's CLI is holding for Approve or Deny (Claude Code's
+  // safety checks still ask under full access). Pending only: a resolved
+  // request leaves the projection and its card goes with it.
+  const toolApprovals = useMemo(
+    () => deriveToolApprovalCards(input.projection),
+    [input.projection],
   );
 
   const memoryQuery = native.bots.usePersonalMemoryCards(environmentId, threadId);
@@ -322,6 +331,7 @@ export function useChatCards(input: {
         connectionApprovals: approvalCards,
         leadBotChanges,
         memoryChanges,
+        toolApprovals,
       }),
       callCards,
     );
@@ -335,6 +345,7 @@ export function useChatCards(input: {
     memoryChanges,
     questionCards,
     secretCards,
+    toolApprovals,
   ]);
 
   const botsById = useMemo(

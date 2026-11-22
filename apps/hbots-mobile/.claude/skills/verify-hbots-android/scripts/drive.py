@@ -905,9 +905,115 @@ class Run:
             return "FAIL", f"steps failed: {','.join(bad) or 'none'}; pid={pid or 'none'} FATAL={fatal} JS-errors={js}"
         return "PASS", f"Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid {pid} alive, FATAL 0, JS errors 0"
 
+    def approval_card(self, s):
+        return s.first(text=r"Assistant needs approval") and s.first(text="Run a command") and s.first(desc="Approve")
+
+    def ask_approval(self, tag):
+        """Send SAFETYQ: the fake CLI asks for a Bash approval like Claude Code's safety check does. Waits for the card."""
+        self.say("Assistant", "SAFETYQ")
+        s, ok = self.d.wait(self.approval_card, 30)
+        self.shot(f"f10-{tag}-card")
+        if not ok:
+            raise AssertionError(f"{tag}: no approval card (title, 'Run a command', Approve) appeared")
+        if not s.first(text=r".*\$AD snapshot -i.*"):
+            raise AssertionError(f"{tag}: the card does not show the command")
+        if not s.first(text=r"Claude Code can't be sure it read this command.*"):
+            raise AssertionError(f"{tag}: the card does not show the CLI's reason")
+        return s
+
+    def f10(self):
+        """Tool approvals (1.67.50): the card, the Chats row, Approve, Deny and the server's 2-minute auto-decline."""
+        self.open_bot("Assistant")
+        self.ask_approval("approve")
+        # The Chats row says Needs approval, and tapping it opens the chat at the card.
+        self.leave_chat()
+        self.to_chats()
+        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Assistant, .*Needs approval.*") if n.clickable), None), 20)
+        self.shot("f10-chats-needs-approval")
+        if not row:
+            return "FAIL", "the Assistant row never read Needs approval"
+        self.d.tap(row)
+        s, ok = self.d.wait(self.approval_card, 15)
+        self.shot("f10-opened-from-row")
+        if not ok:
+            return "FAIL", "tapping the Needs approval row did not open the chat at the card"
+        s.first(desc="Approve") and self.d.tap(s.first(desc="Approve"))
+        s, ok = self.d.wait(lambda s: s.first(text=r"Approved: the command ran\.") and not s.first(desc="Approve"), 20)
+        self.shot("f10-approved")
+        if not ok:
+            return "FAIL", "after Approve the bot did not say 'Approved: the command ran.' or the card stayed"
+        self.learn(self.d.dump())
+        s = self.ask_approval("deny")
+        self.d.tap(s.first(desc="Deny"))
+        s, ok = self.d.wait(lambda s: s.first(text=r"Denied: User declined tool execution\.") and not s.first(desc="Approve"), 20)
+        self.shot("f10-denied")
+        if not ok:
+            return "FAIL", "after Deny the bot did not get 'User declined tool execution.' or the card stayed"
+        self.learn(self.d.dump())
+        self.ask_approval("timeout")
+        t = time.time()
+        s, ok = self.d.wait(lambda s: s.first(text=r"Denied: No one answered this approval within 2 minutes\..*") and not s.first(desc="Approve"), 200, every=5)
+        waited = round(time.time() - t)
+        self.shot("f10-timed-out")
+        if not ok:
+            return "FAIL", f"no auto-decline after {waited}s"
+        self.leave_chat()
+        self.to_chats()
+        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Assistant, .*") if n.clickable), None), 10)
+        self.shot("f10-chats-after")
+        if row and "Needs approval" in row.desc:
+            return "FAIL", "the Chats row still reads Needs approval after the request resolved"
+        return "PASS", f"card with command and reason; Chats row Needs approval opened the chat at the card; Approve ran it; Deny declined it; unanswered card auto-declined after ~{waited}s with the retry advice; row cleared"
+
+    def restart_row(self):
+        for _ in range(8):
+            s = self.d.dump()
+            row = next((n for n in s.find(rid="settings-restart-laptop") if s.drawn(n)), None) or next((n for n in s.find(desc=r"Restart laptop.*") if n.clickable), None)
+            if row:
+                return s, row
+            self.d.swipe(540, 1700, 540, 700, 350)
+            time.sleep(0.6)
+        return s, None
+
+    def f11(self):
+        """Restart laptop (1.67.50): Settings row, 2 s hold, confirm sheet, restarting state. Server runs with HBOTS_REBOOT_DRY_RUN=1."""
+        self.to_chats()
+        s = self.d.dump()
+        gear = next((n for n in s.find(desc="Settings") if n.clickable), None)
+        if not gear:
+            return "FAIL", "no Settings button on Chats"
+        self.d.tap(gear)
+        time.sleep(1.2)
+        s, row = self.restart_row()
+        self.shot("f11-settings-row")
+        if not row:
+            return "FAIL", "Settings has no Restart laptop row for the owner phone"
+        self.d.tap(row)
+        s, ok = self.d.wait(lambda s: s.first(text=r"Hold the row for 2 seconds to restart\."), 5)
+        self.shot("f11-short-tap-hint")
+        if not ok:
+            return "FAIL", "a short tap did not show the hold hint"
+        x, y = row.center
+        self.d.swipe(x, y, x, y, 2600)
+        s, ok = self.d.wait(lambda s: s.first(text=r"Restart the laptop\?") and s.first(rid="restart-laptop-confirm-button"), 8)
+        self.shot("f11-confirm-sheet")
+        if not ok:
+            return "FAIL", "holding the row 2.6 s did not open the confirm sheet"
+        self.d.tap(s.first(rid="restart-laptop-confirm-button"))
+        s, ok = self.d.wait(lambda s: s.first(text=r"Restarting\. The app reconnects when the laptop is back \(about 1-2 min\)\."), 15)
+        self.shot("f11-restarting")
+        if not ok:
+            err = s.first(rid="restart-laptop-error")
+            return "FAIL", f"no restarting text after Restart; error: {err.text if err else 'none'}"
+        dry = bool(s.first(text=r"Dry run: .*"))
+        logged = any("would reboot" in line for line in open(self.srvlog, errors='replace').read().splitlines())
+        if not logged:
+            return "FAIL", "the throwaway server log has no 'would reboot' line"
+        return "PASS", f"row shown to the owner; short tap gives the hold hint; 2.6 s hold opened the confirm sheet; Restart showed the restarting text (dry-run note {'shown' if dry else 'not shown'}); server logged 'would reboot'"
+
     def flows(self):
         order = [(1, "chat-send-reply", self.f1), (7, "swipe-quote", self.f7), (9, "long-press-reply", self.f9), (3, "camera-entry-once", self.f3), (2, "pick-three-photos", self.f2),
-                 ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8)]
+                 ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8), (10, "tool-approval-card", self.f10), (11, "restart-laptop-dry-run", self.f11)]
         only = set(self.a.only.split(",")) if self.a.only else None
         seed_secs = 0
         self.order = order

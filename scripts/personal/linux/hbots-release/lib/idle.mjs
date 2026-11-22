@@ -25,7 +25,25 @@ export const isHelper = (cmd) =>
   /opencode\.exe\s+serve\s+--stdio/.test(cmd) ||
   /codex-code-mode-host/.test(cmd) ||
   /perf-linux-helper/.test(cmd) ||
-  /sqlite-snapshot\.cjs/.test(cmd);
+  /sqlite-snapshot\.cjs/.test(cmd) ||
+  isDeviceOrStatsHelper(cmd);
+
+// Long-lived helpers that sit idle between uses and hold nothing a restart can break.
+// Anchored on the exact command lines the server and QA tools start. qemu-system and
+// netsimd (a running emulator) are deliberately not here: they still hold the gate.
+export const DEVICE_AND_STATS_HELPERS = [
+  // The Bots page's server-stats stream (apps/server/src/personal/performance/serverStats.ts).
+  /^(?:\S*\/)?ssh -T -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o ControlMaster=no -o ControlPath=none [A-Za-z0-9._@-]+ exec timeout 170 sh -s$/,
+  // The adb server adb forks for itself.
+  /^(?:\S*\/)?adb -L tcp:\d+ fork-server server(?: --reply-fd \d+)?$/,
+  // The agent-device daemon from the server's device toolchain.
+  /^(?:\S*\/)?node \S*\/tools\/agent-device\/[^/\s]+\/node_modules\/agent-device\/dist\/src\/(?:internal\/)?daemon\.js(?: .*)?$/,
+  // expo-device-hub from the same toolchain.
+  /^(?:\S*\/)?node \S*\/tools\/expo-device-hub\/[^/\s]+\/node_modules\/expo-device-hub\/dist\/server\/cli\.mjs(?: .*)?$/,
+];
+
+export const isDeviceOrStatsHelper = (cmd) =>
+  DEVICE_AND_STATS_HELPERS.some((pattern) => pattern.test(cmd.trim()));
 
 export const isSessionRoot = (cmd) =>
   /\sacp$/.test(cmd) ||

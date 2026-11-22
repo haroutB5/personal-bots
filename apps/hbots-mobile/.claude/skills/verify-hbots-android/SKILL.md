@@ -59,7 +59,7 @@ It signs with a throwaway key, builds x86_64 only, and prints the sha, commit an
 
 Each run keeps its own state file, logs and tunnel unit inside its evidence folder, so a second run (even one that fails at doctor) cannot stop what another run started. Two runs at once still cannot share the fixed ports, and the second one stops at doctor.
 
-Fake bot triggers: `LONGMSG` (1009 character report), `CHOICES` (a choices question at once), `SLOW<n>` (a reply after n seconds), `LATEQ<n>` (a choices question n seconds later, to land after the user left). Any other text gets `Got it.` plus the quote it received.
+Fake bot triggers: `LONGMSG` (1009 character report), `CHOICES` (a choices question at once), `SLOW<n>` (a reply after n seconds), `LATEQ<n>` (a choices question n seconds later, to land after the user left). `SAFETYQ` (a Bash approval request like Claude Code's safety check; flow 10). Any other text gets `Got it.` plus the quote it received.
 
 ## Drive
 

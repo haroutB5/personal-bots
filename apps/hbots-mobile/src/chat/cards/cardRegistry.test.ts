@@ -13,6 +13,7 @@ describe("isChatCard", () => {
       "secret",
       "login",
       "connection-approval",
+      "tool-approval",
       "lead-bot-change",
       "memory-change",
       "call",

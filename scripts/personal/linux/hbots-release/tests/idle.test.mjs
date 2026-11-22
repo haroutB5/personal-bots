@@ -6,6 +6,7 @@ import {
   dueWaitingAlerts,
   hasSessionAncestor,
   heavyLockHeld,
+  isHelper,
   newestEventLog,
   sendWaitingAlerts,
   waitingSummary,
@@ -293,3 +294,33 @@ NodeTest.test("a gate label names a blocker only while its pid lives", async () 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+NodeTest.test(
+  "device tools and the Bots-page stats stream are helpers; a running emulator is not",
+  () => {
+    const helpers = [
+      "ssh -T -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o ControlMaster=no -o ControlPath=none omarchy-old exec timeout 170 sh -s",
+      "/usr/bin/ssh -T -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o ControlMaster=no -o ControlPath=none omarchy-old exec timeout 170 sh -s",
+      "adb -L tcp:5037 fork-server server --reply-fd 4",
+      "/home/harout/Android/Sdk/platform-tools/adb -L tcp:5037 fork-server server",
+      "/home/harout/.local/share/mise/installs/node/24.22.3/bin/node /home/harout/.personal-bots/dev/tools/agent-device/0.21.36/node_modules/agent-device/dist/src/daemon.js",
+      "/home/harout/.local/share/mise/installs/node/24.22.3/bin/node /home/harout/.personal-bots/dev/tools/agent-device/0.21.36/node_modules/agent-device/dist/src/internal/daemon.js --state-dir /tmp/x",
+      "node /home/harout/.personal-bots/dev/tools/expo-device-hub/0.22.1/node_modules/expo-device-hub/dist/server/cli.mjs --port 0",
+    ];
+    for (const cmd of helpers) NodeAssert.equal(isHelper(cmd), true, cmd);
+    const blockers = [
+      // A running emulator still holds the gate.
+      "/home/harout/Android/Sdk/emulator/qemu/linux-x86_64/qemu-system-x86_64 -netdelay none -avd hbots",
+      "/home/harout/Android/Sdk/emulator/netsimd -s {} --logtostderr",
+      // Other ssh sessions, adb commands and node scripts are real work.
+      "ssh -T -o BatchMode=yes omarchy-old exec timeout 170 sh -s",
+      "ssh omarchy-old -- rm -rf /tmp/x; exec timeout 170 sh -s",
+      "adb -s emulator-5554 shell input tap 1 1",
+      "adb -L tcp:5037 fork-server server; rm -rf /tmp/x",
+      "node /tmp/evil/tools/agent-device/1/node_modules/agent-device/dist/src/daemon.jsx",
+      "node /home/harout/x.mjs /tools/expo-device-hub/0.22.1/node_modules/expo-device-hub/dist/server/cli.mjs",
+      "bash -c node /home/harout/.personal-bots/dev/tools/agent-device/0.21.36/node_modules/agent-device/dist/src/daemon.js",
+    ];
+    for (const cmd of blockers) NodeAssert.equal(isHelper(cmd), false, cmd);
+  },
+);

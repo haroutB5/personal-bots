@@ -6,6 +6,7 @@ export const CARD_KINDS = [
   "secret",
   "login",
   "connection-approval",
+  "tool-approval",
   "lead-bot-change",
   "memory-change",
   "call",

@@ -7,6 +7,7 @@ import {
   placeMemoryCards,
   placeQuestionCards,
   placeSecretRequestCards,
+  placeToolApprovalCards,
   type ConversationItem,
 } from "./conversationModel.ts";
 import type { ConnectionApprovalCardItem } from "./connectionApprovalCards.ts";
@@ -14,6 +15,7 @@ import type { LeadBotChangeCardItem } from "./leadBotChangeCards.ts";
 import type { MemoryCardItem } from "./memoryCards.ts";
 import type { QuestionCardItem } from "./questionCards.ts";
 import type { SecretRequestCardItem } from "./secretRequestCards.ts";
+import type { ToolApprovalCardItem } from "./toolApprovalCards.ts";
 
 /**
  * Every card source for one chat. A source with nothing to show is an empty
@@ -26,6 +28,8 @@ export interface ChatCardSources {
   readonly connectionApprovals: ReadonlyArray<ConnectionApprovalCardItem>;
   readonly leadBotChanges: ReadonlyArray<LeadBotChangeCardItem>;
   readonly memoryChanges: ReadonlyArray<MemoryCardItem>;
+  /** Tool calls held for Approve or Deny; absent on screens that do not show them. */
+  readonly toolApprovals?: ReadonlyArray<ToolApprovalCardItem>;
 }
 
 export const NO_CHAT_CARDS: ChatCardSources = {
@@ -35,6 +39,7 @@ export const NO_CHAT_CARDS: ChatCardSources = {
   connectionApprovals: [],
   leadBotChanges: [],
   memoryChanges: [],
+  toolApprovals: [],
 };
 
 /**
@@ -46,17 +51,20 @@ export function placeChatCards(
   items: ReadonlyArray<ConversationItem>,
   sources: ChatCardSources,
 ): ConversationItem[] {
-  return placeMemoryCards(
-    placeLeadBotChangeCards(
-      placeConnectionApprovalCards(
-        placeLoginRequestCards(
-          placeSecretRequestCards(placeQuestionCards(items, sources.questions), sources.secrets),
-          sources.logins,
+  return placeToolApprovalCards(
+    placeMemoryCards(
+      placeLeadBotChangeCards(
+        placeConnectionApprovalCards(
+          placeLoginRequestCards(
+            placeSecretRequestCards(placeQuestionCards(items, sources.questions), sources.secrets),
+            sources.logins,
+          ),
+          sources.connectionApprovals,
         ),
-        sources.connectionApprovals,
+        sources.leadBotChanges,
       ),
-      sources.leadBotChanges,
+      sources.memoryChanges,
     ),
-    sources.memoryChanges,
+    sources.toolApprovals ?? [],
   );
 }

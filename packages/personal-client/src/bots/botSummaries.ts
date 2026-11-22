@@ -264,6 +264,17 @@ export function threadNeedsAttention(shell: EnvironmentThreadShell): boolean {
   return shell.hasPendingApprovals || shell.hasPendingUserInput;
 }
 
+/**
+ * The chat a "Needs approval" row should open: the newest linked chat holding
+ * a pending approval, which is often a task chat rather than the newest chat.
+ * Null when the row shows another status, so the tap keeps its usual target.
+ */
+export function approvalThreadIdOf(summary: BotSummary): string | null {
+  if (!summary.hasPendingApprovals || summary.needsBrowserHelp || summary.needsSecret) return null;
+  const thread = summary.attentionThreads.find((shell) => shell.hasPendingApprovals);
+  return thread === undefined ? null : String(thread.id);
+}
+
 /** `waiting`: no live turn, but a task of the bot is unfinished. Drawn with a hollow ring, never the live dot. */
 export type BotStatusTone = "review" | "normal" | "waiting";
 

@@ -47,6 +47,7 @@ const env = () => ({
   PERSONAL_SEED_MODEL: "claude-sonnet-5-5",
   T3CODE_PERSONAL_SCHEDULERS: "off",
   T3CODE_PERSONAL_BROWSER_HEADLESS: "1",
+  HBOTS_REBOOT_DRY_RUN: "1",
   T3CODE_AUTO_CONNECT: "false",
   T3CODE_ENVIRONMENT_LABEL: "Throwaway test",
   FAKE_CLAUDE_PID_DIR: `${ROOT}/fake-pids`,

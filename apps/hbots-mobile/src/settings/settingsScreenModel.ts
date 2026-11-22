@@ -215,6 +215,12 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
         hint: "The computer hosting your bots",
         keywords: "address host",
       },
+      {
+        id: "about.restartLaptop",
+        title: "Restart laptop",
+        hint: "Hold for 2 seconds to restart the computer hosting your bots",
+        keywords: "reboot restart computer laptop power stuck",
+      },
     ],
   },
 ];

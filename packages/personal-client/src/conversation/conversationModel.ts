@@ -32,6 +32,7 @@ import type { SecretRequestCardItem } from "./secretRequestCards.ts";
 import type { ConnectionApprovalCardItem } from "./connectionApprovalCards.ts";
 import type { LeadBotChangeCardItem } from "./leadBotChangeCards.ts";
 import type { MemoryCardItem } from "./memoryCards.ts";
+import { toolApprovalCardItemId, type ToolApprovalCardItem } from "./toolApprovalCards.ts";
 
 /**
  * Header state for a bot conversation, derived only from session/turn/request
@@ -618,6 +619,8 @@ export type ConversationItem =
       readonly id: string;
       readonly card: ConnectionApprovalCardItem;
     }
+  /** A tool call the agent's CLI is holding for the owner's Approve or Deny. */
+  | { readonly kind: "tool-approval"; readonly id: string; readonly card: ToolApprovalCardItem }
   /** A team lead asking to remove or rewrite a bot, in the lead's chat. */
   | { readonly kind: "lead-bot-change"; readonly id: string; readonly card: LeadBotChangeCardItem }
   /** A bot's save or forget of memory other bots see, waiting for the owner's OK. */
@@ -875,6 +878,7 @@ function itemTimeMs(item: ConversationItem): number {
     case "delegation":
       return taskCreatedMs(item.task);
     case "question":
+    case "tool-approval":
       return Date.parse(item.card.createdAt);
     case "login":
       return Date.parse(item.request.createdAt);
@@ -1061,6 +1065,24 @@ export function placeConnectionApprovalCards(
       } as const,
       atMs: card.createdAtMs,
       pending: card.kind === "pending",
+    })),
+  );
+}
+
+/**
+ * Tool approvals are always open (a resolved one is no card), so they sit at
+ * the end of the chat where it opens, below the work that asked for them.
+ */
+export function placeToolApprovalCards(
+  items: ReadonlyArray<ConversationItem>,
+  cards: ReadonlyArray<ToolApprovalCardItem>,
+): ConversationItem[] {
+  return placeTimedCards(
+    items,
+    cards.map((card) => ({
+      item: { kind: "tool-approval", id: toolApprovalCardItemId(card.requestId), card } as const,
+      atMs: Date.parse(card.createdAt),
+      pending: true,
     })),
   );
 }

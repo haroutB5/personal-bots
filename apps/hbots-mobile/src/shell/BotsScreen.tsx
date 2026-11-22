@@ -1,4 +1,5 @@
 import {
+  approvalThreadIdOf,
   botStatus,
   buildBotSummaries,
   filterBotSummaries,
@@ -938,10 +939,12 @@ export function BotsScreen({
     } else setNewChatBot(target);
   };
 
+  // A row that reads "Needs approval" opens the chat holding the approval
+  // (often a task chat, not the newest one), where its card sits at the end.
   const openSummary = (summary: BotSummary) =>
     openBot(
       { botId: summary.bot.botId, botName: summary.bot.name },
-      summary.newestThread?.id ?? null,
+      approvalThreadIdOf(summary) ?? summary.newestThread?.id ?? null,
     );
 
   const newestThreadOf = (summary: BotSummary) => {

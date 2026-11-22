@@ -50,6 +50,16 @@ import {
 } from "@hbots/personal-client/update/serverUpdate";
 
 import { parsePhoneSystemSummary, type PhoneSystemSummary } from "../computer/serverStats";
+import {
+  canRestartLaptop,
+  parseRestartStatus,
+  RESTART_LAPTOP_PATH,
+  RESTART_REQUEST_TIMEOUT_MS,
+  restartOutcomeFromFailure,
+  restartOutcomeFromResponse,
+  type RestartOutcome,
+  type RestartStatus,
+} from "../settings/restartLaptopModel";
 import { authorizedFetch } from "../authorizedRequest";
 import { wipeOutgoingThread } from "../chat/composerSendModel";
 import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
@@ -163,6 +173,12 @@ export interface NativePersonal {
   readonly readSystemSummary: () => Promise<PhoneSystemSummary | null>;
   /** Where a server update is; null when the server did not answer. */
   readonly readServerUpdate: () => Promise<ServerUpdate | null>;
+  /** The phone link carries the owner's `environment:maintain`, so Settings shows Restart laptop. */
+  readonly canRestartLaptop: boolean;
+  /** Asks the server to restart the laptop (see settings/restartLaptopModel.ts). */
+  readonly restartLaptop: () => Promise<RestartOutcome>;
+  /** Whether logind allows a restart; also lets the server remember this credential. Null when unanswered. */
+  readonly readRestartStatus: () => Promise<RestartStatus | null>;
   /** Freshly ticketed browser and desktop live-view sockets. */
   readonly liveViews: () => Promise<LiveViewURLs>;
   readonly useConnectionState: () => SupervisorConnectionState;
@@ -573,6 +589,41 @@ export function createNativePersonal(
         );
         if (!response.ok) return null;
         return parseServerUpdate(await response.json());
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    canRestartLaptop: canRestartLaptop(stored.scope),
+    restartLaptop: async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), RESTART_REQUEST_TIMEOUT_MS);
+      try {
+        const response = await authorizedFetch(
+          stored,
+          new URL(RESTART_LAPTOP_PATH, stored.httpBaseUrl),
+          { method: "POST", cache: "no-store", signal: controller.signal },
+        );
+        const body: unknown = await response.json().catch(() => null);
+        return restartOutcomeFromResponse(response.status, body);
+      } catch (cause) {
+        return restartOutcomeFromFailure(cause);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    readRestartStatus: async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), RESTART_REQUEST_TIMEOUT_MS);
+      try {
+        const response = await authorizedFetch(
+          stored,
+          new URL(RESTART_LAPTOP_PATH, stored.httpBaseUrl),
+          { method: "GET", cache: "no-store", signal: controller.signal },
+        );
+        const body: unknown = await response.json().catch(() => null);
+        return parseRestartStatus(response.status, body);
       } catch {
         return null;
       } finally {

@@ -7,6 +7,7 @@ import type { NativePersonal } from "../personal/nativePersonalClient";
 import { tokens } from "../shell/tokens";
 import { NameSheet } from "./NameSheet";
 import { ProvidersSettingsCard } from "./ProvidersSettingsCard";
+import { RestartLaptopRow } from "./RestartLaptopRow";
 import { VoiceSettingsSection } from "./VoiceSettingsSection";
 import { Notice, Row, Section, SettingsPage, ToggleRow } from "./SettingsUi";
 import {
@@ -89,6 +90,8 @@ export function SettingsScreen(props: SettingsScreenProps) {
   const hiddenRowIds = new Set<string>([
     ...(removedCount > 0 ? [] : ["bots.removed"]),
     ...(archiveOn ? [] : ["chat.archiveAfter"]),
+    // Owner only: the phone link's environment:maintain; the server checks it again.
+    ...(props.native.canRestartLaptop ? [] : ["about.restartLaptop"]),
   ]);
   const sections = visibleSettingsSections(query, hiddenRowIds);
 
@@ -276,6 +279,8 @@ export function SettingsScreen(props: SettingsScreenProps) {
             value={props.native.httpBaseUrl.replace(/^https?:\/\//, "")}
           />
         );
+      case "about.restartLaptop":
+        return <RestartLaptopRow key={id} native={props.native} />;
       default:
         return null;
     }
