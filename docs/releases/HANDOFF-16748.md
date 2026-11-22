@@ -1,4 +1,4 @@
-# 1.67.48: Coolify server stats replace the gaming PC (Android + server)
+# 1.67.48: Coolify server stats replace the gaming PC, plus three settings fixes (Android + server)
 
 Based on 1.67.47 (`769e60c54d58`, trunk `5bf4c9c438`). Branch `feat/hbots-server-stats` is fast-forward on top of trunk; schema version unchanged at 160. This release ships Android APK 1.67.48 and server 1.67.48.
 
@@ -15,6 +15,9 @@ Harout's rule (22 Nov): no bot touches the gaming PC unless he asks. The Bots he
 - **Phone (`apps/hbots-mobile/src/computer/serverStats.ts`, `shell/SystemStatsLine.tsx`).** Under the laptop line: `Server · CPU 12% · RAM 5/16 GB · Disk 238 GB free`, then `Apps 8/8 up · DB ok` (or `Apps 7/8 up · matchday down · DB ok`, or `Coolify unreachable`), problems in amber. GPU and "In use" are gone.
 - **Widgets.** The feed's `gamingPc` becomes `server` with a `health` line. Tile grid: a "Server" line (amber on a problem). Machines widget: a "Server" panel with CPU and RAM gauges and the health line. An old stored `gamingPc` is dropped on read.
 - **Removed.** All gaming PC code paths in the server and the phone; `T3CODE_PERSONAL_GAMINGPC_HOST` is no longer read. (The parked web app's shared `gamingPc` helpers in `packages/personal-client` are untouched.)
+- **Bots working setting (`src/settings/notificationsScreenModel.ts`, `NotificationsScreen.tsx`).** Settings > Notifications > "Sound and alerts on this phone" now lists **Bots working** (after Sign-in and security). It is an ordinary ongoing notification on the `working` channel, not a foreground service, so Android lets the owner turn it off: the row opens Android's channel settings like the other rows. The notice is always posted silent, so the row shows only **Silent** or **Off**, never a sound level it cannot make.
+- **This phone: Notifications row removed (`src/settings/ThisPhoneScreen.tsx`).** It said "Off" while Settings > Notifications said "On for this phone" and did nothing on tap. Per Harout it is removed (notifications live in Settings > Notifications), with its model `thisPhoneModel.ts` and test. "Name" is now the last row when the phone cannot manage devices.
+- **What's new is a numbered list (`src/updateNotes.ts` `updateNoteItems`, `ThisPhoneScreen.tsx`).** Notes are one item per line in `latest.json` (`notes` stays a string so older phones still read it). Typed markers (`1.`, `-`, `•`) are dropped; an older one-paragraph note is split into its sentences. `publish-android-update.mjs` takes repeatable `--note "<item>"` (or `--notes` with one item per line) and refuses more than the 8 items the phone shows.
 - **Version.** `scripts/personal/app-version.txt` and `apps/hbots-mobile/package.json` move to `1.67.48`.
 
 ## Server env change (ships with this release)
@@ -29,7 +32,12 @@ In `~/.config/hbots/env` (the `hbots.service` EnvironmentFile):
 
 ## Release notes for the phone
 
-- The Bots page and the Machines widget now show the app server (CPU, RAM, free disk) and whether its apps are up, instead of the gaming PC.
+One item per line (pass each as `--notes $'…\n…'` to the finisher, or `--note` per item to `publish-android-update.mjs`):
+
+1. Server stats from the Coolify server replace the gaming PC on the Bots page and widgets.
+2. The bots-working notification now has a setting in Notifications.
+3. Removed the This phone notifications row that showed the wrong state.
+4. What's new is now a numbered list.
 
 ## Migration
 
