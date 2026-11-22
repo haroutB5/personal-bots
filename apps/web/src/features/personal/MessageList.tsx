@@ -1681,6 +1681,9 @@ export function MessageList({
                         onDeny={(approvalId) => onDecideConnectionApproval(approvalId, "denied")}
                       />,
                     );
+                  case "tool-approval":
+                    // The web shows pending tool approvals in its own approval panel.
+                    return null;
                   case "lead-bot-change":
                     return lockCard(
                       item.id,
