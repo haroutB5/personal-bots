@@ -41,8 +41,9 @@ unset store_password key_password
 source "$app_dir/scripts/firebase-env.sh"
 
 cd "$app_dir"
-EXPO_NO_GIT_STATUS=1 npx expo prebuild --clean --platform android
-(cd android && ./gradlew assembleRelease --no-daemon --console=plain)
+source "$app_dir/scripts/android-prepare.sh"
+hbots_android_prepare
+(cd android && ./gradlew assembleRelease "${hbots_gradle_args[@]}" -PreactNativeArchitectures=arm64-v8a)
 
 [[ -f $apk ]] || fail "no APK at $apk"
 

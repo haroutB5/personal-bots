@@ -387,6 +387,9 @@ class Run:
         d.width, d.height = int(size.group(1)), int(size.group(2))
         d.run("uninstall", PKG)
         d.run("install", "-r", a.apk, check=True, timeout=180)
+        # Harout's guard 3 (22 Nov 2026): app data cleared before each QA run, also when the emulator came from a
+        # snapshot. Then the permission preset, granted after the clear.
+        d.sh(f"pm clear {PKG}")
         d.sh(f"pm grant {PKG} android.permission.POST_NOTIFICATIONS")
         d.sh("cmd uimode night yes")
         d.sh("rm -f /sdcard/Pictures/verify-*.png")

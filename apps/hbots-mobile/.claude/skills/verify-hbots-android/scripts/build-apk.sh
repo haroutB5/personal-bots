@@ -19,8 +19,9 @@ unset pass
 cd "$root"
 [ -d node_modules ] || pnpm install --frozen-lockfile --filter '@hbots/mobile...'
 cd "$app"
-EXPO_NO_GIT_STATUS=1 npx expo prebuild --clean --platform android
-(cd android && ./gradlew assembleRelease --no-daemon --console=plain --max-workers=2 -x lintVitalRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease -PreactNativeArchitectures=x86_64)
+source "$app/scripts/android-prepare.sh"
+hbots_android_prepare
+(cd android && ./gradlew assembleRelease "${hbots_gradle_args[@]}" -x lintVitalRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease -PreactNativeArchitectures=x86_64)
 apk=$app/android/app/build/outputs/apk/release/app-release.apk
 [ -f "$apk" ] || { echo "no APK at $apk" >&2; exit 1; }
 abis=$(unzip -Z1 "$apk" | sed -n 's|^lib/\([^/]*\)/.*|\1|p' | sort -u | paste -sd,)

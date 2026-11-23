@@ -6,6 +6,12 @@
 #         The rig session is owned by VERIFY_OWNER_PID (verify.sh's own pid, alive until its cleanup ends). Without it
 #         there is no owner and the 25 minute lease plus device.sh down end the session.
 #   down  stops exactly what up started, by recorded pid or rig.sh down. Never by name.
+#   snapshot  (laptop only, Faster releases step 7) boots the AVD once, writable, applies the QA presets (dark, 360x785
+#         at DPR 3, animations off, font 1.0, airplane off) and saves quick-boot snapshot hbots-qa-base. `up` then loads it
+#         with -no-snapshot-save -read-only (Harout's guard 3: the snapshot stays pristine) instead of a cold boot. A stamp
+#         next to it holds SNAP_VERSION and the system image build; a mismatch means a cold boot until snapshot runs again.
+#         HBOTS_VERIFY_SNAPSHOT=off forces the cold boot. App permissions are not in it: drive.py reinstalls the app
+#         each run, runs pm clear, then grants them.
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 touch "$STATE"
@@ -24,9 +30,61 @@ rig_try() {
   done
   printf '%s\n' "$out"; return $rc
 }
+SNAP=hbots-qa-base
+SNAP_VERSION=1   # bump when the presets below change, so old snapshots are not loaded
+SNAP_STAMP="$ANDROID_AVD_HOME/$VERIFY_AVD.avd/$SNAP.hbots-stamp"
+IMG_DIR="$ANDROID_HOME/system-images/android-36/google_apis/x86_64"
+image_build() { printf '%s/r%s' "$(sed -n 's/^ro.system.build.fingerprint=//p' "$IMG_DIR/build.prop" 2>/dev/null | head -1)" "$(sed -n 's/^Pkg.Revision=//p' "$IMG_DIR/source.properties" 2>/dev/null | head -1)"; }
+snap_want() { printf 'version=%s image=%s\n' "$SNAP_VERSION" "$(image_build)"; }
+snap_ok() {
+  [[ ${HBOTS_VERIFY_SNAPSHOT:-on} != off && -f "$SNAP_STAMP" && -d "$ANDROID_AVD_HOME/$VERIFY_AVD.avd/snapshots/$SNAP" ]] &&
+    [[ "$(cat "$SNAP_STAMP")" == "$(snap_want)" ]]
+}
+wait_boot() {
+  local t0=$SECONDS
+  timeout 120 $ADBP wait-for-device || { echo "device: adb did not see the emulator in 120 s (see emulator.log)"; exit 2; }
+  until [[ "$($ADBP shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; do
+    [[ $((SECONDS - t0)) -lt 240 ]] || { echo "device: no boot in 240 s (see emulator.log)"; exit 2; }
+    sleep 1
+  done
+}
+# The QA presets. Applied before the snapshot is saved and again after every boot (cheap and idempotent).
+presets() {
+  $ADBP shell wm size 1080x2355 >/dev/null; $ADBP shell wm density 480 >/dev/null
+  $ADBP shell cmd uimode night yes >/dev/null 2>&1
+  for k in window_animation_scale transition_animation_scale animator_duration_scale; do $ADBP shell settings put global $k 0; done
+  $ADBP shell settings put system font_scale 1.0
+  $ADBP shell input keyevent KEYCODE_WAKEUP; $ADBP shell wm dismiss-keyguard >/dev/null 2>&1
+}
 cmd=${1:-}; shift || true
 case "$cmd" in
 adb) exec $ADBP "$@" ;;
+snapshot)
+  [[ -z "$(get DEVICE_MODE)" ]] || { echo "device: an emulator from this state file is up; run device.sh down first"; exit 2; }
+  for p in "$VERIFY_ADB_PORT" "$VERIFY_EMU_PORT" $((VERIFY_EMU_PORT + 1)); do
+    ss -ltn 2>/dev/null | grep -q "[:.]$p " && { echo "device: port $p is taken"; exit 2; }
+  done
+  bash "$(dirname "${BASH_SOURCE[0]}")/avd.sh" ensure || exit 2
+  export ANDROID_ADB_SERVER_PORT=$VERIFY_ADB_PORT
+  ADBP="adb -P $VERIFY_ADB_PORT -s emulator-$VERIFY_EMU_PORT"
+  rm -f "$SNAP_STAMP"
+  t0=$SECONDS
+  setsid nohup emulator -avd "$VERIFY_AVD" -port "$VERIFY_EMU_PORT" -no-snapshot-load -no-window -no-audio -no-boot-anim \
+    -gpu swiftshader_indirect -memory 2048 -accel on > "$LOGS/emulator-snapshot.log" 2>&1 < /dev/null &
+  epid=$!
+  stop_snap() { $ADBP emu kill >/dev/null 2>&1; for _ in $(seq 1 30); do kill -0 "$epid" 2>/dev/null || break; sleep 1; done
+    kill -0 "$epid" 2>/dev/null && kill "$epid" 2>/dev/null; adb -P "$VERIFY_ADB_PORT" kill-server >/dev/null 2>&1; }
+  trap stop_snap EXIT
+  wait_boot
+  presets
+  if [[ "$($ADBP shell settings get global airplane_mode_on | tr -d '\r')" != 0 ]]; then
+    $ADBP shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || $ADBP shell settings put global airplane_mode_on 0
+  fi
+  sleep 20   # let the first-boot jobs settle, so the snapshot is not taken mid-dexopt
+  $ADBP emu avd snapshot save "$SNAP" | tr -d '\r' | grep -q OK || { echo "device: snapshot save failed"; exit 2; }
+  snap_want > "$SNAP_STAMP"
+  echo "device: saved snapshot $SNAP of $VERIFY_AVD in $((SECONDS - t0)) s ($(snap_want | tr -d '\n'))"
+  ;;
 up)
   [[ -z "$(get DEVICE_MODE)" ]] || { echo "device: an earlier run is not cleaned up (state.env). Run scripts/cleanup.sh first."; exit 2; }
   mode=laptop; reason="default device"
@@ -53,23 +111,17 @@ up)
     kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
     [[ $kb -ge 3145728 ]] || { echo "device: only $((kb / 1024)) MB free, an emulator needs about 3 GB. Stop something or wait."; exit 2; }
     export ANDROID_ADB_SERVER_PORT=$VERIFY_ADB_PORT
-    setsid nohup emulator -avd "$VERIFY_AVD" -port "$VERIFY_EMU_PORT" -read-only -no-snapshot -no-window -no-audio -no-boot-anim \
+    if snap_ok; then boot=(-snapshot "$SNAP" -no-snapshot-save); echo "device: quick boot from snapshot $SNAP"
+    else boot=(-no-snapshot); echo "device: cold boot (no current snapshot $SNAP; device.sh snapshot makes one)"; fi
+    setsid nohup emulator -avd "$VERIFY_AVD" -port "$VERIFY_EMU_PORT" -read-only "${boot[@]}" -no-window -no-audio -no-boot-anim \
       -gpu swiftshader_indirect -memory 2048 -accel on > "$LOGS/emulator.log" 2>&1 < /dev/null &
     put DEVICE_MODE laptop; put EMU_PID "$!"; put ADB_PREFIX "adb -P $VERIFY_ADB_PORT -s emulator-$VERIFY_EMU_PORT"
   fi
   ADBP=$(get ADB_PREFIX)
   t0=$SECONDS
   # An emulator that dies before adb sees it must not hang the run until the heavy-job limit: wait for the device at most 120 s.
-  timeout 120 $ADBP wait-for-device || { echo "device: adb did not see the emulator in 120 s (see emulator.log)"; exit 2; }
-  until [[ "$($ADBP shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; do
-    [[ $((SECONDS - t0)) -lt 240 ]] || { echo "device: no boot in 240 s (see emulator.log)"; exit 2; }
-    sleep 2
-  done
-  $ADBP shell wm size 1080x2355 >/dev/null; $ADBP shell wm density 480 >/dev/null
-  $ADBP shell cmd uimode night yes >/dev/null 2>&1
-  for k in window_animation_scale transition_animation_scale animator_duration_scale; do $ADBP shell settings put global $k 0; done
-  $ADBP shell settings put system font_scale 1.0
-  $ADBP shell input keyevent KEYCODE_WAKEUP; $ADBP shell wm dismiss-keyguard >/dev/null 2>&1
+  wait_boot
+  presets
   # The rig emulator came up with airplane mode on and, after the size change, a "System UI isn't responding" box (18 Nov). Network on, box dismissed.
   if [[ "$($ADBP shell settings get global airplane_mode_on | tr -d '\r')" != 0 ]]; then
     $ADBP shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || { $ADBP shell settings put global airplane_mode_on 0; $ADBP shell am broadcast -a android.intent.action.AIRPLANE_MODE >/dev/null 2>&1; }
