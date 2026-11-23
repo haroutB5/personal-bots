@@ -242,36 +242,51 @@ NodeTest.test("several MCPTOOL calls in one owner message all run, in order", as
   NodeAssert.match(mixed, /MCPTOOL bad_tool refused: \{"code":-32602/);
 });
 
-NodeTest.test("answers sdk_mcp_set_servers with an errors map the SDK can read", async () => {
+// The SDK names its span sdk_mcp_set_servers but sends the control request as subtype
+// mcp_set_servers (claude-agent-sdk 0.3.322 sdk.mjs: s.request({subtype:"mcp_set_servers",...})).
+NodeTest.test("answers mcp_set_servers with an errors map the SDK can read", async (t) => {
   const child = NodeChildProcess.spawn(process.execPath, [NodePath.join(here, "cli.js")], {
     env: { ...process.env, FAKE_CLAUDE_PID_DIR: pidDir },
     stdio: ["pipe", "pipe", "inherit"],
   });
-  const lines = NodeReadline.createInterface({ input: child.stdout });
-  const answer = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("no control response")), 10000);
-    lines.on("line", (raw) => {
-      const message = JSON.parse(raw);
-      if (message.type === "control_response" && message.response?.request_id === "mcp-set-1") {
-        clearTimeout(timer);
-        resolve(message.response);
-      }
-    });
+  // Stop the child even when an assertion fails: a live child (it keeps a timer) kept the
+  // whole test file from exiting, so a failure here used to look like a hang.
+  t.after(() => {
+    child.stdin.end();
+    child.kill();
   });
-  child.stdin.write(
-    JSON.stringify({
-      type: "control_request",
-      request_id: "mcp-set-1",
-      request: { subtype: "sdk_mcp_set_servers", servers: {} },
-    }) + "\n",
-  );
-  NodeAssert.deepEqual(await answer, {
+  const lines = NodeReadline.createInterface({ input: child.stdout });
+  const ask = (id, servers) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`no control response for ${id}`)), 10000);
+      lines.on("line", (raw) => {
+        const message = JSON.parse(raw);
+        if (message.type === "control_response" && message.response?.request_id === id) {
+          clearTimeout(timer);
+          resolve(message.response);
+        }
+      });
+      child.stdin.write(
+        JSON.stringify({
+          type: "control_request",
+          request_id: id,
+          request: { subtype: "mcp_set_servers", servers },
+        }) + "\n",
+      );
+    });
+  NodeAssert.deepEqual(await ask("mcp-set-1", {}), {
     subtype: "success",
     request_id: "mcp-set-1",
     response: { added: [], removed: [], errors: {} },
   });
-  child.stdin.end();
-  child.kill();
+  NodeAssert.deepEqual(
+    await ask("mcp-set-2", { "t3-code": { type: "http", url: "http://127.0.0.1:1/mcp" } }),
+    {
+      subtype: "success",
+      request_id: "mcp-set-2",
+      response: { added: ["t3-code"], removed: [], errors: {} },
+    },
+  );
 });
 
 NodeTest.test("BGSTART leaves a background task running and BGEND ends it", async () => {
