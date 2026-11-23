@@ -66,7 +66,32 @@ export interface ThunderbirdProcessConfig {
   readonly graphicalEnv: () => Readonly<Record<string, string>>;
   readonly exitWaitMs: number;
   readonly startWaitMs: number;
+  /**
+   * A command prefix that starts Thunderbird in its own systemd scope. Without
+   * it Thunderbird stays in hbots.service's cgroup, and every hbots restart
+   * (KillMode=control-group) would close it. Null starts it directly.
+   */
+  readonly scopeRunner: ReadonlyArray<string> | null;
 }
+
+const SYSTEMD_RUN = "/usr/bin/systemd-run";
+
+/** `systemd-run --user --scope` when the user manager can be reached, else null. */
+export const defaultScopeRunner = (
+  runtimeDir: string | undefined = process.env["XDG_RUNTIME_DIR"],
+): ReadonlyArray<string> | null =>
+  runtimeDir !== undefined &&
+  NodeFS.existsSync(SYSTEMD_RUN) &&
+  NodeFS.existsSync(NodePath.join(runtimeDir, "bus"))
+    ? [
+        SYSTEMD_RUN,
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        "--description=Thunderbird (hbots mail)",
+      ]
+    : null;
 
 export const defaultThunderbirdProcessConfig = (
   home: string = NodeOS.homedir(),
@@ -78,6 +103,7 @@ export const defaultThunderbirdProcessConfig = (
   graphicalEnv: () => discoverGraphicalSession().env,
   exitWaitMs: 20_000,
   startWaitMs: 20_000,
+  scopeRunner: defaultScopeRunner(),
 });
 
 export class ThunderbirdProcess extends Context.Service<
@@ -110,7 +136,12 @@ export const makeThunderbirdProcess = (config: ThunderbirdProcessConfig) => {
       Effect.tryPromise({
         try: async () => {
           await new Promise<void>((resolve, reject) => {
-            const child = NodeChildProcess.spawn(config.binary, ["-P", config.profile], {
+            const argv = [config.binary, "-P", config.profile];
+            const [command, ...args] = [...(config.scopeRunner ?? []), ...argv] as [
+              string,
+              ...Array<string>,
+            ];
+            const child = NodeChildProcess.spawn(command, args, {
               detached: true,
               stdio: "ignore",
               env: {
