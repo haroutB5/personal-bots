@@ -630,7 +630,7 @@ const RPC_RULES = [
     /^personal(LoginRequests|ConnectionApprovals)|^personalSecrets(ListPending|Fulfill|Cancel)$/,
     { pr: "A7" },
   ],
-  [/^personal(Memory|Logins|Connections|Secrets)/, { pr: "A15" }],
+  [/^personal(Memory|Logins|Connections|Secrets|Email)/, { pr: "A15" }],
   [/^personalDevices/, { pr: "A18" }],
   [/^personal(Browser|Desktop)/, { pr: "A16" }],
   [/^personalVoiceCalls/, { pr: "X4" }],

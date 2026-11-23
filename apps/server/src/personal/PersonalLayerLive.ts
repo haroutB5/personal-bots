@@ -13,6 +13,7 @@ import * as PersonalBotTokenUsage from "./PersonalBotTokenUsageService.ts";
 import * as PersonalChatResume from "./PersonalChatResumeService.ts";
 import * as PersonalClaudeCodeReview from "./claudeCodeReview/PersonalClaudeCodeReview.ts";
 import * as PersonalConnectionApprovalService from "./connections/approvalService.ts";
+import * as ThunderbirdSetup from "./connections/email/thunderbird/setup.ts";
 import * as PersonalConnectionService from "./connections/service.ts";
 import * as WhatsAppSendLog from "./connections/whatsapp/sendLog.ts";
 import * as WhatsAppSession from "./connections/whatsapp/session.ts";
@@ -206,6 +207,15 @@ const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
 );
 
 /**
+ * The connection service with the Thunderbird setup that writes its mailbox
+ * rows, as ONE step: the chain below is at its 20-step limit. Setup reaches
+ * the same Thunderbird client and process the gateway uses.
+ */
+const PersonalConnectionsWithEmailLive = ThunderbirdSetup.layer().pipe(
+  Layer.provideMerge(PersonalConnectionService.layerLive),
+);
+
+/**
  * Every personal service the running server provides, as one step. Consumers
  * sit before their dependencies because a later provideMerge step feeds the
  * requirements opened by an earlier one. The shared server supplies the
@@ -214,7 +224,7 @@ const PersonalLayerWithCallSummaryLive = PersonalLayerLive.pipe(
 export const PersonalRuntimeLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PersonalLoginRequestService.layerLive),
   Layer.provideMerge(PersonalConnectionApprovalService.layerLive),
-  Layer.provideMerge(PersonalConnectionService.layerLive),
+  Layer.provideMerge(PersonalConnectionsWithEmailLive),
   Layer.provideMerge(Layer.mergeAll(WhatsAppSession.layer, WhatsAppSendLog.layer)),
   Layer.provideMerge(
     Layer.mergeAll(PersonalLoginService.layerLive, PersonalVoiceCallService.layerLive),

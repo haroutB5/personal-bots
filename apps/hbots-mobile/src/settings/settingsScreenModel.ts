@@ -128,6 +128,19 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
     ],
   },
   {
+    id: "integrations",
+    label: "Integrations",
+    rows: [
+      {
+        id: "integrations.accounts",
+        title: "Integrations",
+        hint: "Email, GitHub, WhatsApp and other accounts bots can use",
+        keywords:
+          "email gmail outlook mail thunderbird github vercel whatsapp accounts connections",
+      },
+    ],
+  },
+  {
     id: "chat",
     label: "Chat",
     rows: [
@@ -185,12 +198,6 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
     id: "privacy",
     label: "Privacy and security",
     rows: [
-      {
-        id: "privacy.connections",
-        title: "Connections",
-        hint: "GitHub, Vercel and other accounts bots can use",
-        keywords: "github vercel accounts",
-      },
       {
         id: "privacy.passwords",
         title: "Passwords",

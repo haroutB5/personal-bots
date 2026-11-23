@@ -64,6 +64,15 @@ const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
       Effect.succeed(
         Option.fromNullishOr([...rows.values()].find((row) => row.vendorId === vendorId)),
       ),
+    getByAccount: (vendorId, accountId) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          [...rows.values()].find(
+            (row) =>
+              row.vendorId === vendorId && row.account?.accountId === accountId.toLowerCase(),
+          ),
+        ),
+      ),
     create: (row) =>
       options?.failCreate
         ? Effect.fail(new PersistenceSqlError({ operation: "test.create" }))
@@ -92,6 +101,11 @@ const makeHarness = (options?: { readonly failCreate?: boolean }): Harness => {
           credentialRef: `opaque-${++sequence}`,
           version: previous.version + 1,
         };
+        secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
+        return handle;
+      }),
+    replaceInPlace: (handle, credentials) =>
+      Effect.sync(() => {
         secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
         return handle;
       }),
@@ -168,13 +182,13 @@ describe("PersonalConnectionService", () => {
       expect(connected.status).toBe("connected");
       expect(connected.lastValidatedAt).not.toBeNull();
       expect(
-        Option.getOrThrow(yield* service.resolveForOperation("github")).credentialVersion,
+        Option.getOrThrow(yield* service.resolveForOperation("github", null)).credentialVersion,
       ).toBe(1);
 
       expect((yield* service.disable({ connectionId: created.connectionId })).status).toBe(
         "disabled",
       );
-      expect(Option.isNone(yield* service.resolveForOperation("github"))).toBe(true);
+      expect(Option.isNone(yield* service.resolveForOperation("github", null))).toBe(true);
 
       expect((yield* service.reconnect({ connectionId: created.connectionId })).status).toBe(
         "connecting",
@@ -194,7 +208,7 @@ describe("PersonalConnectionService", () => {
       expect(rotated.credentialVersion).toBe(2);
 
       expect(
-        Option.getOrThrow(yield* service.resolveForOperation("github")).credentialVersion,
+        Option.getOrThrow(yield* service.resolveForOperation("github", null)).credentialVersion,
       ).toBe(2);
 
       const disconnected = yield* service.disconnect({
@@ -278,6 +292,146 @@ describe("PersonalConnectionService", () => {
       const error = yield* service.reconnect({ connectionId }).pipe(Effect.flip);
       expect(error.message).toContain("cannot reconnect while connected");
       expect(harness.rows.get(connectionId)?.status).toBe("connected");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("resolves a mailbox vendor by address and refuses the token-paste path for it", () => {
+    const harness = makeHarness();
+    const mailbox = (id: string, address: string, status: "connected" | "disabled") => {
+      const connectionId = ConnectionId.make(id);
+      harness.rows.set(connectionId, {
+        connectionId,
+        vendorId: "gmail",
+        status,
+        account: { accountId: address, accountName: address, teamId: null, teamName: null },
+        verifiedCapabilities: [],
+        settings: { whatsappDailySendCap: null },
+        credentialRef: `opaque-${id}`,
+        credentialVersion: 1,
+        lastValidatedAt: at,
+        createdAt: at,
+        updatedAt: at,
+      });
+    };
+    mailbox("mail-a", "a@gmail.com", "connected");
+    mailbox("mail-b", "b@gmail.com", "disabled");
+    return Effect.gen(function* () {
+      const service = yield* Service.PersonalConnectionService;
+      expect(
+        Option.getOrThrow(yield* service.resolveForOperation("gmail", "A@gmail.com")).connectionId,
+      ).toBe("mail-a");
+      expect(Option.isNone(yield* service.resolveForOperation("gmail", "b@gmail.com"))).toBe(true);
+      expect(Option.isNone(yield* service.resolveForOperation("gmail", "nobody@gmail.com"))).toBe(
+        true,
+      );
+      expect(Option.isNone(yield* service.resolveForOperation("gmail", null))).toBe(true);
+
+      const pasted = yield* service
+        .connect({ vendorId: "gmail", credentials: { refreshToken: Redacted.make("x") } })
+        .pipe(Effect.flip);
+      expect(pasted.message).toContain("come from Thunderbird");
+      const reconnect = yield* service
+        .reconnect({ connectionId: ConnectionId.make("mail-a") })
+        .pipe(Effect.flip);
+      expect(reconnect.message).toContain("cannot reconnect while connected");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect(
+    "connectMailbox adds a row per address and keeps its row when the owner signs in again",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const service = yield* Service.PersonalConnectionService;
+        const first = yield* service.connectMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+          displayName: "harout@gmail.com",
+          refreshToken: Redacted.make("1//0first"),
+        });
+        expect(first.status).toBe("connected");
+        expect(first.credentialVersion).toBe(1);
+        expect(first.account?.accountId).toBe("harout@gmail.com");
+        expect(JSON.stringify(first)).not.toContain("1//0first");
+
+        const other = yield* service.connectMailbox({
+          vendorId: "gmail",
+          address: "second@gmail.com",
+          displayName: "second@gmail.com",
+          refreshToken: Redacted.make("1//0second"),
+        });
+        expect(other.connectionId).not.toBe(first.connectionId);
+
+        const again = yield* service.connectMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+          displayName: "Harout",
+          refreshToken: Redacted.make("1//0replacement"),
+        });
+        expect(again.connectionId).toBe(first.connectionId);
+        expect(again.credentialVersion).toBe(2);
+        expect(again.account?.accountName).toBe("Harout");
+        expect(harness.rows.size).toBe(2);
+        // The retired login is gone and the new one is what resolves.
+        const stored = [...harness.secrets.values()].map((values) =>
+          Redacted.value(values["refreshToken"] ?? Redacted.make("")),
+        );
+        expect(stored.sort()).toEqual(["1//0replacement", "1//0second"]);
+        expect(
+          Option.getOrThrow(yield* service.resolveForOperation("gmail", "harout@gmail.com"))
+            .credentialVersion,
+        ).toBe(2);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect(
+    "connectLocalMailbox keeps one row per address, stores nothing, and resolves it for the gateway",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const service = yield* Service.PersonalConnectionService;
+        const first = yield* service.connectLocalMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+        });
+        const again = yield* service.connectLocalMailbox({
+          vendorId: "gmail",
+          address: "harout@gmail.com",
+        });
+        yield* service.connectLocalMailbox({ vendorId: "outlook", address: "a@outlook.com" });
+        expect(again.connectionId).toBe(first.connectionId);
+        expect(first.status).toBe("connected");
+        expect(harness.rows.size).toBe(2);
+        expect(harness.secrets.size).toBe(0);
+        expect(
+          Option.getOrThrow(yield* service.resolveForOperation("gmail", "harout@gmail.com"))
+            .connectionId,
+        ).toBe(first.connectionId);
+        const rotate = yield* service
+          .rotate({
+            connectionId: first.connectionId,
+            credentials: {},
+          })
+          .pipe(Effect.flip);
+        expect(rotate.message).toContain("no token to replace");
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect("connectMailbox removes the stored login when the row cannot be written", () => {
+    const harness = makeHarness({ failCreate: true });
+    return Effect.gen(function* () {
+      const service = yield* Service.PersonalConnectionService;
+      yield* service
+        .connectMailbox({
+          vendorId: "outlook",
+          address: "a@outlook.com",
+          displayName: "A",
+          refreshToken: Redacted.make("M.C-refresh"),
+        })
+        .pipe(Effect.flip);
+      expect(harness.secrets.size).toBe(0);
     }).pipe(Effect.provide(harness.layer));
   });
 });

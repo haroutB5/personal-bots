@@ -1,4 +1,4 @@
-import { PersonalConnectionVendorId } from "@t3tools/contracts";
+import { EmailVendorId, PersonalConnectionVendorId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -58,10 +58,12 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           { approval_id: "kept", vendor_id: "github", execution_outcome: "succeeded" },
         ]);
 
-        // Every vendor the contract decodes, not a hand-kept list: the next
-        // vendor added to the catalog fails here until its approvals can be
-        // stored, rather than in production on its first card.
-        for (const vendorId of PersonalConnectionVendorId.literals) {
+        // Every vendor this migration level knows, not a hand-kept list. The
+        // mailbox vendors arrive in migration 161, which has its own test.
+        const vendorsAtThisLevel = PersonalConnectionVendorId.literals.filter(
+          (vendorId) => !(EmailVendorId.literals as ReadonlyArray<string>).includes(vendorId),
+        );
+        for (const vendorId of vendorsAtThisLevel) {
           yield* approval(sql, { approvalId: `approval-${vendorId}`, vendorId });
           yield* sql`
           INSERT INTO personal_connections (

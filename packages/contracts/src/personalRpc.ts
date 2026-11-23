@@ -149,6 +149,12 @@ import {
   PersonalConnectionSettingsInput,
 } from "./personalConnections.ts";
 import {
+  PersonalEmailStartResult,
+  PersonalEmailStatus,
+  PersonalEmailUseAccountsInput,
+  PersonalEmailUseAccountsResult,
+} from "./personalEmail.ts";
+import {
   PersonalLoginsError,
   PersonalLogin,
   PersonalLoginCreateInput,
@@ -709,6 +715,22 @@ const WsPersonalConnectionsBrowserConnectRpc = Rpc.make(
     error: PersonalConnectionsRpcError,
   },
 );
+const WsPersonalEmailStatusRpc = Rpc.make(WS_METHODS.personalEmailStatus, {
+  payload: Schema.Struct({}),
+  success: PersonalEmailStatus,
+  error: PersonalConnectionsRpcError,
+});
+/** Owner-only. Writes the account allowlist and restarts Thunderbird to apply it. */
+const WsPersonalEmailUseAccountsRpc = Rpc.make(WS_METHODS.personalEmailUseAccounts, {
+  payload: PersonalEmailUseAccountsInput,
+  success: PersonalEmailUseAccountsResult,
+  error: PersonalConnectionsRpcError,
+});
+const WsPersonalEmailStartThunderbirdRpc = Rpc.make(WS_METHODS.personalEmailStartThunderbird, {
+  payload: Schema.Struct({}),
+  success: PersonalEmailStartResult,
+  error: PersonalConnectionsRpcError,
+});
 /** Owner-only. No bot-facing tool may change what the owner set here. */
 const WsPersonalConnectionsSetSettingsRpc = Rpc.make(WS_METHODS.personalConnectionsSetSettings, {
   payload: PersonalConnectionSettingsInput,
@@ -1187,6 +1209,9 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalConnectionsSetSettingsRpc,
   WsPersonalConnectionsImportProbeRpc,
   WsPersonalConnectionsImportAdoptRpc,
+  WsPersonalEmailStatusRpc,
+  WsPersonalEmailUseAccountsRpc,
+  WsPersonalEmailStartThunderbirdRpc,
   WsPersonalConnectionApprovalsListRpc,
   WsPersonalConnectionApprovalsDecideRpc,
   WsPersonalConnectionApprovalsCancelRpc,

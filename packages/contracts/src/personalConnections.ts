@@ -10,8 +10,24 @@ export const PersonalConnectionVendorId = Schema.Literals([
   "neon",
   "upstash",
   "whatsapp",
+  "gmail",
+  "outlook",
 ]);
 export type PersonalConnectionVendorId = typeof PersonalConnectionVendorId.Type;
+
+/**
+ * Vendors whose owner can connect several accounts: one mailbox per row. The
+ * other vendors hold exactly one connection, and the type below keeps a lookup
+ * by vendor alone from compiling for a vendor that has many.
+ */
+export const EmailVendorId = Schema.Literals(["gmail", "outlook"]);
+export type EmailVendorId = typeof EmailVendorId.Type;
+export type SingleAccountVendorId = Exclude<PersonalConnectionVendorId, EmailVendorId>;
+export const isEmailVendorId = (vendorId: PersonalConnectionVendorId): vendorId is EmailVendorId =>
+  vendorId === "gmail" || vendorId === "outlook";
+export const isSingleAccountVendorId = (
+  vendorId: PersonalConnectionVendorId,
+): vendorId is SingleAccountVendorId => !isEmailVendorId(vendorId);
 
 /**
  * How the owner proves the account is theirs.
@@ -21,8 +37,19 @@ export type PersonalConnectionVendorId = typeof PersonalConnectionVendorId.Type;
  * profile, and nothing about it is ever stored by this feature. The two kinds
  * lead to different connect screens and different server paths, so a vendor
  * has to say which it is rather than defaulting into the paste flow.
+ *
+ * `oauth` is a sign-in at the provider that ends in a refresh token the server
+ * keeps. The owner never sees or pastes a token.
+ *
+ * `local-app` is a mailbox an app on the server's machine already holds the
+ * sign-in for. This feature reads and stores no credential for it.
  */
-export const PersonalConnectionAuthKind = Schema.Literals(["token-paste", "browser-session"]);
+export const PersonalConnectionAuthKind = Schema.Literals([
+  "token-paste",
+  "browser-session",
+  "oauth",
+  "local-app",
+]);
 export type PersonalConnectionAuthKind = typeof PersonalConnectionAuthKind.Type;
 
 /**
@@ -94,6 +121,17 @@ export const PersonalConnectionCredentials = Schema.Record(
 );
 export type PersonalConnectionCredentials = typeof PersonalConnectionCredentials.Type;
 
+/**
+ * The public half of an owner's own sign-in application at a provider. The
+ * client id is not secret and the phone needs Google's to open its sign-in
+ * sheet; the secret itself never leaves the server.
+ */
+export const PersonalEmailOAuthClient = Schema.Struct({
+  vendorId: EmailVendorId,
+  clientId: TrimmedNonEmptyString,
+});
+export type PersonalEmailOAuthClient = typeof PersonalEmailOAuthClient.Type;
+
 export const PersonalConnectionListResult = Schema.Struct({
   connections: Schema.Array(PersonalConnection),
 });
@@ -148,6 +186,69 @@ export const PersonalConnectionBrowserConnectResult = Schema.Struct({
 });
 export type PersonalConnectionBrowserConnectResult =
   typeof PersonalConnectionBrowserConnectResult.Type;
+
+/**
+ * The one-time setup values, pasted once. Google's web client has a secret;
+ * Microsoft's public client has none, and the union makes that the only shape
+ * each can take.
+ */
+export const PersonalEmailOAuthClientInput = Schema.Union([
+  Schema.Struct({
+    vendorId: Schema.Literal("gmail"),
+    clientId: TrimmedNonEmptyString,
+    clientSecret: Schema.Redacted(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    vendorId: Schema.Literal("outlook"),
+    clientId: TrimmedNonEmptyString,
+  }),
+]);
+export type PersonalEmailOAuthClientInput = typeof PersonalEmailOAuthClientInput.Type;
+
+/**
+ * `problem` is set when the values were refused, in the owner's words, so the
+ * setup step can say what to fix. A refusal is an answer, not a failed call.
+ */
+export const PersonalEmailOAuthClientResult = Schema.Struct({
+  vendorId: EmailVendorId,
+  saved: Schema.Boolean,
+  problem: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PersonalEmailOAuthClientResult = typeof PersonalEmailOAuthClientResult.Type;
+
+/** The one-time code Google's sign-in sheet gave the phone. It is single use and short lived. */
+export const PersonalGmailExchangeCodeInput = Schema.Struct({
+  serverAuthCode: Schema.Redacted(TrimmedNonEmptyString),
+});
+export type PersonalGmailExchangeCodeInput = typeof PersonalGmailExchangeCodeInput.Type;
+
+export const PersonalGmailExchangeCodeResult = Schema.Struct({ connection: PersonalConnection });
+export type PersonalGmailExchangeCodeResult = typeof PersonalGmailExchangeCodeResult.Type;
+
+export const PersonalOutlookDeviceStartResult = Schema.Struct({
+  /** Opaque. The phone hands it back to poll; it is not the device code. */
+  signInId: TrimmedNonEmptyString,
+  userCode: TrimmedNonEmptyString,
+  verificationUri: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtcFromString,
+  intervalSec: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export type PersonalOutlookDeviceStartResult = typeof PersonalOutlookDeviceStartResult.Type;
+
+export const PersonalOutlookDevicePollInput = Schema.Struct({ signInId: TrimmedNonEmptyString });
+export type PersonalOutlookDevicePollInput = typeof PersonalOutlookDevicePollInput.Type;
+
+export const PersonalOutlookDevicePollResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("pending"),
+    intervalSec: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  }),
+  Schema.Struct({ _tag: Schema.Literal("connected"), connection: PersonalConnection }),
+  Schema.Struct({ _tag: Schema.Literal("expired") }),
+  Schema.Struct({ _tag: Schema.Literal("declined") }),
+  Schema.Struct({ _tag: Schema.Literal("failed"), problem: TrimmedNonEmptyString }),
+]);
+export type PersonalOutlookDevicePollResult = typeof PersonalOutlookDevicePollResult.Type;
 
 export const PersonalConnectionSettingsInput = Schema.Struct({
   connectionId: ConnectionId,

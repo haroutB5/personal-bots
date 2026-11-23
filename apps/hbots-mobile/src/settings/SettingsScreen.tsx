@@ -243,12 +243,12 @@ export function SettingsScreen(props: SettingsScreenProps) {
             onAddProvider={props.onOpenAddProvider}
           />
         );
-      case "privacy.connections":
+      case "integrations.accounts":
         return (
           <Row
             key={id}
-            title="Connections"
-            hint="GitHub, Vercel and other accounts bots can use"
+            title="Integrations"
+            hint="Email, GitHub, WhatsApp and other accounts bots can use"
             onPress={props.onOpenConnections}
           />
         );

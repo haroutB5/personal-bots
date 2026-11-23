@@ -2,6 +2,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { ConnectionVendorAdapters, makeAdapters } from "../adapters.ts";
+import { makeEmailAdapter } from "../email/adapter.ts";
+import { CommonpostClient } from "../email/thunderbird/commonpostClient.ts";
+import { makeThunderbirdMailApi } from "../email/thunderbird/thunderbirdMailApi.ts";
 import { makeWhatsAppAdapter } from "../whatsapp/adapter.ts";
 import { WhatsAppSendLog } from "../whatsapp/sendLog.ts";
 import { WhatsAppSession } from "../whatsapp/session.ts";
@@ -28,12 +31,15 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const session = yield* WhatsAppSession;
     const sendLog = yield* WhatsAppSendLog;
+    const mail = makeThunderbirdMailApi(yield* CommonpostClient);
     return makeAdapters([
       makeGithubAdapter(http),
       makeVercelAdapter(http),
       makeNeonAdapter(http),
       makeUpstashAdapter(http),
       makeWhatsAppAdapter({ session, sendLog }),
+      yield* makeEmailAdapter("gmail", mail),
+      yield* makeEmailAdapter("outlook", mail),
     ]);
   }),
 );

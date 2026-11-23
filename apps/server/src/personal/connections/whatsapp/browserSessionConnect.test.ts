@@ -41,6 +41,15 @@ const makeHarness = (options?: { readonly signedOut?: boolean }) => {
       Effect.succeed(
         Option.fromNullishOr([...rows.values()].find((row) => row.vendorId === vendorId)),
       ),
+    getByAccount: (vendorId, accountId) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          [...rows.values()].find(
+            (row) =>
+              row.vendorId === vendorId && row.account?.accountId === accountId.toLowerCase(),
+          ),
+        ),
+      ),
     create: (row) =>
       Effect.sync(() => {
         rows.set(row.connectionId, row);
@@ -64,6 +73,11 @@ const makeHarness = (options?: { readonly signedOut?: boolean }) => {
     createNext: (previous, credentials) =>
       Effect.sync(() => {
         const handle = { credentialRef: `opaque-${++sequence}`, version: previous.version + 1 };
+        secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
+        return handle;
+      }),
+    replaceInPlace: (handle, credentials) =>
+      Effect.sync(() => {
         secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
         return handle;
       }),
@@ -250,7 +264,7 @@ describe("connecting WhatsApp through the browser", () => {
       // Read back through the path the gateway actually uses, because that is
       // where the cap reaches the adapter from.
       yield* connections.validate({ connectionId: started.connection.connectionId });
-      const resolved = yield* connections.resolveForOperation("whatsapp");
+      const resolved = yield* connections.resolveForOperation("whatsapp", null);
       expect(Option.isSome(resolved) && resolved.value.settings.whatsappDailySendCap).toBe(3);
     }).pipe(Effect.provide(harness.layer));
   });

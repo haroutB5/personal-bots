@@ -66,6 +66,15 @@ describe("settings registry", () => {
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
   });
 
+  it("finds email under Integrations from gmail, outlook and mail", () => {
+    for (const query of ["email", "gmail", "outlook", "integrations"]) {
+      const rows = visibleSettingsSections(query).flatMap((entry) =>
+        entry.rows.map((row) => row.title),
+      );
+      expect(rows).toEqual(["Integrations"]);
+    }
+  });
+
   it("gives every row a unique title", () => {
     const rows = SETTINGS_SECTIONS.flatMap((section) => section.rows);
     expect(new Set(rows.map((row) => row.title)).size).toBe(rows.length);

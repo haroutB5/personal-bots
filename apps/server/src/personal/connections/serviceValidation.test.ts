@@ -56,6 +56,15 @@ const makeHarness = () => {
       Effect.succeed(
         Option.fromNullishOr([...rows.values()].find((row) => row.vendorId === vendorId)),
       ),
+    getByAccount: (vendorId, accountId) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          [...rows.values()].find(
+            (row) =>
+              row.vendorId === vendorId && row.account?.accountId === accountId.toLowerCase(),
+          ),
+        ),
+      ),
     create: (row) =>
       Effect.sync(() => {
         rows.set(row.connectionId, row);
@@ -79,6 +88,11 @@ const makeHarness = () => {
     createNext: (previous, credentials) =>
       Effect.sync(() => {
         const handle = { credentialRef: `opaque-${++sequence}`, version: previous.version + 1 };
+        secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
+        return handle;
+      }),
+    replaceInPlace: (handle, credentials) =>
+      Effect.sync(() => {
         secrets.set(CredentialStore.personalConnectionCredentialKey(handle), credentials);
         return handle;
       }),
@@ -213,7 +227,7 @@ describe("PersonalConnectionService token validation", () => {
     return Effect.gen(function* () {
       const service = yield* Service.PersonalConnectionService;
       const created = yield* connectGithub;
-      expect(Option.isSome(yield* service.resolveForOperation("github"))).toBe(true);
+      expect(Option.isSome(yield* service.resolveForOperation("github", null))).toBe(true);
 
       // What a PAT reaching GitHub's expiry date looks like from here.
       harness.vendor.reject = "unauthorized";
@@ -222,7 +236,7 @@ describe("PersonalConnectionService token validation", () => {
       expect(revalidated.problem).not.toBeNull();
       expect(revalidated.problem ?? "").not.toContain(TOKEN);
       // A connection in that state runs nothing until the owner replaces it.
-      expect(Option.isNone(yield* service.resolveForOperation("github"))).toBe(true);
+      expect(Option.isNone(yield* service.resolveForOperation("github", null))).toBe(true);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -264,7 +278,7 @@ describe("PersonalConnectionService token validation", () => {
         }),
       );
       harness.vendor.reject = "none";
-      const current = Option.getOrThrow(yield* service.resolveForOperation("github"));
+      const current = Option.getOrThrow(yield* service.resolveForOperation("github", null));
       expect(current.credentialVersion).toBe(1);
       expect(harness.secrets.size).toBe(1);
     }).pipe(Effect.provide(harness.layer));
@@ -280,7 +294,7 @@ describe("PersonalConnectionService token validation", () => {
       });
       // No adapter means no proof, and "connecting" is the honest word for it.
       expect(created.status).toBe("connecting");
-      expect(Option.isNone(yield* service.resolveForOperation("neon"))).toBe(true);
+      expect(Option.isNone(yield* service.resolveForOperation("neon", null))).toBe(true);
     }).pipe(Effect.provide(harness.layer));
   });
 

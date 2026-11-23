@@ -62,4 +62,40 @@ describe("PersonalConnectionRepository", () => {
       expect(yield* repository.remove(github.connectionId)).toBe(false);
     }).pipe(Effect.provide(TestLayer)),
   );
+
+  it.effect("keeps one row per mailbox and finds it by its address", () =>
+    Effect.gen(function* () {
+      yield* runMigrations({ toMigrationInclusive: 161 });
+      const repository = yield* Repository.PersonalConnectionRepository;
+      const mailbox = (id: string, vendorId: "gmail" | "outlook", address: string) => ({
+        ...github,
+        connectionId: ConnectionId.make(id),
+        vendorId,
+        status: "connected" as const,
+        account: { accountId: address, accountName: address, teamId: null, teamName: null },
+        credentialRef: `opaque-${id}`,
+      });
+
+      yield* repository.create(mailbox("g-1", "gmail", "one@gmail.com"));
+      yield* repository.create(mailbox("g-2", "gmail", "two@gmail.com"));
+      yield* repository.create(mailbox("o-1", "outlook", "one@gmail.com"));
+
+      const found = Option.getOrThrow(yield* repository.getByAccount("gmail", "TWO@gmail.com"));
+      expect(found.connectionId).toBe("g-2");
+      expect(
+        Option.getOrThrow(yield* repository.getByAccount("outlook", "one@gmail.com")).connectionId,
+      ).toBe("o-1");
+      expect(Option.isNone(yield* repository.getByAccount("outlook", "two@gmail.com"))).toBe(true);
+
+      const duplicate = yield* Effect.flip(
+        repository.create(mailbox("g-3", "gmail", "one@gmail.com")),
+      );
+      expect(duplicate._tag).toBe("PersistenceSqlError");
+      expect((yield* repository.list()).map((row) => row.connectionId)).toEqual([
+        "g-1",
+        "g-2",
+        "o-1",
+      ]);
+    }).pipe(Effect.provide(TestLayer)),
+  );
 });

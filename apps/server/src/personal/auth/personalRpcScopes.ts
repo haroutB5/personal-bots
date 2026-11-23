@@ -118,6 +118,9 @@ export const PERSONAL_RPC_REQUIRED_SCOPES = {
   // it touches the filesystem and the reply names the owner's accounts.
   [WS_METHODS.personalConnectionsImportProbe]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionsImportAdopt]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalEmailStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.personalEmailUseAccounts]: AuthOrchestrationOperateScope,
+  [WS_METHODS.personalEmailStartThunderbird]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionApprovalsList]: AuthOrchestrationReadScope,
   [WS_METHODS.personalConnectionApprovalsDecide]: AuthOrchestrationOperateScope,
   [WS_METHODS.personalConnectionApprovalsCancel]: AuthOrchestrationOperateScope,

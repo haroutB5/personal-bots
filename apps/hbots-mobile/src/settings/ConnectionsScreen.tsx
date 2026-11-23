@@ -29,14 +29,16 @@ import { useSecretDrafts } from "../platform/useSecretDraft";
 import { useSecureScreen } from "../platform/secureScreen";
 import { ScreenHeader } from "../shell/ScreenHeader";
 import { tokens } from "../shell/tokens";
-import { Field, PrimaryButton, TextButton } from "./SettingsUi";
+import { Field, PrimaryButton, Row, Section, TextButton } from "./SettingsUi";
 
 export function ConnectionsScreen({
   native,
   onBack,
+  onOpenEmail,
 }: {
   readonly native: NativePersonal;
   readonly onBack: () => void;
+  readonly onOpenEmail: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const environmentId = native.environmentId as EnvironmentId;
@@ -200,7 +202,7 @@ export function ConnectionsScreen({
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ScreenHeader
-        title="Connections"
+        title="Integrations"
         onBack={onBack}
         right={
           <TextButton
@@ -221,6 +223,15 @@ export function ConnectionsScreen({
           way saved logins work. hbots holds the token and does the work itself, so a bot never sees
           it, and anything that changes your account or ships something asks you first.
         </Text>
+
+        <Section label="Mail">
+          <Row
+            title="Email"
+            hint="Gmail and Outlook, read through Thunderbird on the laptop"
+            onPress={onOpenEmail}
+            last
+          />
+        </Section>
 
         {importOpen ? (
           <View style={styles.card}>

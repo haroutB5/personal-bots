@@ -42,7 +42,7 @@ layer("063_DropUnusedV1Projections", (it) => {
         migrationManifest.find(([migrationId]) => migrationId === id),
         [160, "DropUnusedV1Projections"],
       );
-      assert.strictEqual(Math.max(...migrationManifest.map(([migrationId]) => migrationId)), id);
+      assert.isAtLeast(Math.max(...migrationManifest.map(([migrationId]) => migrationId)), 160);
     }),
   );
 
@@ -66,7 +66,7 @@ layer("063_DropUnusedV1Projections", (it) => {
       const applied = yield* runMigrations();
 
       assert.deepStrictEqual(
-        applied.map(([migrationId]) => migrationId),
+        applied.map(([migrationId]) => migrationId).filter((migrationId) => migrationId <= 160),
         [160],
       );
       const after = yield* tableNames;

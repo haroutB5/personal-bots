@@ -27,6 +27,12 @@ export const ListConnectionsResult = Schema.Struct({
     Schema.Struct({
       vendor: Schema.String,
       displayName: Schema.String,
+      /**
+       * The mailbox addresses of a vendor that holds several (Gmail, Outlook).
+       * An operation on one of them names its address in `mailbox`; empty for a
+       * vendor with a single account.
+       */
+      accounts: Schema.Array(Schema.String),
       operations: Schema.Array(
         Schema.Struct({
           operation: Schema.String,

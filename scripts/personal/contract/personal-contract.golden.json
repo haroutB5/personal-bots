@@ -972,6 +972,17 @@
               }
             ]
           },
+          "pinOrder": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": ["Infinity", "-Infinity", "NaN"],
+                "type": "string"
+              }
+            ]
+          },
           "pinned": {
             "type": "boolean"
           },
@@ -2262,6 +2273,17 @@
                     }
                   ]
                 },
+                "pinOrder": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": ["Infinity", "-Infinity", "NaN"],
+                      "type": "string"
+                    }
+                  ]
+                },
                 "pinned": {
                   "type": "boolean"
                 },
@@ -3223,6 +3245,686 @@
       }
     },
     {
+      "tag": "personalBots.reorderPinned",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "botIds": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "prefixItems": [
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          }
+        },
+        "required": ["botIds"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "archivedCounts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": ["Infinity", "-Infinity", "NaN"],
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bots": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "allowVoiceCalls": {
+                  "type": "boolean"
+                },
+                "avatarColor": {
+                  "type": "string"
+                },
+                "avatarShape": {
+                  "enum": [
+                    "blob",
+                    "roundedSquare",
+                    "pill",
+                    "triangle",
+                    "roundedHexagon",
+                    "scallopedCloud",
+                    "droplet"
+                  ],
+                  "type": "string"
+                },
+                "botId": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "fallback": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "modelSelection": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "instanceId": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {},
+                        "options": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "provider": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["model"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["enabled", "modelSelection"],
+                  "type": "object"
+                },
+                "fallbackActive": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "fromProvider": {
+                      "type": "string"
+                    },
+                    "modelSelection": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "instanceId": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {},
+                        "options": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "provider": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["model"],
+                      "type": "object"
+                    },
+                    "reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "resetAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "since": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["modelSelection", "since", "fromProvider"],
+                  "type": "object"
+                },
+                "groupIds": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "groupOnly": {
+                  "type": "boolean"
+                },
+                "hidePreviews": {
+                  "type": "boolean"
+                },
+                "instructions": {
+                  "type": "string"
+                },
+                "lead": {
+                  "type": "boolean"
+                },
+                "memoryAutoSave": {
+                  "type": "boolean"
+                },
+                "modelSelection": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "instanceId": {
+                      "anyOf": [
+                        {},
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "model": {},
+                    "options": {
+                      "anyOf": [
+                        {},
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "provider": {
+                      "anyOf": [
+                        {},
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["model"],
+                  "type": "object"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "notificationsMutedUntil": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pinOrder": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": ["Infinity", "-Infinity", "NaN"],
+                      "type": "string"
+                    }
+                  ]
+                },
+                "pinned": {
+                  "type": "boolean"
+                },
+                "schedule": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "modelSelection": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "instanceId": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {},
+                        "options": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "provider": {
+                          "anyOf": [
+                            {},
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["model"],
+                      "type": "object"
+                    },
+                    "to": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["enabled", "from", "to", "modelSelection"],
+                  "type": "object"
+                },
+                "sortOrder": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": ["Infinity", "-Infinity", "NaN"],
+                      "type": "string"
+                    }
+                  ]
+                },
+                "team": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "botId",
+                "name",
+                "title",
+                "description",
+                "instructions",
+                "avatarShape",
+                "avatarColor",
+                "modelSelection",
+                "enabled",
+                "sortOrder",
+                "createdAt",
+                "updatedAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "personalProjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "threads": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "archivedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "botId": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "groupRelay": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lastActivityAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lastOwnerMessageAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lastReplyAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "markedUnread": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "newestMessage": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "context": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": true,
+                              "properties": {
+                                "guest": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": true,
+                                      "properties": {
+                                        "guestMessageId": {
+                                          "type": "string"
+                                        },
+                                        "name": {
+                                          "type": "string"
+                                        },
+                                        "shareId": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "text": {
+                                          "maxLength": 4000,
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["guestMessageId", "name", "text"],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "records": {
+                                  "maxItems": 200,
+                                  "type": "array"
+                                },
+                                "version": {
+                                  "enum": [1],
+                                  "type": "number"
+                                }
+                              },
+                              "required": ["version", "records"],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "hidden": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "enum": ["user", "assistant", "system", "reasoning"],
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "role", "text"],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pinnedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "renamedFrom": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "renamedTo": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "snoozedUntil": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "unread": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": ["botId", "threadId", "createdAt", "archivedAt"],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["bots", "threads", "personalProjectId"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalBotsErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalBotsError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "code": {
+                "anyOf": [
+                  {
+                    "enum": ["chat_name_taken"],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalBotsErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
       "tag": "personalBots.restore",
       "payload": {
         "additionalProperties": true,
@@ -3440,6 +4142,17 @@
                   },
                   {
                     "type": "null"
+                  }
+                ]
+              },
+              "pinOrder": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "enum": ["Infinity", "-Infinity", "NaN"],
+                    "type": "string"
                   }
                 ]
               },
@@ -5099,6 +5812,29 @@
                         },
                         "updatedAt": {
                           "type": "string"
+                        },
+                        "usageLimit": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": true,
+                              "properties": {
+                                "resetAt": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -6417,6 +7153,17 @@
               },
               {
                 "type": "null"
+              }
+            ]
+          },
+          "pinOrder": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": ["Infinity", "-Infinity", "NaN"],
+                "type": "string"
               }
             ]
           },
@@ -9784,7 +10531,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           }
         },
@@ -9989,7 +10736,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           }
         },
@@ -10189,7 +10936,7 @@
                   "type": "string"
                 },
                 "vendorId": {
-                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
                   "type": "string"
                 }
               },
@@ -10293,7 +11040,7 @@
         "additionalProperties": true,
         "properties": {
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           }
         },
@@ -10394,7 +11141,7 @@
                 "type": "string"
               },
               "vendorId": {
-                "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+                "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
                 "type": "string"
               },
               "verifiedCapabilities": {
@@ -10503,7 +11250,7 @@
             "type": "object"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           }
         },
@@ -10601,7 +11348,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           },
           "verifiedCapabilities": {
@@ -10794,7 +11541,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           },
           "verifiedCapabilities": {
@@ -11075,7 +11822,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           },
           "verifiedCapabilities": {
@@ -11196,7 +11943,7 @@
                   "type": "string"
                 },
                 "vendorId": {
-                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
                   "type": "string"
                 }
               },
@@ -11230,7 +11977,7 @@
                   "type": "string"
                 },
                 "vendorId": {
-                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
                   "type": "string"
                 }
               },
@@ -11411,7 +12158,7 @@
                   "type": "string"
                 },
                 "vendorId": {
-                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+                  "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
                   "type": "string"
                 },
                 "verifiedCapabilities": {
@@ -11610,7 +12357,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           },
           "verifiedCapabilities": {
@@ -11809,7 +12556,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           },
           "verifiedCapabilities": {
@@ -12021,7 +12768,7 @@
             "type": "string"
           },
           "vendorId": {
-            "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+            "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
             "type": "string"
           },
           "verifiedCapabilities": {
@@ -12217,7 +12964,7 @@
                 "type": "string"
               },
               "vendorId": {
-                "enum": ["github", "vercel", "neon", "upstash", "whatsapp"],
+                "enum": ["github", "vercel", "neon", "upstash", "whatsapp", "gmail", "outlook"],
                 "type": "string"
               },
               "verifiedCapabilities": {
@@ -12835,6 +13582,372 @@
         "anyOf": [
           {
             "$ref": "#/$defs/PersonalDevicesErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalEmail.startThunderbird",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started": {
+            "type": "boolean"
+          }
+        },
+        "required": ["started", "problem"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalConnectionsErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalConnectionsError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalEmail.status",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "accountsConfirmed": {
+            "type": "boolean"
+          },
+          "profileSizeBytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thunderbird": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["ready"],
+                    "type": "string"
+                  },
+                  "accounts": {
+                    "items": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "accountId": {
+                          "type": "string"
+                        },
+                        "address": {
+                          "type": "string"
+                        },
+                        "serverType": {
+                          "enum": ["imap", "ews", "graph", "pop3"],
+                          "type": "string"
+                        },
+                        "vendor": {
+                          "enum": ["gmail", "outlook"],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["accountId", "address", "vendor", "serverType"],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": ["_tag", "accounts"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["closed"],
+                    "type": "string"
+                  }
+                },
+                "required": ["_tag"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["addon-missing"],
+                    "type": "string"
+                  }
+                },
+                "required": ["_tag"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": ["unsupported"],
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": ["_tag", "reason"],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": ["thunderbird", "accountsConfirmed", "profileSizeBytes"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalConnectionsErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalConnectionsError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalEmail.useAccounts",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "accountIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": ["accountIds"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["changed", "problem"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalConnectionsErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalConnectionsError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalConnectionsErrorEncoded"
           },
           {
             "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
@@ -23004,6 +24117,650 @@
       }
     },
     {
+      "tag": "personalProjects.history",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "projectId": {
+            "type": "string"
+          }
+        },
+        "required": ["projectId"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "history": {
+            "items": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["step"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": ["done", "doing", "todo"],
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "at", "label", "state"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["replanned"],
+                      "type": "string"
+                    },
+                    "steps": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "enum": ["Infinity", "-Infinity", "NaN"],
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["kind", "at", "steps"],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "tasks": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "acceptanceCriteria": {
+                  "type": "string"
+                },
+                "availableAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "botId": {
+                  "type": "string"
+                },
+                "completedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "depth": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": ["Infinity", "-Infinity", "NaN"],
+                      "type": "string"
+                    }
+                  ]
+                },
+                "detailOmitted": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "errorCategory": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "errorMessage": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "expectedOutput": {
+                  "type": "string"
+                },
+                "idempotencyKey": {
+                  "type": "string"
+                },
+                "maxChildren": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": ["Infinity", "-Infinity", "NaN"],
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxDepth": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "enum": ["Infinity", "-Infinity", "NaN"],
+                      "type": "string"
+                    }
+                  ]
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "parentTaskId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "projectId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "result": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "summary": {
+                          "type": "string"
+                        },
+                        "waitingOnBackgroundSince": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["summary"],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "rootTaskId": {
+                  "type": "string"
+                },
+                "source": {
+                  "enum": ["user", "delegation", "routine"],
+                  "type": "string"
+                },
+                "startedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "queued",
+                    "running",
+                    "waiting_for_agent",
+                    "waiting_for_user",
+                    "waiting_for_browser",
+                    "rate_limited",
+                    "completed",
+                    "failed",
+                    "interrupted",
+                    "cancelled"
+                  ],
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "taskId",
+                "rootTaskId",
+                "parentTaskId",
+                "botId",
+                "threadId",
+                "title",
+                "objective",
+                "acceptanceCriteria",
+                "expectedOutput",
+                "status",
+                "source",
+                "idempotencyKey",
+                "depth",
+                "maxDepth",
+                "maxChildren",
+                "result",
+                "errorCategory",
+                "errorMessage",
+                "availableAt",
+                "createdAt",
+                "updatedAt",
+                "startedAt",
+                "completedAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["history", "tasks"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalTasksErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalTasksError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalTasksErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalProjects.list",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "projects": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "chats": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 10,
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "estimate": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "dueAt": {
+                          "type": "string"
+                        },
+                        "estimatedAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["dueAt", "estimatedAt"],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lastActivityAt": {
+                  "type": "string"
+                },
+                "leadBotId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "projectId": {
+                  "type": "string"
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "kind": {
+                          "enum": ["open"],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["kind"],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "closedAt": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": ["done"],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["kind", "closedAt"],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "closedAt": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": ["dropped"],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["kind", "closedAt"],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "steps": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "enum": ["done", "doing", "todo"],
+                        "type": "string"
+                      }
+                    },
+                    "required": ["label", "state"],
+                    "type": "object"
+                  },
+                  "minItems": 1,
+                  "prefixItems": [
+                    {
+                      "additionalProperties": true,
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "enum": ["done", "doing", "todo"],
+                          "type": "string"
+                        }
+                      },
+                      "required": ["label", "state"],
+                      "type": "object"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "threadId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "why": {
+                  "anyOf": [
+                    {
+                      "maxLength": 140,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "projectId",
+                "leadBotId",
+                "threadId",
+                "name",
+                "steps",
+                "estimate",
+                "state",
+                "lastActivityAt",
+                "createdAt",
+                "updatedAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["projects"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalTasksErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalTasksError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalTasksErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
       "tag": "personalPush.ackInApp",
       "payload": {
         "additionalProperties": true,
@@ -23257,6 +25014,164 @@
       }
     },
     {
+      "tag": "personalPush.notificationContent",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "notificationId": {
+            "type": "string"
+          }
+        },
+        "required": ["notificationId"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "botId": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "question",
+              "approval",
+              "sign-in",
+              "secret",
+              "chat-reply",
+              "failure",
+              "task",
+              "test"
+            ],
+            "type": "string"
+          },
+          "notificationId": {
+            "type": "string"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "inlineOptions": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "requestId": {
+                    "type": "string"
+                  }
+                },
+                "required": ["requestId", "question", "inlineOptions"],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": ["notificationId", "kind", "botId", "threadId", "text", "question"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalPushErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalPushError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalPushErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
       "tag": "personalPush.publicKey",
       "payload": {
         "not": {
@@ -23271,6 +25186,107 @@
           }
         },
         "required": ["publicKey"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalPushErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalPushError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalPushErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalPush.registerFcm",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "appVersion": {
+            "maxLength": 40,
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": ["token", "appVersion"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "delivery": {
+            "enum": ["ready", "disabled"],
+            "type": "string"
+          }
+        },
+        "required": ["delivery"],
         "type": "object"
       },
       "error": {
@@ -23753,6 +25769,97 @@
         },
         "required": ["queued"],
         "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalPushErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalPushError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalPushErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalPush.unregisterFcm",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": ["token"],
+        "type": "object"
+      },
+      "success": {
+        "not": {
+          "type": "null"
+        }
       },
       "error": {
         "$defs": {
@@ -26195,6 +28302,19 @@
                 "anyOf": [
                   {
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "projectId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
                   },
                   {
                     "type": "null"
@@ -29075,6 +31195,19 @@
               }
             ]
           },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "result": {
             "anyOf": [
               {
@@ -29404,6 +31537,19 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
               },
               {
                 "type": "null"
@@ -30015,6 +32161,19 @@
                   }
                 ]
               },
+              "projectId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "result": {
                 "anyOf": [
                   {
@@ -30445,6 +32604,19 @@
                     }
                   ]
                 },
+                "projectId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "result": {
                   "anyOf": [
                     {
@@ -30802,6 +32974,19 @@
                     }
                   ]
                 },
+                "projectId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "result": {
                   "anyOf": [
                     {
@@ -31137,6 +33322,19 @@
                     }
                   ]
                 },
+                "projectId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "result": {
                   "anyOf": [
                     {
@@ -31443,6 +33641,19 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
               },
               {
                 "type": "null"
@@ -33513,6 +35724,681 @@
       }
     },
     {
+      "tag": "personalWork.answer",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "choice": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "commandId": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": ["threadId", "messageId", "choice", "commandId"],
+        "type": "object"
+      },
+      "success": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "properties": {
+              "status": {
+                "enum": ["sent"],
+                "type": "string"
+              }
+            },
+            "required": ["status"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": true,
+            "properties": {
+              "status": {
+                "enum": ["stale"],
+                "type": "string"
+              }
+            },
+            "required": ["status"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": true,
+            "properties": {
+              "status": {
+                "enum": ["unknownChoice"],
+                "type": "string"
+              }
+            },
+            "required": ["status"],
+            "type": "object"
+          }
+        ]
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalTasksErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalTasksError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalTasksErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalWork.questions",
+      "payload": {
+        "not": {
+          "type": "null"
+        }
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "questions": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "askedAt": {
+                  "type": "string"
+                },
+                "botId": {
+                  "type": "string"
+                },
+                "messageId": {
+                  "type": "string"
+                },
+                "options": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "question": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "threadId": {
+                  "type": "string"
+                }
+              },
+              "required": ["threadId", "botId", "messageId", "askedAt", "question", "options"],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": ["questions"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalTasksErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalTasksError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalTasksErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
+      "tag": "personalWork.since",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "since": {
+            "type": "string"
+          }
+        },
+        "required": ["since"],
+        "type": "object"
+      },
+      "success": {
+        "additionalProperties": true,
+        "properties": {
+          "asOf": {
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["taskDone"],
+                      "type": "string"
+                    },
+                    "task": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "botId": {
+                          "type": "string"
+                        },
+                        "parentTaskId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "source": {
+                          "enum": ["user", "delegation", "routine"],
+                          "type": "string"
+                        },
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "botId",
+                        "threadId",
+                        "source",
+                        "parentTaskId",
+                        "title"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["kind", "at", "task"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["taskFailed"],
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": ["failed", "interrupted"],
+                      "type": "string"
+                    },
+                    "task": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "botId": {
+                          "type": "string"
+                        },
+                        "parentTaskId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "source": {
+                          "enum": ["user", "delegation", "routine"],
+                          "type": "string"
+                        },
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "botId",
+                        "threadId",
+                        "source",
+                        "parentTaskId",
+                        "title"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["kind", "at", "task", "status"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["taskRestarted"],
+                      "type": "string"
+                    },
+                    "task": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "botId": {
+                          "type": "string"
+                        },
+                        "parentTaskId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "source": {
+                          "enum": ["user", "delegation", "routine"],
+                          "type": "string"
+                        },
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "botId",
+                        "threadId",
+                        "source",
+                        "parentTaskId",
+                        "title"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["kind", "at", "task"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["taskStarted"],
+                      "type": "string"
+                    },
+                    "task": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "botId": {
+                          "type": "string"
+                        },
+                        "parentTaskId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "source": {
+                          "enum": ["user", "delegation", "routine"],
+                          "type": "string"
+                        },
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "taskId",
+                        "botId",
+                        "threadId",
+                        "source",
+                        "parentTaskId",
+                        "title"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["kind", "at", "task"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["goalOpened"],
+                      "type": "string"
+                    },
+                    "leadBotId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "at", "projectId", "name", "leadBotId"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": true,
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": ["goalClosed"],
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "outcome": {
+                      "enum": ["done", "dropped"],
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "at", "projectId", "name", "outcome"],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "omitted": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "enum": ["Infinity", "-Infinity", "NaN"],
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": ["events", "omitted", "asOf"],
+        "type": "object"
+      },
+      "error": {
+        "$defs": {
+          "EnvironmentAuthorizationErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["EnvironmentAuthorizationError"],
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requiredPermission": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "enum": [
+                  "orchestration:read",
+                  "orchestration:operate",
+                  "settings:write",
+                  "providers:manage",
+                  "environment:maintain",
+                  "preview:operate",
+                  "diagnostics:read",
+                  "terminal:read",
+                  "terminal:operate",
+                  "filesystem:read",
+                  "filesystem:write",
+                  "review:write",
+                  "source-control:write",
+                  "access:read",
+                  "access:write",
+                  "relay:read",
+                  "relay:write"
+                ],
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message", "requiredScope"],
+            "type": "object"
+          },
+          "PersonalTasksErrorEncoded": {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": ["PersonalTasksError"],
+                "type": "string"
+              },
+              "cause": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["_tag", "message"],
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PersonalTasksErrorEncoded"
+          },
+          {
+            "$ref": "#/$defs/EnvironmentAuthorizationErrorEncoded"
+          }
+        ]
+      }
+    },
+    {
       "tag": "provider.catalog.add",
       "payload": {
         "additionalProperties": true,
@@ -34427,6 +37313,9 @@
                   "attachmentUploads": {
                     "type": "boolean"
                   },
+                  "cloudVoiceTranscription": {
+                    "type": "boolean"
+                  },
                   "commandOutputStreaming": {
                     "type": "boolean"
                   },
@@ -34448,6 +37337,9 @@
                   "environmentThemes": {
                     "type": "boolean"
                   },
+                  "fastWorktreeCheckout": {
+                    "type": "boolean"
+                  },
                   "fileAttachments": {
                     "additionalProperties": true,
                     "properties": {
@@ -34466,16 +37358,31 @@
                   "ignoredFileListing": {
                     "type": "boolean"
                   },
+                  "ignoredFileSearch": {
+                    "type": "boolean"
+                  },
                   "inlineMessageContext": {
                     "type": "boolean"
                   },
                   "linkFence": {
                     "type": "boolean"
                   },
+                  "linkedThreadRefreshes": {
+                    "type": "boolean"
+                  },
                   "localServerStop": {
                     "type": "boolean"
                   },
+                  "mcpApprovalCodes": {
+                    "type": "boolean"
+                  },
+                  "mcpHostedApproval": {
+                    "type": "boolean"
+                  },
                   "mcpModeLimitHeader": {
+                    "type": "boolean"
+                  },
+                  "modelCatalogRefresh": {
                     "type": "boolean"
                   },
                   "npmReleaseLookup": {
@@ -34536,6 +37443,9 @@
                   "scheduledTaskThreadModes": {
                     "type": "boolean"
                   },
+                  "secretSourceCheck": {
+                    "type": "boolean"
+                  },
                   "serverBrowser": {
                     "type": "boolean"
                   },
@@ -34554,6 +37464,12 @@
                     "type": "boolean"
                   },
                   "settledWorktreeCleanup": {
+                    "type": "boolean"
+                  },
+                  "shellOlderSettled": {
+                    "type": "boolean"
+                  },
+                  "shellThreadFamilies": {
                     "type": "boolean"
                   },
                   "sideChats": {
@@ -34626,6 +37542,9 @@
                     "type": "boolean"
                   },
                   "usagePriceOverrides": {
+                    "type": "boolean"
+                  },
+                  "vcsBranchStatus": {
                     "type": "boolean"
                   },
                   "voiceTranscription": {
@@ -34866,6 +37785,7 @@
                             "preview.zoomIn",
                             "preview.zoomOut",
                             "preview.resetZoom",
+                            "preview.find",
                             "commandPalette.toggle",
                             "filePicker.toggle",
                             "projectSearch.toggle",
@@ -34919,6 +37839,7 @@
                             "thread.copyReference",
                             "thread.settle",
                             "thread.pin",
+                            "thread.regenerateTitle",
                             "thread.undo",
                             "thread.jump.1",
                             "thread.jump.2",
@@ -34948,6 +37869,8 @@
                           "type": "boolean"
                         },
                         "key": {
+                          "maxLength": 64,
+                          "minLength": 1,
                           "type": "string"
                         },
                         "metaKey": {
@@ -35319,6 +38242,16 @@
                             }
                           ]
                         },
+                        "endpoint": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "label": {
                           "anyOf": [
                             {
@@ -35474,6 +38407,9 @@
                         }
                       ]
                     },
+                    "catalogDigest": {
+                      "type": "string"
+                    },
                     "catalogId": {
                       "anyOf": [
                         {
@@ -35610,6 +38546,9 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "loadedCatalogDigest": {
+                      "type": "string"
                     },
                     "message": {
                       "anyOf": [
@@ -35853,6 +38792,16 @@
                             "anyOf": [
                               {
                                 "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "supportsTextGeneration": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
                               },
                               {
                                 "type": "null"
@@ -36612,6 +39561,39 @@
                                       "minimum": 0,
                                       "type": "integer"
                                     },
+                                    "kinds": {
+                                      "anyOf": [
+                                        {
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "additionalProperties": true,
+                                                "properties": {
+                                                  "availableCount": {
+                                                    "maximum": 9007199254740991,
+                                                    "minimum": 0,
+                                                    "type": "integer"
+                                                  },
+                                                  "kind": {
+                                                    "enum": ["fable", "full", "weekly", "session"],
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": ["kind", "availableCount"],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
                                     "nextCreditId": {
                                       "anyOf": [
                                         {
@@ -36626,6 +39608,60 @@
                                       "anyOf": [
                                         {
                                           "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "nextKind": {},
+                                    "options": {
+                                      "anyOf": [
+                                        {
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "additionalProperties": true,
+                                                "properties": {
+                                                  "availableCount": {
+                                                    "maximum": 9007199254740991,
+                                                    "minimum": 0,
+                                                    "type": "integer"
+                                                  },
+                                                  "creditId": {
+                                                    "type": "string"
+                                                  },
+                                                  "description": {
+                                                    "type": "string"
+                                                  },
+                                                  "expiresAt": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "string"
+                                                      },
+                                                      {
+                                                        "type": "null"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "creditId",
+                                                  "label",
+                                                  "description",
+                                                  "availableCount"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "type": "array"
                                         },
                                         {
                                           "type": "null"
@@ -36685,6 +39721,32 @@
                                       "label": {
                                         "type": "string"
                                       },
+                                      "modelIds": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "type": "string"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "providerIds": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "type": "string"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
                                       "resetsAt": {
                                         "anyOf": [
                                           {
@@ -36728,6 +39790,16 @@
                                 ]
                               },
                               "type": "array"
+                            },
+                            "zeroSpendCap": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": ["checkedAt", "windows"],
@@ -36838,6 +39910,282 @@
                           },
                           "cwd": {
                             "type": "string"
+                          },
+                          "models": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "aliases": {
+                                      "anyOf": [
+                                        {
+                                          "items": {
+                                            "type": "string"
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "badge": {
+                                      "anyOf": [
+                                        {
+                                          "enum": ["new"],
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "capabilities": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": true,
+                                          "properties": {
+                                            "optionDescriptors": {
+                                              "anyOf": [
+                                                {
+                                                  "items": {
+                                                    "anyOf": [
+                                                      {
+                                                        "additionalProperties": true,
+                                                        "properties": {
+                                                          "currentValue": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "description": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "id": {
+                                                            "type": "string"
+                                                          },
+                                                          "label": {
+                                                            "type": "string"
+                                                          },
+                                                          "options": {
+                                                            "items": {
+                                                              "additionalProperties": true,
+                                                              "properties": {
+                                                                "description": {
+                                                                  "anyOf": [
+                                                                    {
+                                                                      "type": "string"
+                                                                    },
+                                                                    {
+                                                                      "type": "null"
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                "id": {
+                                                                  "type": "string"
+                                                                },
+                                                                "isDefault": {
+                                                                  "anyOf": [
+                                                                    {
+                                                                      "type": "boolean"
+                                                                    },
+                                                                    {
+                                                                      "type": "null"
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                "label": {
+                                                                  "type": "string"
+                                                                }
+                                                              },
+                                                              "required": ["id", "label"],
+                                                              "type": "object"
+                                                            },
+                                                            "type": "array"
+                                                          },
+                                                          "promptInjectedValues": {
+                                                            "anyOf": [
+                                                              {
+                                                                "items": {
+                                                                  "type": "string"
+                                                                },
+                                                                "type": "array"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "role": {
+                                                            "anyOf": [
+                                                              {
+                                                                "enum": ["reasoning"],
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "type": {
+                                                            "enum": ["select"],
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "id",
+                                                          "label",
+                                                          "type",
+                                                          "options"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": true,
+                                                        "properties": {
+                                                          "currentValue": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "boolean"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "description": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "id": {
+                                                            "type": "string"
+                                                          },
+                                                          "label": {
+                                                            "type": "string"
+                                                          },
+                                                          "type": {
+                                                            "enum": ["boolean"],
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": ["id", "label", "type"],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "type": "array"
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "type": "object"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "isCustom": {
+                                      "type": "boolean"
+                                    },
+                                    "isDefault": {
+                                      "anyOf": [
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "isLegacy": {
+                                      "anyOf": [
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "shortName": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "slug": {
+                                      "type": "string"
+                                    },
+                                    "subProvider": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "supportsTextGeneration": {
+                                      "anyOf": [
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": ["slug", "name", "isCustom", "capabilities"],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "modelsPending": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "optionDescriptors": {
                             "anyOf": [
@@ -37369,6 +40717,88 @@
                   }
                 ]
               },
+              "cloudSpeechCredentials": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "properties": {
+                      "openai": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "additionalProperties": true,
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "reference": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["provider", "reference"],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "openrouter": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "additionalProperties": true,
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "reference": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["provider", "reference"],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "xai": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "additionalProperties": true,
+                            "properties": {
+                              "provider": {
+                                "type": "string"
+                              },
+                              "reference": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["provider", "reference"],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "compactIdleThreads": {
                 "anyOf": [
                   {
@@ -37384,16 +40814,6 @@
                 ]
               },
               "continueThreadsAfterServerUpdate": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "cursorKeychainUsageEnabled": {
                 "anyOf": [
                   {
                     "type": "boolean"
@@ -37796,6 +41216,16 @@
                   }
                 ]
               },
+              "fastWorktreeCheckout": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "favorites": {
                 "anyOf": [
                   {
@@ -37866,6 +41296,16 @@
                 "enum": ["onReturn", "beforeCacheExpires", "off"],
                 "type": "string"
               },
+              "keepAwakeWhileAgentsWork": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "linkedEnvironmentsEnabled": {
                 "anyOf": [
                   {
@@ -37921,6 +41361,19 @@
                           }
                         ]
                       }
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "offeredSourceControlProviders": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "type": "boolean"
                     },
                     "type": "object"
                   },
@@ -38245,7 +41698,7 @@
                         "pullRequestMergeMethod": {
                           "anyOf": [
                             {
-                              "enum": ["merge", "squash", "rebase"],
+                              "enum": ["merge", "squash", "rebase", "fast-forward"],
                               "type": "string"
                             },
                             {
@@ -38572,6 +42025,16 @@
                   }
                 ]
               },
+              "promptSuggestionsEnabled": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "providerHealthRefreshInterval": {
                 "anyOf": [
                   {
@@ -38727,7 +42190,7 @@
               "pullRequestMergeMethod": {
                 "anyOf": [
                   {
-                    "enum": ["merge", "squash", "rebase"],
+                    "enum": ["merge", "squash", "rebase", "fast-forward"],
                     "type": "string"
                   },
                   {
@@ -39398,6 +42861,73 @@
                   }
                 ]
               },
+              "textGenerators": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "additionalProperties": true,
+                      "properties": {
+                        "apiKey": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "additionalProperties": true,
+                              "properties": {
+                                "provider": {
+                                  "type": "string"
+                                },
+                                "reference": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["provider", "reference"],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "baseUrl": {
+                          "type": "string"
+                        },
+                        "enabled": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "kind": {
+                          "enum": ["openaiCompatible", "anthropic"],
+                          "type": "string"
+                        },
+                        "label": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["kind", "baseUrl"],
+                      "type": "object"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "threadTitleInstructions": {
                 "anyOf": [
                   {
@@ -39660,6 +43190,9 @@
           "threadFindProgressive": {
             "type": "boolean"
           },
+          "threadLinkMetadata": {
+            "type": "boolean"
+          },
           "threadResumeCompletionMarker": {
             "type": "boolean"
           },
@@ -39789,6 +43322,44 @@
                                                 "minimum": 0,
                                                 "type": "integer"
                                               },
+                                              "kinds": {
+                                                "anyOf": [
+                                                  {
+                                                    "items": {
+                                                      "anyOf": [
+                                                        {
+                                                          "additionalProperties": true,
+                                                          "properties": {
+                                                            "availableCount": {
+                                                              "maximum": 9007199254740991,
+                                                              "minimum": 0,
+                                                              "type": "integer"
+                                                            },
+                                                            "kind": {
+                                                              "enum": [
+                                                                "fable",
+                                                                "full",
+                                                                "weekly",
+                                                                "session"
+                                                              ],
+                                                              "type": "string"
+                                                            }
+                                                          },
+                                                          "required": ["kind", "availableCount"],
+                                                          "type": "object"
+                                                        },
+                                                        {
+                                                          "type": "null"
+                                                        }
+                                                      ]
+                                                    },
+                                                    "type": "array"
+                                                  },
+                                                  {
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              },
                                               "nextCreditId": {
                                                 "anyOf": [
                                                   {
@@ -39803,6 +43374,60 @@
                                                 "anyOf": [
                                                   {
                                                     "type": "string"
+                                                  },
+                                                  {
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              },
+                                              "nextKind": {},
+                                              "options": {
+                                                "anyOf": [
+                                                  {
+                                                    "items": {
+                                                      "anyOf": [
+                                                        {
+                                                          "additionalProperties": true,
+                                                          "properties": {
+                                                            "availableCount": {
+                                                              "maximum": 9007199254740991,
+                                                              "minimum": 0,
+                                                              "type": "integer"
+                                                            },
+                                                            "creditId": {
+                                                              "type": "string"
+                                                            },
+                                                            "description": {
+                                                              "type": "string"
+                                                            },
+                                                            "expiresAt": {
+                                                              "anyOf": [
+                                                                {
+                                                                  "type": "string"
+                                                                },
+                                                                {
+                                                                  "type": "null"
+                                                                }
+                                                              ]
+                                                            },
+                                                            "label": {
+                                                              "type": "string"
+                                                            }
+                                                          },
+                                                          "required": [
+                                                            "creditId",
+                                                            "label",
+                                                            "description",
+                                                            "availableCount"
+                                                          ],
+                                                          "type": "object"
+                                                        },
+                                                        {
+                                                          "type": "null"
+                                                        }
+                                                      ]
+                                                    },
+                                                    "type": "array"
                                                   },
                                                   {
                                                     "type": "null"
@@ -39862,6 +43487,32 @@
                                                 "label": {
                                                   "type": "string"
                                                 },
+                                                "modelIds": {
+                                                  "anyOf": [
+                                                    {
+                                                      "items": {
+                                                        "type": "string"
+                                                      },
+                                                      "type": "array"
+                                                    },
+                                                    {
+                                                      "type": "null"
+                                                    }
+                                                  ]
+                                                },
+                                                "providerIds": {
+                                                  "anyOf": [
+                                                    {
+                                                      "items": {
+                                                        "type": "string"
+                                                      },
+                                                      "type": "array"
+                                                    },
+                                                    {
+                                                      "type": "null"
+                                                    }
+                                                  ]
+                                                },
                                                 "resetsAt": {
                                                   "anyOf": [
                                                     {
@@ -39905,6 +43556,16 @@
                                           ]
                                         },
                                         "type": "array"
+                                      },
+                                      "zeroSpendCap": {
+                                        "anyOf": [
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
                                       }
                                     },
                                     "required": ["checkedAt", "windows"],
@@ -39953,6 +43614,16 @@
                         },
                         "label": {
                           "type": "string"
+                        },
+                        "origin": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": ["id", "kind", "label", "checkedAt", "accounts"],
@@ -40351,6 +44022,88 @@
               }
             ]
           },
+          "cloudSpeechCredentials": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "openai": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "additionalProperties": true,
+                        "properties": {
+                          "provider": {
+                            "type": "string"
+                          },
+                          "reference": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["provider", "reference"],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "openrouter": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "additionalProperties": true,
+                        "properties": {
+                          "provider": {
+                            "type": "string"
+                          },
+                          "reference": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["provider", "reference"],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "xai": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "additionalProperties": true,
+                        "properties": {
+                          "provider": {
+                            "type": "string"
+                          },
+                          "reference": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["provider", "reference"],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "compactIdleThreads": {
             "anyOf": [
               {
@@ -40366,16 +44119,6 @@
             ]
           },
           "continueThreadsAfterServerUpdate": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "cursorKeychainUsageEnabled": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -40778,6 +44521,16 @@
               }
             ]
           },
+          "fastWorktreeCheckout": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "favorites": {
             "anyOf": [
               {
@@ -40848,6 +44601,16 @@
             "enum": ["onReturn", "beforeCacheExpires", "off"],
             "type": "string"
           },
+          "keepAwakeWhileAgentsWork": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "linkedEnvironmentsEnabled": {
             "anyOf": [
               {
@@ -40903,6 +44666,19 @@
                       }
                     ]
                   }
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "offeredSourceControlProviders": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
                 },
                 "type": "object"
               },
@@ -41227,7 +45003,7 @@
                     "pullRequestMergeMethod": {
                       "anyOf": [
                         {
-                          "enum": ["merge", "squash", "rebase"],
+                          "enum": ["merge", "squash", "rebase", "fast-forward"],
                           "type": "string"
                         },
                         {
@@ -41550,6 +45326,16 @@
               }
             ]
           },
+          "promptSuggestionsEnabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "providerHealthRefreshInterval": {
             "anyOf": [
               {
@@ -41705,7 +45491,7 @@
           "pullRequestMergeMethod": {
             "anyOf": [
               {
-                "enum": ["merge", "squash", "rebase"],
+                "enum": ["merge", "squash", "rebase", "fast-forward"],
                 "type": "string"
               },
               {
@@ -42368,6 +46154,73 @@
               }
             ]
           },
+          "textGenerators": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "apiKey": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "additionalProperties": true,
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "reference": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["provider", "reference"],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "baseUrl": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "kind": {
+                      "enum": ["openaiCompatible", "anthropic"],
+                      "type": "string"
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["kind", "baseUrl"],
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "threadTitleInstructions": {
             "anyOf": [
               {
@@ -42719,6 +46572,36 @@
               }
             ]
           },
+          "machineCatalog": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "modelCatalogOnly": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "omitProviders": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "providerCatalogsOnDemand": {
             "anyOf": [
               {
@@ -42851,6 +46734,16 @@
                           ]
                         },
                         "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "endpoint": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -43015,6 +46908,9 @@
                         }
                       ]
                     },
+                    "catalogDigest": {
+                      "type": "string"
+                    },
                     "catalogId": {
                       "anyOf": [
                         {
@@ -43151,6 +47047,9 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "loadedCatalogDigest": {
+                      "type": "string"
                     },
                     "message": {
                       "anyOf": [
@@ -43394,6 +47293,16 @@
                             "anyOf": [
                               {
                                 "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "supportsTextGeneration": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
                               },
                               {
                                 "type": "null"
@@ -44153,6 +48062,39 @@
                                       "minimum": 0,
                                       "type": "integer"
                                     },
+                                    "kinds": {
+                                      "anyOf": [
+                                        {
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "additionalProperties": true,
+                                                "properties": {
+                                                  "availableCount": {
+                                                    "maximum": 9007199254740991,
+                                                    "minimum": 0,
+                                                    "type": "integer"
+                                                  },
+                                                  "kind": {
+                                                    "enum": ["fable", "full", "weekly", "session"],
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": ["kind", "availableCount"],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
                                     "nextCreditId": {
                                       "anyOf": [
                                         {
@@ -44167,6 +48109,60 @@
                                       "anyOf": [
                                         {
                                           "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "nextKind": {},
+                                    "options": {
+                                      "anyOf": [
+                                        {
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "additionalProperties": true,
+                                                "properties": {
+                                                  "availableCount": {
+                                                    "maximum": 9007199254740991,
+                                                    "minimum": 0,
+                                                    "type": "integer"
+                                                  },
+                                                  "creditId": {
+                                                    "type": "string"
+                                                  },
+                                                  "description": {
+                                                    "type": "string"
+                                                  },
+                                                  "expiresAt": {
+                                                    "anyOf": [
+                                                      {
+                                                        "type": "string"
+                                                      },
+                                                      {
+                                                        "type": "null"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "creditId",
+                                                  "label",
+                                                  "description",
+                                                  "availableCount"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "type": "array"
                                         },
                                         {
                                           "type": "null"
@@ -44226,6 +48222,32 @@
                                       "label": {
                                         "type": "string"
                                       },
+                                      "modelIds": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "type": "string"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "providerIds": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "type": "string"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
                                       "resetsAt": {
                                         "anyOf": [
                                           {
@@ -44269,6 +48291,16 @@
                                 ]
                               },
                               "type": "array"
+                            },
+                            "zeroSpendCap": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": ["checkedAt", "windows"],
@@ -44379,6 +48411,282 @@
                           },
                           "cwd": {
                             "type": "string"
+                          },
+                          "models": {
+                            "anyOf": [
+                              {
+                                "items": {
+                                  "additionalProperties": true,
+                                  "properties": {
+                                    "aliases": {
+                                      "anyOf": [
+                                        {
+                                          "items": {
+                                            "type": "string"
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "badge": {
+                                      "anyOf": [
+                                        {
+                                          "enum": ["new"],
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "capabilities": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": true,
+                                          "properties": {
+                                            "optionDescriptors": {
+                                              "anyOf": [
+                                                {
+                                                  "items": {
+                                                    "anyOf": [
+                                                      {
+                                                        "additionalProperties": true,
+                                                        "properties": {
+                                                          "currentValue": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "description": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "id": {
+                                                            "type": "string"
+                                                          },
+                                                          "label": {
+                                                            "type": "string"
+                                                          },
+                                                          "options": {
+                                                            "items": {
+                                                              "additionalProperties": true,
+                                                              "properties": {
+                                                                "description": {
+                                                                  "anyOf": [
+                                                                    {
+                                                                      "type": "string"
+                                                                    },
+                                                                    {
+                                                                      "type": "null"
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                "id": {
+                                                                  "type": "string"
+                                                                },
+                                                                "isDefault": {
+                                                                  "anyOf": [
+                                                                    {
+                                                                      "type": "boolean"
+                                                                    },
+                                                                    {
+                                                                      "type": "null"
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                "label": {
+                                                                  "type": "string"
+                                                                }
+                                                              },
+                                                              "required": ["id", "label"],
+                                                              "type": "object"
+                                                            },
+                                                            "type": "array"
+                                                          },
+                                                          "promptInjectedValues": {
+                                                            "anyOf": [
+                                                              {
+                                                                "items": {
+                                                                  "type": "string"
+                                                                },
+                                                                "type": "array"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "role": {
+                                                            "anyOf": [
+                                                              {
+                                                                "enum": ["reasoning"],
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "type": {
+                                                            "enum": ["select"],
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "id",
+                                                          "label",
+                                                          "type",
+                                                          "options"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": true,
+                                                        "properties": {
+                                                          "currentValue": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "boolean"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "description": {
+                                                            "anyOf": [
+                                                              {
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "id": {
+                                                            "type": "string"
+                                                          },
+                                                          "label": {
+                                                            "type": "string"
+                                                          },
+                                                          "type": {
+                                                            "enum": ["boolean"],
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": ["id", "label", "type"],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "type": "array"
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "type": "object"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "isCustom": {
+                                      "type": "boolean"
+                                    },
+                                    "isDefault": {
+                                      "anyOf": [
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "isLegacy": {
+                                      "anyOf": [
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "shortName": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "slug": {
+                                      "type": "string"
+                                    },
+                                    "subProvider": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "supportsTextGeneration": {
+                                      "anyOf": [
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": ["slug", "name", "isCustom", "capabilities"],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "modelsPending": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "optionDescriptors": {
                             "anyOf": [

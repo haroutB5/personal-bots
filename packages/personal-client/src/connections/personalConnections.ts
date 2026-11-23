@@ -90,6 +90,42 @@ export function createPersonalConnectionsClient<R, ER, P>(
     onSuccess: refreshConnections,
   });
 
+  const personalEmailStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "personal-email:status",
+    tag: WS_METHODS.personalEmailStatus,
+    staleTimeMs: 2_000,
+    idleTtlMs: 60_000,
+  });
+
+  const refreshEmailStatus = (
+    target: { readonly environmentId: EnvironmentId },
+    registry: { refresh: (atom: ReturnType<typeof personalEmailStatus>) => void },
+  ) =>
+    Effect.sync(() =>
+      registry.refresh(personalEmailStatus({ environmentId: target.environmentId, input: {} })),
+    );
+
+  const personalEmailUseAccounts = createEnvironmentRpcCommand(runtime, {
+    label: "personal-email:use-accounts",
+    tag: WS_METHODS.personalEmailUseAccounts,
+    onSuccess: (target, registry) =>
+      Effect.andThen(refreshEmailStatus(target, registry), refreshConnections(target, registry)),
+  });
+
+  const personalEmailStartThunderbird = createEnvironmentRpcCommand(runtime, {
+    label: "personal-email:start-thunderbird",
+    tag: WS_METHODS.personalEmailStartThunderbird,
+    onSuccess: refreshEmailStatus,
+  });
+
+  function usePersonalEmailStatus(environmentId: EnvironmentId | null) {
+    const atom = useMemo(
+      () => (environmentId === null ? null : personalEmailStatus({ environmentId, input: {} })),
+      [environmentId],
+    );
+    return client.useEnvironmentQuery(atom);
+  }
+
   function usePersonalConnections(environmentId: EnvironmentId | null) {
     const atom = useMemo(
       () => (environmentId === null ? null : personalConnectionsList({ environmentId, input: {} })),
@@ -110,6 +146,10 @@ export function createPersonalConnectionsClient<R, ER, P>(
     personalConnectionSetSettings,
     personalConnectionImportProbe,
     personalConnectionImportAdopt,
+    personalEmailStatus,
+    personalEmailUseAccounts,
+    personalEmailStartThunderbird,
+    usePersonalEmailStatus,
     usePersonalConnections,
   };
 }

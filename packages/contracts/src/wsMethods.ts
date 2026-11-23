@@ -262,6 +262,9 @@ export const WS_METHODS = {
   personalConnectionsSetSettings: "personalConnections.setSettings",
   personalConnectionsImportProbe: "personalConnections.importProbe",
   personalConnectionsImportAdopt: "personalConnections.importAdopt",
+  personalEmailStatus: "personalEmail.status",
+  personalEmailUseAccounts: "personalEmail.useAccounts",
+  personalEmailStartThunderbird: "personalEmail.startThunderbird",
 
   // Owner decisions about what a bot asked a connection to do.
   personalConnectionApprovalsList: "personalConnectionApprovals.list",

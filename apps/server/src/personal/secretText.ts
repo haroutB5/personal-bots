@@ -15,6 +15,12 @@ const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
   /\bAKIA[0-9A-Z]{16}\b/,
   /\bAIza[0-9A-Za-z_-]{30,}/,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+  // Mail sign-in tokens. By shape: Google access (ya29.) and refresh (1//0),
+  // Microsoft consumer access (EwB...) and refresh (M.C<n>_...).
+  /\bya29\.[A-Za-z0-9_-]{20,}/,
+  /(?<![A-Za-z0-9])1\/\/0[A-Za-z0-9_-]{20,}/,
+  /\bEwB[A-Za-z0-9+/=_-]{40,}/,
+  /(?<![A-Za-z0-9])M\.C\d+_[A-Za-z0-9._!*$%-]{20,}/,
   /\b(?:password|passwd|passcode|pwd|pin code|secret|api[_ -]?key|access[_ -]?key|auth[_ -]?token|token|sig|signature|bearer|private[_ -]?key|client[_ -]?secret)\b\s*(?:is|=|:)\s*\S+/i,
 ];
 

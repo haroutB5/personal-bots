@@ -39,6 +39,8 @@ const run = (input: {
   readonly groupName?: string;
   /** Every turn the task service was asked to adopt. */
   readonly adopted?: Array<string>;
+  /** Ask list_connections instead of calling an operation. */
+  readonly list?: boolean;
 }) => {
   const layer = ConnectionsToolkitHandlersLive.pipe(
     Layer.provide(
@@ -67,10 +69,23 @@ const run = (input: {
             {
               vendorId: "github",
               displayName: "GitHub",
+              accounts: [],
               operations: [
                 {
                   operation: "github.list_repositories",
                   description: "List the repositories the connected GitHub account can reach.",
+                  argumentsJsonSchema: '{"type":"object"}',
+                },
+              ],
+            },
+            {
+              vendorId: "gmail",
+              displayName: "Gmail",
+              accounts: ["a@gmail.com", "b@gmail.com"],
+              operations: [
+                {
+                  operation: "gmail.search",
+                  description: "Search one connected Gmail mailbox.",
                   argumentsJsonSchema: '{"type":"object"}',
                 },
               ],
@@ -125,6 +140,11 @@ const run = (input: {
     Effect.provide(
       Effect.gen(function* () {
         const toolkit = yield* ConnectionsToolkit;
+        if (input.list === true) {
+          return yield* toolkit
+            .handle("list_connections", {})
+            .pipe(Stream.unwrap, Stream.runCollect);
+        }
         return yield* toolkit
           .handle("connection_call", {
             operation: "github.list_repositories",
@@ -147,6 +167,16 @@ const run = (input: {
 };
 
 describe("connections toolkit", () => {
+  it.effect("lists the mailboxes of a multi-account vendor, and none for the others", () =>
+    Effect.gen(function* () {
+      const results = yield* run({ capability: true, linked: true, recorded: [], list: true });
+      const shown = text(results);
+      expect(shown).toContain("a@gmail.com");
+      expect(shown).toContain("b@gmail.com");
+      expect(shown).toMatch(/vendor: 'github'[^]*accounts: \[\]/);
+    }),
+  );
+
   it.effect("refuses outside a personal bot thread and never reaches the gateway", () =>
     Effect.gen(function* () {
       for (const [capability, linked] of [

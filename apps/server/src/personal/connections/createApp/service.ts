@@ -142,10 +142,10 @@ export const make = Effect.gen(function* () {
    */
   const prerequisites = Effect.fn("PersonalCreateAppService.prerequisites")(function* () {
     const github = yield* connections
-      .resolveForOperation("github")
+      .resolveForOperation("github", null)
       .pipe(Effect.mapError((error) => fail(error.message)));
     const vercel = yield* connections
-      .resolveForOperation("vercel")
+      .resolveForOperation("vercel", null)
       .pipe(Effect.mapError((error) => fail(error.message)));
     const missing = [
       ...(Option.isNone(github) ? ["GitHub"] : []),
@@ -317,7 +317,7 @@ export const make = Effect.gen(function* () {
           step.remoteId === null
             ? ""
             : ` (${step.adopted ? "found already there" : "created"}: ${step.remoteId})`;
-        return `- ${step.title}: ${step.state}${made}${step.error === null ? "" : ` — ${step.error}`}`;
+        return `- ${step.title}: ${step.state}${made}${step.error === null ? "" : ` (${step.error})`}`;
       })
       .join("\n")
       .concat(run.appUrl === null ? "" : `\nURL: ${run.appUrl}`);

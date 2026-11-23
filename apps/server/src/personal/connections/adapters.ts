@@ -47,6 +47,18 @@ export class ConnectionVendorError extends Schema.TaggedError<ConnectionVendorEr
      * vendor may or may not have acted.
      */
     status: Schema.optionalKey(Schema.Number),
+    /**
+     * The app on this machine that serves the vendor is not answering, so
+     * nothing ran and no credential is at fault. `detail` is then the whole
+     * sentence for the model.
+     */
+    unavailable: Schema.optionalKey(Schema.Boolean),
+    /**
+     * The vendor did what was asked, but not where it was asked to, so a
+     * second call would repeat the effect. `detail` is then the whole
+     * sentence for the model, and the gateway passes it on unchanged.
+     */
+    completed: Schema.optionalKey(Schema.Boolean),
   },
 ) {}
 
@@ -88,6 +100,12 @@ export interface ConnectionVendorCall {
    */
   readonly connectionId: ConnectionId;
   readonly settings: PersonalConnectionSettings;
+  /**
+   * Where this connection's credential is stored. The gateway always sets it.
+   * Only a vendor whose provider rotates its refresh token reads it, to
+   * rewrite the value in place; every other adapter ignores it.
+   */
+  readonly credentialHandle?: { readonly credentialRef: string; readonly version: number };
   /**
    * The account this connection was validated against, as the owner saw it on
    * the connect screen. A vendor that scopes requests by team reads it from

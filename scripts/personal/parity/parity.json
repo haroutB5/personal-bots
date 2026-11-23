@@ -8,7 +8,7 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 443,
+    "items": 446,
     "byKind": {
       "screen": 75,
       "sheet": 25,
@@ -16,22 +16,22 @@
       "card": 24,
       "setting": 105,
       "pref": 14,
-      "rpc": 136
+      "rpc": 139
     },
     "byStatus": {
-      "done": 389,
+      "done": 392,
       "planned": 0,
       "n/a": 54,
       "unassigned": 0
     },
-    "userActions": 159,
+    "userActions": 161,
     "byPr": {
       "A2": 18,
       "A4": 13,
       "A9": 37,
       "A10": 30,
       "A14": 45,
-      "A15": 55,
+      "A15": 58,
       "A11": 17,
       "A16": 22,
       "A13": 9,
@@ -11932,6 +11932,47 @@
       "pr": "A14",
       "status": "done",
       "check": "Android calls personalBotsSetProfile (command) from AllChatsCount.tsx with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalEmailStatus",
+      "kind": "rpc",
+      "title": "personalEmailStatus (query)",
+      "web": "packages/personal-client/src/connections/personalConnections.ts:95",
+      "rpcKind": "query",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalEmailStatus (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalEmailUseAccounts",
+      "kind": "rpc",
+      "title": "personalEmailUseAccounts (command)",
+      "web": "packages/personal-client/src/connections/personalConnections.ts:110",
+      "rpcKind": "command",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "userAction": true,
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalEmailUseAccounts (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalEmailStartThunderbird",
+      "kind": "rpc",
+      "title": "personalEmailStartThunderbird (command)",
+      "web": "packages/personal-client/src/connections/personalConnections.ts:117",
+      "rpcKind": "command",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "userAction": true,
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalEmailStartThunderbird (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalVoiceCallsStart",

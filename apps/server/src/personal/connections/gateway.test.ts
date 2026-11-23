@@ -135,6 +135,7 @@ const makeHarness = (options?: HarnessOptions): Harness => {
     CredentialStore.PersonalConnectionCredentialStore.of({
       create: () => Effect.die("unused"),
       createNext: () => Effect.die("unused"),
+      replaceInPlace: () => Effect.die("unused"),
       read: (handle) =>
         Effect.sync(() =>
           handle.version === connection.credentialVersion
