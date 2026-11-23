@@ -45,7 +45,10 @@ const env = () => ({
   XDG_DATA_HOME: `${ROOT}/homes/data`,
   XDG_CACHE_HOME: `${ROOT}/homes/cache`,
   PERSONAL_SEED_MODEL: "claude-sonnet-5-5",
-  T3CODE_PERSONAL_SCHEDULERS: "off",
+  // The data dir is always fresh (no restored routines or queued work), so the schedulers run, as
+  // on scripts/personal/throwaway-server.ps1: a delegated task must start (flow 14, 1.67.55).
+  // VERIFY_SCHEDULERS=off turns them off.
+  ...(process.env.VERIFY_SCHEDULERS === "off" ? { T3CODE_PERSONAL_SCHEDULERS: "off" } : {}),
   T3CODE_PERSONAL_BROWSER_HEADLESS: "1",
   HBOTS_REBOOT_DRY_RUN: "1",
   T3CODE_AUTO_CONNECT: "false",

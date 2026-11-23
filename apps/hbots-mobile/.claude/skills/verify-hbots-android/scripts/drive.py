@@ -1174,6 +1174,15 @@ class Run:
                         f"Email settled in {settle:.1f} s on the repair state: Thunderbird on the laptop {'Needs attention' if state else '(state text not found)'}, "
                         f"'The Commonpost mail bridge is not installed on the laptop.', 'Ask a bot to repair email.'; no Found, Connected or Use these accounts; held 6 s; Back returned to Integrations; device {night}; {size}")
 
+    def f14_open_lead(self, bot):
+        """Open a team lead's chat. A lead sits in the pinned strip as a tile ("Assistant", or "Assistant, <status>"), not a list row."""
+        row = self.bot_row
+        self.bot_row = lambda s, b: row(s, b) or next((n for n in s.find(desc=rf"{b}(, .*)?") if n.clickable), None)
+        try:
+            return self.open_bot(bot)
+        finally:
+            del self.bot_row
+
     def f14(self):
         """Working in background (1.67.55): Assistant delegates a task to Planner whose turn starts a background command (fake BGSTART) and
         ends with it still running, so the task stays running with waitingOnBackgroundSince. The task card in Assistant's chat, Planner's
@@ -1182,8 +1191,8 @@ class Run:
         label = r"(?s).*Working in background.*"
         night = self.d.sh("cmd uimode night").strip()
         size = self.d.sh("wm size").strip() + "; " + self.d.sh("wm density").strip()
-        self.open_bot("Assistant")
-        self.say("Assistant", 'MCPTOOL delegate_task {"targetBot":"Planner","title":"QA background build","objective":"BGSTART"}')
+        self.f14_open_lead("Assistant")
+        self.say("Assistant", 'MCPONCE delegate_task {"targetBot":"Planner","title":"QA background build","objective":"BGSTART"}')
         # The card: the child's turn ends with the command live, then the server marks the task (taskSettling publishWaitingPreview).
         find = lambda s, pat: s.first(text=pat) or s.first(desc=pat)
         s, card = self.d.wait(lambda s: find(s, label) and find(s, r"(?s).*Planner.*"), 45)
@@ -1220,7 +1229,7 @@ class Run:
         if idle or ready:
             return "FAIL", f"row and header disagree: header Idle {idle}, row Ready {ready}"
         # Clearing: interrupt the task from the card, then the row must stop saying it.
-        self.open_bot("Assistant")
+        self.f14_open_lead("Assistant")
         s, stop = self.d.wait(lambda s: next((n for n in s.find(text=r"Interrupt") if s.drawn(n)), None), 8)
         if not stop:
             return "FAIL", "the running task card has no Interrupt button"

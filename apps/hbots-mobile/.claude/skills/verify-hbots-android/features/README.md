@@ -5,7 +5,7 @@ The maintained source for what a phone release must still do. `scripts/drive.py`
 ## Baseline preconditions
 
 - A throwaway server runs the staged release folder read only (`VERIFY_RELEASE`, default `current.txt`) on `VERIFY_SERVER_PORT` (34671) with an empty data dir. Never port 38472, never `~/.personal-bots/dev`.
-- The fake Claude CLI (`scripts/personal/testing/fake-claude/cli.js` of this checkout) answers every bot. Triggers used: `LONGMSG`, `CHOICES`, `SLOW<n>`, `LATEQ<n>`, `SAFETYQ`, `MCPTOOL request_secret` (flow 12), `MCPTOOL delegate_task` with a `BGSTART` objective (flow 14). Any other text gets `Got it.` plus the quote it received.
+- The fake Claude CLI (`scripts/personal/testing/fake-claude/cli.js` of this checkout) answers every bot. Triggers used: `LONGMSG`, `CHOICES`, `SLOW<n>`, `LATEQ<n>`, `SAFETYQ`, `MCPTOOL request_secret` (flow 12), `MCPONCE delegate_task` with a `BGSTART` objective (flow 14; MCPONCE, so the continuation after Interrupt does not delegate again). Any other text gets `Got it.` plus the quote it received.
 - Seeded bots: `Assistant`, `Researcher`, `Planner`, `Developer`. Three photos (`red`, `green`, `blue`) sit in the emulator library.
 - The phone is the emulator at 1080 x 2355, 480 dpi (360 x 785 CSS px, DPR 3), dark mode, paired through a quick tunnel (the app pairs over https only).
 - One fake web push recipient is bound to the phone's session, so a reply nobody sees logs `path: 'push'`.
