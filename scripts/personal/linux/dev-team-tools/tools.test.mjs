@@ -706,7 +706,7 @@ test('gates-linux.json (read by the installed tool) holds no placeholder the old
 // ---- async gate tier (Faster releases step 2) ----
 // A fixture world: a release worktree, the releases and run dirs, and stand-ins for the
 // collector, systemctl, hbots.mjs and the notifier, each driven by a file it reads.
-const asyncWorld=({tier='blocking',current,units='',newer=null,migration=false}={})=>{
+const asyncWorld=({tier='blocking',current,units='',newer=null,migration=false,onTop=null}={})=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-async-'));
  const wt=path.join(root,'wt'),releases=path.join(root,'releases'),runDir=path.join(root,'run'),qa=path.join(root,'qa'),bin=path.join(root,'bin');
  for(const d of [wt,releases,runDir,qa,bin])fs.mkdirSync(d,{recursive:true});
@@ -717,6 +717,9 @@ const asyncWorld=({tier='blocking',current,units='',newer=null,migration=false}=
  fs.writeFileSync(path.join(wt,'a.ts'),'2\n');
  if(migration){fs.mkdirSync(path.join(wt,'apps/server/src/persistence/Migrations'),{recursive:true});fs.writeFileSync(path.join(wt,'apps/server/src/persistence/Migrations/099_x.ts'),'x\n')}
  g('add','-A');g('commit','-qm','release');const head=g('rev-parse','HEAD');
+ // The release flow commits its docs on top of the tested commit; onTop adds such a commit (or a code one).
+ if(onTop==='docs'){fs.mkdirSync(path.join(wt,'docs/releases'),{recursive:true});fs.writeFileSync(path.join(wt,'docs/releases/HANDOFF.md'),'# evidence\n');fs.writeFileSync(path.join(wt,'NOTES.md'),'n\n');g('add','-A');g('commit','-qm','docs')}
+ if(onTop==='code'){fs.writeFileSync(path.join(wt,'b.ts'),'3\n');fs.writeFileSync(path.join(wt,'NOTES.md'),'n\n');g('add','-A');g('commit','-qm','code after the gates')}
  const rel=head.slice(0,12),rb=base.slice(0,12);
  fs.mkdirSync(path.join(releases,rel,'dist'),{recursive:true});
  fs.writeFileSync(path.join(releases,rel,'VERSION'),'version=1.68.0\n');fs.writeFileSync(path.join(releases,rel,'dist/bin.mjs'),'//\n');
@@ -726,7 +729,7 @@ const asyncWorld=({tier='blocking',current,units='',newer=null,migration=false}=
  if(newer)fs.writeFileSync(path.join(runDir,'restart-1.68.1-result.json'),JSON.stringify({status:newer}));
  const sh=(name,body)=>{fs.writeFileSync(path.join(bin,name),`#!/usr/bin/env bash\n${body}\n`);fs.chmodSync(path.join(bin,name),0o755)};
  // The collector stand-in: exits with the code in gate.exit and notes its env and args.
- fs.writeFileSync(path.join(bin,'collector.mjs'),`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(path.join(root,'collector.calls'))},JSON.stringify({tier:process.env.GATE_TIER,args:process.argv.slice(2)})+'\\n');const a=process.argv;const d=a[a.indexOf('--releases-dir')+1];fs.appendFileSync(${JSON.stringify(path.join(root,'collector.calls'))},'current='+fs.readFileSync(d+'/current.txt','utf8'));process.exit(Number(fs.readFileSync(${JSON.stringify(path.join(root,'gate.exit'))},'utf8')))`);
+ fs.writeFileSync(path.join(bin,'collector.mjs'),`import fs from 'node:fs';import {execFileSync} from 'node:child_process';fs.appendFileSync(${JSON.stringify(path.join(root,'collector.calls'))},JSON.stringify({tier:process.env.GATE_TIER,head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),args:process.argv.slice(2)})+'\\n');const a=process.argv;const d=a[a.indexOf('--releases-dir')+1];fs.appendFileSync(${JSON.stringify(path.join(root,'collector.calls'))},'current='+fs.readFileSync(d+'/current.txt','utf8'));process.exit(Number(fs.readFileSync(${JSON.stringify(path.join(root,'gate.exit'))},'utf8')))`);
  fs.writeFileSync(path.join(root,'gate.exit'),'0');
  sh('systemctl',`printf '%s' ${JSON.stringify(units)}`);
  fs.writeFileSync(path.join(bin,'cli.mjs'),`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(path.join(root,'cli.calls'))},process.argv.slice(2).join(' ')+'\\n');process.exit(process.argv[2]==='smoke'?Number(process.env.FAKE_SMOKE_EXIT??0):0)`);
@@ -734,7 +737,7 @@ const asyncWorld=({tier='blocking',current,units='',newer=null,migration=false}=
  const env=(extra={})=>({...process.env,HBOTS_ASYNC_RUN_DIR:runDir,HBOTS_ASYNC_RELEASES:releases,HBOTS_ASYNC_SYSTEMCTL:path.join(bin,'systemctl'),HBOTS_ASYNC_COLLECTOR:path.join(bin,'collector.mjs'),HBOTS_ASYNC_CLI:path.join(bin,'cli.mjs'),HBOTS_ASYNC_NOTIFY:path.join(bin,'notify.mjs'),...extra});
  const go=(args=[],extra={})=>node('hbots-async-gates.mjs',['--version','1.68.0','--release',rel,'--worktree',wt,'--qa-dir',qa,...args],{env:env(extra)});
  const read=(name)=>{try{return fs.readFileSync(path.join(root,name),'utf8')}catch{return ''}};
- return {root,rel,rb,go,read,setExit:(n)=>fs.writeFileSync(path.join(root,'gate.exit'),String(n)),qa};
+ return {root,rel,rb,go,read,setExit:(n)=>fs.writeFileSync(path.join(root,'gate.exit'),String(n)),qa,wt,tested:head,g};
 };
 test('async gates: a pass runs the async tier against the rollback base and posts nothing',()=>{
  const w=asyncWorld();
@@ -771,6 +774,58 @@ test('async gates: no rollback when a newer release is live, armed or running, o
   assert.match(w.read('notices'),/--outcome async_failed/);
   assert.match(r.stdout,why);
  }
+});
+// Regression tests for the 1.67.52 async-tier stop (the slot HEAD was the docs commit on top of
+// the tested commit) and the exit-code rule: only a real gate failure (exit 1) may roll back.
+const collectorHeads=(w)=>w.read('collector.calls').split('\n').filter(l=>l.startsWith('{')).map(l=>JSON.parse(l).head);
+test('async gates (a): a docs-only commit on top runs on the tested commit and puts HEAD and the branch back',()=>{
+ for(const exit of [0,1]){
+  const w=asyncWorld({onTop:'docs'});w.setExit(exit);
+  const branch=w.g('symbolic-ref','--short','HEAD'),docsHead=w.g('rev-parse','HEAD');
+  assert.notEqual(docsHead,w.tested);
+  const r=w.go(exit?['--no-rollback']:[]);
+  assert.equal(r.status,exit?11:0,r.stdout+r.stderr);
+  assert.deepEqual(collectorHeads(w),[w.tested],'the collector ran once, on the tested commit');
+  assert.match(r.stdout,new RegExp(`worktree switched to the tested commit ${w.rel}`));
+  assert.match(r.stdout,new RegExp(`worktree back on ${branch}`));
+  assert.equal(w.g('rev-parse','HEAD'),docsHead,'HEAD restored');
+  assert.equal(w.g('symbolic-ref','--short','HEAD'),branch,'branch restored, not detached');
+  assert.equal(w.g('status','--porcelain','--untracked-files=no'),'');
+  assert.equal(w.read('cli.calls'),'');
+ }
+});
+test('async gates (b): a code commit on top of the tested commit is refused and never rolls back',()=>{
+ const w=asyncWorld({onTop:'code'});w.setExit(1);
+ const before=w.g('rev-parse','HEAD');
+ const r=w.go();
+ assert.equal(r.status,1,r.stdout+r.stderr);
+ assert.match(r.stdout,/cannot run: worktree HEAD [0-9a-f]{12} changes code after the tested commit [0-9a-f]{12}: b\.ts/);
+ assert.doesNotMatch(r.stdout,/NOTES\.md/,'the .md file is not counted as code');
+ assert.equal(w.read('collector.calls'),'','no gate ran');
+ assert.equal(w.read('cli.calls'),'','nothing restarted');
+ assert.match(w.read('notices'),/--outcome async_failed/);
+ assert.equal(w.g('rev-parse','HEAD'),before);
+ assert.match(fs.readFileSync(path.join(w.qa,'ASYNC-RECORD.md'),'utf8'),/Outcome:\*\* `could_not_run`/);
+});
+test('async gates (c): a collector that exits 2 (it could not run) never rolls back',()=>{
+ for(const exit of [2,3]){
+  const w=asyncWorld({onTop:'docs'});w.setExit(exit);
+  const r=w.go();
+  assert.equal(r.status,11,r.stdout+r.stderr);
+  assert.match(r.stdout,new RegExp(`no rollback: the gates could not run \\(exit ${exit}\\), so no test failed`));
+  assert.equal(w.read('cli.calls'),'',`exit ${exit}: nothing restarted`);
+  assert.match(w.read('notices'),/--outcome async_failed/);
+  assert.doesNotMatch(w.read('notices'),/rolled_back/);
+ }
+});
+test('async gates (d): a collector that exits 1 with rollback allowed rolls back to the base',()=>{
+ const w=asyncWorld({onTop:'docs'});w.setExit(1);
+ const r=w.go();
+ assert.equal(r.status,10,r.stdout+r.stderr);
+ assert.deepEqual(collectorHeads(w),[w.tested]);
+ assert.match(w.read('cli.calls'),new RegExp(`^restart --root dev --release ${w.rb}\\nsmoke --root dev --expect-release ${w.rb}`));
+ assert.match(w.read('notices'),/--outcome async_rolled_back/);
+ assert.match(fs.readFileSync(path.join(w.qa,'ASYNC-RECORD.md'),'utf8'),/Rollback:\*\* allowed/);
 });
 test('async gates: untiered evidence runs nothing; --dry-run decides without running or posting',()=>{
  const full=asyncWorld({tier:null});
@@ -926,6 +981,51 @@ test('release slots: a lease per task, switch cleans untracked files but keeps i
    assert.ok(fs.existsSync(path.join(other,'hbots-slot-1','keep.txt')));
   }finally{git(repo,'worktree','remove','--force',path.join(other,'hbots-slot-1'));fs.rmSync(other,{recursive:true,force:true});}
  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('the finisher releases the slot lease once trunk is pushed, and keeps it when the push fails',()=>{
+ const root=fs.mkdtempSync('/tmp/hbots-slot-test.');
+ try{
+  const repo=path.join(root,'repo'),origin=path.join(root,'origin.git'),wt=path.join(root,'wt'),runDir=path.join(root,'run'),out=path.join(root,'out'),qa=path.join(root,'qa'),state=path.join(root,'state');
+  for(const d of [runDir,out,qa])fs.mkdirSync(d,{recursive:true});
+  const git=(cwd,...args)=>{const r=run('git',['-C',cwd,'-c','user.email=t@t','-c','user.name=t',...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim();};
+  run('git',['init','-q','--bare','-b','main',origin]);
+  fs.mkdirSync(repo);git(repo,'init','-q','-b','main');git(repo,'remote','add','origin',origin);
+  fs.writeFileSync(path.join(repo,'a.txt'),'one\n');git(repo,'add','.');git(repo,'commit','-qm','one');git(repo,'push','-q','origin','main');
+  const env={...process.env,HOME:root,HBOTS_SLOT_ROOT:wt,HBOTS_SLOT_REPO:repo,HBOTS_SLOT_STATE:state,HBOTS_SLOT_TEST:'1',
+   HBOTS_FINISH_TOOLS:here,HBOTS_FINISH_RUN_DIR:runDir,HBOTS_FINISH_LOG_DIR:runDir,HBOTS_FINISH_URL:'http://127.0.0.1:9'};
+  const slot=(...args)=>run('bash',[path.join(here,'hbots-slot.sh'),...args],{env});
+  const s1=path.join(wt,'hbots-slot-1');
+  git(repo,'worktree','add','-q','--detach',s1,'HEAD');git(repo,'worktree','add','-q','--detach',path.join(wt,'hbots-slot-2'),'HEAD');
+  const finish=(version)=>{
+   assert.equal(slot('lease','--slot','1','--label','ship '+version).status,0);
+   assert.equal(slot('switch','--slot','1','--label','ship '+version,'--branch','release/'+version,'--from','main').status,0);
+   fs.mkdirSync(path.join(s1,'scripts/personal'),{recursive:true});fs.writeFileSync(path.join(s1,'scripts/personal/app-version.txt'),version+'\n');
+   git(s1,'add','-A');git(s1,'commit','-qm','release '+version);const sha=git(s1,'rev-parse','HEAD');
+   fs.writeFileSync(path.join(runDir,`restart-${version}-result.json`),JSON.stringify({status:'live_verified',release:sha.slice(0,12),rollback:'a'.repeat(12)}));
+   const r=run('bash',[path.join(here,'hbots-release-finish.sh'),'--run','--server-only','--version',version,'--release',sha.slice(0,12),'--main-sha',sha,
+    '--worktree',s1,'--qa-dir',qa,'--repo',repo,'--trunk','main','--out',out,'--node',process.execPath,'--no-livecheck','--timeout-sec','30'],{env,timeout:60000});
+   return {r,sha,log:fs.readFileSync(path.join(qa,'finish.log'),'utf8'),record:fs.readFileSync(path.join(qa,'LIVE-RECORD.md'),'utf8')};
+  };
+  // Pushed: the finisher releases the lease itself and keeps the slot.
+  const a=finish('9.9.1');
+  assert.equal(a.r.status,0,a.log);
+  assert.equal(git(origin,'rev-parse','main'),a.sha,'trunk pushed');
+  assert.match(a.log,/release slot 1, lease label 'ship 9\.9\.1'/);
+  assert.match(a.log,/lease 'ship 9\.9\.1' released/);
+  assert.match(a.record,/Worktree removed:\*\* slot \(lease released\)/);
+  assert.match(slot('status').stdout,/slot 1 .*: free/);
+  assert.ok(fs.existsSync(s1),'the slot itself is kept');
+  // The push fails: the slot keeps its lease for the ship task to look at.
+  git(repo,'remote','set-url','origin',path.join(root,'missing.git'));
+  const b=finish('9.9.2');
+  assert.notEqual(b.r.status,0);
+  assert.match(b.log,/lease 'ship 9\.9\.2' kept: published=skipped ffmain=no/);
+  assert.match(slot('status').stdout,/slot 1 .*: leased by "ship 9\.9\.2"/);
+ }finally{
+  run('git',['-C',path.join(root,'repo'),'worktree','remove','--force',path.join(root,'wt','hbots-slot-1')]);
+  run('git',['-C',path.join(root,'repo'),'worktree','remove','--force',path.join(root,'wt','hbots-slot-2')]);
+  fs.rmSync(root,{recursive:true,force:true});
+ }
 });
 test('the background arm64 build starts once its trigger gates pass, and is stopped when a gate fails',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-bg-'));

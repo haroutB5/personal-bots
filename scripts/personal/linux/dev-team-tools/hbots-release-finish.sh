@@ -14,7 +14,8 @@
 #   4. fast-forwards the main checkout's trunk branch to --main-sha (--ff-only) and pushes it,
 #      never forced;
 #   5. removes the release worktree (git worktree remove, never --force) only when both the
-#      publish and the push worked;
+#      publish and the push worked; a fixed release slot is kept instead, and its lease is
+#      released (tools/hbots-slot.sh release) under the same condition;
 #   6. writes <qa-dir>/LIVE-RECORD.md and adds the version line to apps/hbots-android.md;
 #   7. runs tools/hbots-release-livecheck.sh 5 minutes after live (<qa-dir>/LIVE-CHECKS.md).
 #
@@ -36,15 +37,20 @@
 # run:  systemd-run --user --wait --pipe --collect bash <this> --check <args>
 set -uo pipefail
 
-TOOLS=/home/harout/Claude/AI/dev-team/tools
+# The HBOTS_FINISH_* overrides exist for the tests (tools.test.mjs); a real release sets none.
+TOOLS=${HBOTS_FINISH_TOOLS:-/home/harout/Claude/AI/dev-team/tools}
 DEVTEAM=/home/harout/Claude/AI/dev-team
 JAVA_HOME_FIXED=/home/harout/.local/share/mise/installs/java/temurin-21
 ANDROID_HOME_FIXED=/home/harout/Android/Sdk
 NODE_DEFAULT=/home/harout/.local/share/mise/installs/node/24.22.3/bin/node
 REPO_DEFAULT=/home/harout/Claude/AI/personal-bots
 OUT_DEFAULT=/home/harout/.personal-bots/dev
-RUN_DIR=/home/harout/.personal-bots/run
-LOG_DIR=/home/harout/.personal-bots/logs
+RUN_DIR=${HBOTS_FINISH_RUN_DIR:-/home/harout/.personal-bots/run}
+LOG_DIR=${HBOTS_FINISH_LOG_DIR:-/home/harout/.personal-bots/logs}
+LIVE_URL=${HBOTS_FINISH_URL:-http://127.0.0.1:38472}
+# Release slots (tools/hbots-slot.sh reads the same two variables).
+SLOT_ROOT=${HBOTS_SLOT_ROOT:-/home/harout/Claude/AI/_wt}
+SLOT_STATE=${HBOTS_SLOT_STATE:-/home/harout/.personal-bots/run/hbots-slots}
 ANDROID_SHEET=$DEVTEAM/apps/hbots-android.md
 
 usage() {
@@ -59,7 +65,8 @@ Usage: hbots-release-finish.sh (--check | --launch | --run) \
   [--repo <main checkout, default /home/harout/Claude/AI/personal-bots>] \
   [--trunk <branch, default personal-bots/main>] [--out <data root, default ~/.personal-bots/dev>] \
   [--node <node binary>] [--java-home <dir, default mise temurin-21>] \
-  [--timeout-sec <wait for the runner, default 14400>] [--no-livecheck] [--no-async]
+  [--timeout-sec <wait for the runner, default 14400>] [--no-livecheck] [--no-async] \
+  [--slot-label <lease label; default the label holding the slot when the run starts>]
 
   --check   test java, apkanalyzer on the APK, sha, worktree, trunk and node; change nothing.
   --launch  run --check, then start the real run as systemd --user unit
@@ -69,7 +76,7 @@ Exit codes: 0 done (or rolled back cleanly), 1 a step failed, 2 bad arguments, 3
 EOF
 }
 
-MODE=; VERSION=; RELEASE=; MAIN_SHA=; APK=; APK_SHA=; NOTES=; WT=; QA=; ANDROID_TEXT=
+MODE=; VERSION=; RELEASE=; MAIN_SHA=; APK=; APK_SHA=; NOTES=; WT=; QA=; ANDROID_TEXT=; SLOT_LABEL=
 REPO=$REPO_DEFAULT; TRUNK=personal-bots/main; OUT=$OUT_DEFAULT; N=$NODE_DEFAULT
 JAVA_HOME_ARG=$JAVA_HOME_FIXED; TIMEOUT=14400; LIVECHECK=yes; ASYNC=yes; TRACK=full
 ORIG_ARGS=("$@")
@@ -95,6 +102,7 @@ while (( $# )); do
     --no-livecheck) LIVECHECK=no;;
     --no-async) ASYNC=no;;
     --server-only) TRACK=server-only;;
+    --slot-label) SLOT_LABEL=${2-}; shift;;
     -h|--help) usage; exit 0;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2;;
   esac
@@ -127,6 +135,10 @@ VERSION_CODE=$(( V1 * 1000000 + V2 * 1000 + V3 ))
 VNODOT=${VERSION//./}
 UNIT=finish-hbots-$VNODOT
 RES=$RUN_DIR/restart-$VERSION-result.json
+# The slot number when --worktree is a fixed release slot (step 5), else empty.
+SLOT_N=
+[[ $(realpath -m -- "$WT") =~ ^$(realpath -m -- "$SLOT_ROOT")/hbots-slot-([12])$ ]] && SLOT_N=${BASH_REMATCH[1]}
+slot_holder() { sed -n 's/^label=//p' "$SLOT_STATE/slot-$SLOT_N.lease" 2>/dev/null | head -n 1; }
 RLOG=$LOG_DIR/restart-$VERSION.log
 
 # ---- fixed environment: never derived from PATH ----
@@ -217,6 +229,16 @@ run_check() {
   else
     ok "runner result $RES not written yet (expected before the release lands)"
   fi
+  if [[ -n $SLOT_N ]]; then
+    holder=$(slot_holder)
+    if [[ -z $holder ]]; then
+      warn "slot $SLOT_N is not leased: no lease to release after the push"
+    elif [[ -n $SLOT_LABEL && $holder != "$SLOT_LABEL" ]]; then
+      fail "slot $SLOT_N is leased by '$holder', not --slot-label '$SLOT_LABEL'"
+    else
+      ok "slot $SLOT_N leased by '$holder': released after a publish (or server-only) and a trunk push"
+    fi
+  fi
   if systemctl --user is-active --quiet "$UNIT.service" 2>/dev/null; then fail "unit $UNIT.service is already running"; else ok "unit name $UNIT.service is free"; fi
   echo "check result: $([[ $fails == 0 ]] && echo PASS || echo "FAIL ($fails)")"
   return $(( fails > 0 ))
@@ -260,6 +282,9 @@ REL12=${REL40:0:12}
 BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 APK_BYTES=$([[ -n $APK ]] && stat -c %s "$APK" || echo 0)
 CERT=$(tr -d '[:space:]' < "$WT/apps/hbots-mobile/release-cert.sha256" 2>/dev/null || echo unknown)
+# The lease this run releases at the end: the given label, else whoever holds the slot now.
+[[ -n $SLOT_N && -z $SLOT_LABEL ]] && SLOT_LABEL=$(slot_holder)
+[[ -n $SLOT_N ]] && echo "release slot $SLOT_N, lease label '${SLOT_LABEL:-none}'"
 
 rc=0
 deadline=$(( $(date +%s) + TIMEOUT ))
@@ -298,7 +323,7 @@ if [[ $status == live_verified && $tier == blocking ]]; then
 fi
 
 published=no; ffmain=no; wtremoved=no; compat=unchecked; rc=${rc:-0}
-versiontxt=$(curl -s --max-time 5 http://127.0.0.1:38472/version.txt | head -4 | tr '\n' ' ')
+versiontxt=$(curl -s --max-time 5 "$LIVE_URL/version.txt" | head -4 | tr '\n' ' ')
 if [[ $status == live_verified ]]; then
   got=$([[ -n $APK ]] && sha256sum "$APK" | cut -c1-64)
   if [[ $TRACK == server-only ]]; then
@@ -315,7 +340,7 @@ if [[ $status == live_verified ]]; then
       echo "FATAL: publish-android-update.mjs failed (exit $?); latest.json NOT published"; rc=1
     fi
   fi
-  compat=$(curl -s --max-time 5 http://127.0.0.1:38472/api/personal/client-compat | head -c 500)
+  compat=$(curl -s --max-time 5 "$LIVE_URL/api/personal/client-compat" | head -c 500)
 
   # Fast-forward trunk (never force)
   cur=$(git -C "$REPO" rev-parse --abbrev-ref HEAD)
@@ -329,11 +354,25 @@ if [[ $status == live_verified ]]; then
     echo "FATAL: fast-forward or push of $TRUNK to $MAIN_SHA failed"; rc=1
   fi
 
-  if [[ $(realpath -m -- "$WT") =~ ^/home/harout/Claude/AI/_wt/hbots-slot-[12]$ ]]; then
+  if [[ -n $SLOT_N ]]; then
     # A fixed release slot (step 5) is never removed: its .env and build caches stay for the
-    # next release. The ship task releases its lease with tools/hbots-slot.sh release.
-    echo "worktree kept: $WT is a release slot (release its lease with hbots-slot.sh release)"
+    # next release. Once the release is published (or server-only) and trunk is pushed, the
+    # slot's work is done, so the finisher releases the lease itself.
     wtremoved=slot
+    if [[ $ffmain == yes && ( $published == yes || $published == skipped ) ]]; then
+      if [[ -z $SLOT_LABEL ]]; then
+        echo "worktree kept: $WT is release slot $SLOT_N; it was not leased, nothing to release"
+      elif out=$(bash "$TOOLS/hbots-slot.sh" release --slot "$SLOT_N" --label "$SLOT_LABEL" 2>&1); then
+        echo "worktree kept: $WT is release slot $SLOT_N; lease '$SLOT_LABEL' released ($out)"
+        wtremoved="slot (lease released)"
+      else
+        echo "worktree kept: $WT is release slot $SLOT_N; lease release failed: $out"
+        wtremoved="slot (lease release failed)"
+      fi
+    else
+      echo "worktree kept: $WT is release slot $SLOT_N; lease '$SLOT_LABEL' kept: published=$published ffmain=$ffmain"
+      wtremoved="slot (lease kept)"
+    fi
   elif [[ $ffmain == yes && ( $published == yes || $published == skipped ) ]]; then
     rm -f "$WT/.env"
     # Allowed leftover of the release-tools check (handbook: release worktrees and Python caches).

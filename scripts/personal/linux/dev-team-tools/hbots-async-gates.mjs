@@ -74,9 +74,16 @@ function facts(){
   const evidence=readJson(path.join(RELEASES,o.release,'gate-evidence.json'));
   if(!evidence)throw new Error(`no gate-evidence.json for ${o.release} in ${RELEASES}`);
   const head=git('rev-parse','HEAD');
-  if(evidence.sha&&head!==evidence.sha)throw new Error(`worktree HEAD ${head.slice(0,12)} is not the tested commit ${String(evidence.sha).slice(0,12)}`);
-  if(!head.startsWith(o.release))throw new Error(`worktree HEAD ${head.slice(0,12)} is not release ${o.release}`);
-  return {result,rollback,evidence,head};
+  const tested=String(evidence.sha||head);
+  if(!tested.startsWith(o.release))throw new Error(`tested commit ${tested.slice(0,12)} is not release ${o.release}`);
+  if(head!==tested){
+    // The release flow commits the handoff/QA docs on top of the tested commit (that docs commit is --main-sha).
+    // Accept it only when the tested commit is its ancestor and nothing but docs changed, so the code is identical.
+    if(run('git',['-C',WT,'merge-base','--is-ancestor',tested,head]).code!==0)throw new Error(`worktree HEAD ${head.slice(0,12)} does not descend from the tested commit ${tested.slice(0,12)}`);
+    const extra=git('diff','--no-renames','--name-only',tested,head).split('\n').filter(Boolean).filter((f)=>!/^docs\//.test(f)&&!/\.md$/.test(f));
+    if(extra.length)throw new Error(`worktree HEAD ${head.slice(0,12)} changes code after the tested commit ${tested.slice(0,12)}: ${extra.slice(0,5).join(', ')}`);
+  }
+  return {result,rollback,evidence,head,tested};
 }
 
 // Harout's guard 2. Returns {allowed, reasons[]} where reasons say why not.
@@ -124,7 +131,7 @@ function privateReleases(rollback){
 
 function gates(dir,{dryRun}){
   const collector=process.env.HBOTS_ASYNC_COLLECTOR||path.join(TOOLS,'gate-evidence.mjs');
-  const args=[collector,'--version',o.version,'--release',o.release,'--repo-root',WT,'--releases-dir',dir,...(dryRun?['--dry-run']:[])];
+  const args=[collector,'--version',o.version,'--release',o.release,'--repo-root',WT,'--releases-dir',dir,'--gates-json',process.env.HBOTS_ASYNC_GATES_JSON||'scripts/personal/node/gates-linux.scoped.json',...(dryRun?['--dry-run']:[])];
   const env={...process.env,GATE_TIER:'async'};
   delete env.NODE_ENV;
   const r=run(NODE,args,{env,cwd:WT});
@@ -192,8 +199,21 @@ if(DRY){
   say(`dry run: on a failure the release would ${d.allowed?`roll back to ${f.rollback}`:`stay live (${d.reasons.join('; ')})`}${failed?' [simulated failure]':''}`);
   process.exit(0);
 }
+// gate-evidence only runs on the exact tested commit. When the docs commit sits on top of it,
+// check the tested commit out (detached) for the run and put the worktree back afterwards.
+function onTested(fn){
+  if(f.head===f.tested)return fn();
+  if(git('status','--porcelain','--untracked-files=no'))throw new Error('worktree has uncommitted tracked changes; cannot switch to the tested commit');
+  const branch=run('git',['-C',WT,'symbolic-ref','-q','--short','HEAD']).out.trim();
+  git('checkout','--quiet','--detach',f.tested);
+  say(`worktree switched to the tested commit ${f.tested.slice(0,12)} for the run`);
+  try{return fn()}finally{
+    if(branch)git('checkout','--quiet',branch);else git('checkout','--quiet','--detach',f.head);
+    say(`worktree back on ${branch||f.head.slice(0,12)}`);
+  }
+}
 let code;
-try{code=gates(privateReleases(f.rollback),{dryRun:false})}catch(e){say(`async gates: ${e.message}`);code=1}
+try{code=onTested(()=>gates(privateReleases(f.rollback),{dryRun:false}))}catch(e){say(`async gates: ${e.message}`);code=2}
 if(code===0){
   say(`async gates: PASS in ${secs()} s`);
   record('passed',{seconds:secs()});
@@ -201,6 +221,8 @@ if(code===0){
 }
 say(`async gates: FAIL (exit ${code}) after ${secs()} s; failed jobs were already run twice`);
 const d=rollbackDecision(f);
+// Only real gate failures (exit 1) may roll back; a tool or setup error (exit 2 and others) never does.
+if(code!==1){d.allowed=false;d.reasons.unshift(`the gates could not run (exit ${code}), so no test failed`)}
 if(!d.allowed){
   say(`no rollback: ${d.reasons.join('; ')}`);
   notify('async_failed',{detail:`kept live: ${d.reasons.join('; ')}`.slice(0,400)});
