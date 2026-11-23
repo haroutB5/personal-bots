@@ -306,7 +306,11 @@ try {
   const sweepScope=(why)=>{
     let rel='';
     try{rel=fs.readFileSync('/proc/self/cgroup','utf8').trim().split('\n').pop().split('::').pop()}catch{}
-    if(!/\/heavy-job-\d+\.scope$/.test(rel))return 0;
+    // Only a scope this collector owns: heavy-job.sh names it heavy-job-$$ and execs down to
+    // node, so the owner's pid is the scope's number. Nested in another job's scope (a test
+    // runner, a wrapper), sweeping would stop that job's own processes (1.67.51 gate run 2).
+    const owner=rel.match(/\/heavy-job-(\d+)\.scope$/);
+    if(!owner||Number(owner[1])!==process.pid)return 0;
     let pids=[];
     try{pids=fs.readFileSync(`/sys/fs/cgroup${rel}/cgroup.procs`,'utf8').split('\n').map(Number).filter(Boolean)}catch{return 0}
     const keep=new Set([process.pid,process.ppid]);

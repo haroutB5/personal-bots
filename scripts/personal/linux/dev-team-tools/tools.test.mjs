@@ -869,6 +869,17 @@ else console.log('Tests 1 passed (1)');`);
   const pid=Number(fs.readFileSync(pidFile,'utf8'));
   let alive=true;for(let i=0;i<20&&alive;i++){try{process.kill(pid,0);spawnSync('sleep',['0.1'])}catch{alive=false}}
   assert.equal(alive,false,'the leftover sleep is gone');
+  // Nested in a heavy-job scope it does not own, the collector leaves that scope alone.
+  const sibling=path.join(root,'sibling.pid'),unit=`heavy-job-${process.pid}${Date.now()%100000}`;
+  const nested=run('systemd-run',['--user','--scope','--quiet','--collect',`--unit=${unit}`,'--','bash','-c',
+   `sleep 300 & echo $! > '${sibling}'; '${process.execPath}' '${path.join(here,'gate-evidence.mjs')}' "$@"`,'x',...args],
+   {env:jobEnv(lockBase(),{GATE_MEM_RESERVE_MB:'0',GATE_SKIP_PREFLIGHT:'1'}),timeout:60000});
+  const sib=Number(fs.readFileSync(sibling,'utf8'));
+  let sibAlive=true;try{process.kill(sib,0)}catch{sibAlive=false}
+  try{process.kill(sib,'SIGTERM')}catch{}
+  assert.equal(nested.status,0,nested.stdout+nested.stderr);
+  assert.doesNotMatch(nested.stdout,/scope sweep/);
+  assert.equal(sibAlive,true,'a process of the outer scope survives the run');
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
 test('release slots: a lease per task, switch cleans untracked files but keeps ignored caches, only slot paths',()=>{
