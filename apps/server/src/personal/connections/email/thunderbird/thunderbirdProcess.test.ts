@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  defaultScopeRunner,
   makeThunderbirdProcess,
   runningThunderbirdPid,
   type ThunderbirdProcessConfig,
@@ -99,6 +100,7 @@ const configIn = (home: string, patch: Partial<ThunderbirdProcessConfig> = {}) =
   graphicalEnv: () => ({ WAYLAND_DISPLAY: "wayland-test" }),
   exitWaitMs: 1_500,
   startWaitMs: 5_000,
+  scopeRunner: null,
   ...patch,
 });
 
@@ -145,6 +147,49 @@ describe("ThunderbirdProcess", () => {
       } finally {
         const pid = runningThunderbirdPid(configIn(home));
         if (pid !== null) process.kill(pid, "SIGKILL");
+      }
+    }));
+
+  it("starts Thunderbird through the scope runner, so an hbots restart does not close it", () =>
+    withHome(async (home, profileDir) => {
+      const fake = installFake(home, "thunderbird-bin");
+      const lockPath = NodePath.join(profileDir, "lock");
+      NodeFS.writeFileSync(NodePath.join(home, "fake.cjs"), FAKE_THUNDERBIRD(lockPath, false));
+      const binary = NodePath.join(home, "thunderbird");
+      NodeFS.writeFileSync(binary, `#!/bin/sh\nexec "${fake}" "${home}/fake.cjs"\n`, {
+        mode: 0o755,
+      });
+      const runner = NodePath.join(home, "scope-runner");
+      NodeFS.writeFileSync(
+        runner,
+        `#!/bin/sh\nprintf '%s\\n' "$*" > "${home}/runner-args"\nshift\nexec "$@"\n`,
+        { mode: 0o755 },
+      );
+      const service = makeThunderbirdProcess(
+        configIn(home, { scopeRunner: [runner, "--scope-flag"] }),
+      );
+      try {
+        await Effect.runPromise(service.launch());
+        expect(NodeFS.readFileSync(NodePath.join(home, "runner-args"), "utf8")).toBe(
+          `--scope-flag ${binary} -P ${PROFILE}\n`,
+        );
+        expect(await Effect.runPromise(service.running())).toBe(true);
+      } finally {
+        const pid = runningThunderbirdPid(configIn(home));
+        if (pid !== null) process.kill(pid, "SIGKILL");
+      }
+    }));
+
+  it("uses systemd-run --user --scope only when the user bus is there", () =>
+    withHome(async (home) => {
+      expect(defaultScopeRunner(NodePath.join(home, "no-runtime-dir"))).toBeNull();
+      expect(defaultScopeRunner(home)).toBeNull();
+      NodeFS.writeFileSync(NodePath.join(home, "bus"), "");
+      const runner = defaultScopeRunner(home);
+      if (NodeFS.existsSync("/usr/bin/systemd-run")) {
+        expect(runner?.slice(0, 3)).toEqual(["/usr/bin/systemd-run", "--user", "--scope"]);
+      } else {
+        expect(runner).toBeNull();
       }
     }));
 
