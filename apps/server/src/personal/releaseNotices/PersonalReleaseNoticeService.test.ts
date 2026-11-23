@@ -298,6 +298,36 @@ describe("PersonalReleaseNotices", () => {
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 
+  it.effect("post-release check failures say whether the release stayed or rolled back", () => {
+    const harness = makePersonalEngineHarness();
+    return Effect.gen(function* () {
+      yield* linkCtoChat;
+      const base = { threadId: CTO_CHAT, version: "1.68.0", release: "abc123def456" };
+      yield* writeNotice("20261122T230000Z-async-failed.json", {
+        ...base,
+        outcome: "async_failed",
+        detail: "e2e failed twice; a newer release is armed",
+      });
+      yield* writeNotice("20261122T231000Z-async-rolled-back.json", {
+        ...base,
+        outcome: "async_rolled_back",
+        rollbackRelease: "5531a1f12aeb",
+        rollbackExit: 0,
+        rollbackSmokeExit: 0,
+      });
+      const service = yield* PersonalReleaseNotices;
+      yield* service.sweep;
+
+      const texts = messageDispatches(harness).map((turn) => turn.text);
+      expect(texts).toHaveLength(2);
+      const stayed = texts.find((text) => text.includes("It was not rolled back."));
+      expect(stayed).toContain("hbots 1.68.0 (release abc123def456) is live");
+      expect(stayed).toContain("ship the fix in the next release");
+      const back = texts.find((text) => text.includes("was rolled back to 5531a1f12aeb"));
+      expect(back).toContain("rollback exit 0, rollback smoke exit 0.");
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
   it.effect("no thread id, a plain thread or a broken file posts nothing", () => {
     const harness = makePersonalEngineHarness();
     return Effect.gen(function* () {

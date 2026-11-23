@@ -76,8 +76,22 @@ export const ReleaseNotice = Schema.Struct({
    * live: activated and smoke passed. rolled_back: the smoke failed and the
    * previous release is back and passed its smoke. rollback_failed: the smoke
    * failed and so did the rollback. failed: stopped before activating.
+   * The async tier runs the slower checks after a release is live:
+   * async_failed: one failed twice and the release stayed (it had a newer
+   * release behind it, or rollback was not allowed). async_rolled_back: it
+   * failed twice and the previous release is back and passed its smoke.
+   * async_rollback_failed: it failed twice and so did the rollback.
    */
-  outcome: Schema.Literals(["live", "rolled_back", "rollback_failed", "failed", "waiting"]),
+  outcome: Schema.Literals([
+    "live",
+    "rolled_back",
+    "rollback_failed",
+    "failed",
+    "waiting",
+    "async_failed",
+    "async_rolled_back",
+    "async_rollback_failed",
+  ]),
   smokeExit: Schema.optional(ExitCode),
   rollbackRelease: Schema.optional(Text),
   rollbackExit: Schema.optional(ExitCode),
@@ -106,15 +120,23 @@ export function releaseNoticeText(notice: ReleaseNotice): string {
           ? `Release failed: ${name} failed its smoke (${exitText(notice.smokeExit)}) and was rolled back to ${rollbackTo}: rollback ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}.`
           : notice.outcome === "rollback_failed"
             ? `Release failed and the rollback failed too: ${name} smoke ${exitText(notice.smokeExit)}; rollback to ${rollbackTo} ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}. The server may be down or on the wrong release.`
-            : `Release not activated: ${name} stopped before the restart. Nothing changed on the live server.`;
+            : notice.outcome === "async_failed"
+              ? `Post-release checks failed: ${name} is live, but a check that runs after the release failed twice. It was not rolled back.`
+              : notice.outcome === "async_rolled_back"
+                ? `Post-release checks failed: ${name} failed a check that runs after the release twice and was rolled back to ${rollbackTo}: rollback ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}.`
+                : notice.outcome === "async_rollback_failed"
+                  ? `Post-release checks failed and the rollback failed too: ${name}; rollback to ${rollbackTo} ${exitText(notice.rollbackExit)}, rollback smoke ${exitText(notice.rollbackSmokeExit)}. The server may be down or on the wrong release.`
+                  : `Release not activated: ${name} stopped before the restart. Nothing changed on the live server.`;
   const next =
     notice.outcome === "waiting"
       ? "Check the blockers and the log; the waiter is still running."
       : notice.outcome === "live"
         ? "Confirm the live release. No QA recheck is needed."
-        : notice.outcome === "rollback_failed"
+        : notice.outcome === "rollback_failed" || notice.outcome === "async_rollback_failed"
           ? "Check status.ps1 and the log now and tell Harout plainly."
-          : "Read the log, fix the cause and re-arm.";
+          : notice.outcome === "async_failed"
+            ? "Read the async log, fix the cause and ship the fix in the next release."
+            : "Read the log, fix the cause and re-arm.";
   const detail = (notice.detail ?? "").trim();
   return [
     "Release notice from the app's release waiter (the user did not type this).",
