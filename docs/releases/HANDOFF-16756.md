@@ -38,7 +38,11 @@ The Computer tab can be screenshotted and screen-recorded again. It still blocks
 
 ## Verification
 
-Filled in after the gates and the emulator QA for this build.
+Rebuilt from scratch after the laptop's reboot at 21:58 on 23 Nov 2026 (an earlier run hit a RAM fault that flipped bits in cached files, so its builds and results were discarded). Before the rebuild, the Gradle build cache and the native `android/build` outputs written that day were moved aside, so both APKs were built from source with a clean prebuild.
+
+- **Gates:** full (untiered) gates PASS in 791 s on release `9b001679d350` (block below). The arm64 release APK was built inside them in 416 s, sha256 `2098ada6af1bfb2ebbf53652b47268b9ef4ba484d929f3c89fa4bbeb470c1413`. It passes zip CRC and apksigner verification.
+- **Emulator QA:** the staged release `9b001679d350` with the x86_64 QA APK of the same commit, all 14 flows (no `--tier`): 14/14 PASS, 221 s of flows, 254 s total (`dev-team/qa/hbots-16756/emulator/hbots-16756-release-qa3-20261123T222114Z`).
+- **Computer tab screenshots** on the same staged release: FLAG_SECURE windows were 0 on the tab and 0 on a login page. With a password field open (IME inputType `0x80081`) the count was 1 and the screenshot was black. With the keyboard closed it was 0 again, and the screenshot rendered (`dev-team/qa/hbots-16756/emulator/hbots-16756-screenshot-release-20261123T221944Z`).
 
 ## Migration
 
@@ -47,3 +51,42 @@ None. Schema stays at 161.
 ## Rollback
 
 Binary rollback to 1.67.55 (`092716264138`). No schema change, so the rollback is clean.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=9b001679d350731262a63a612896ef53b91f0d3b release=9b001679d350 json-sha256=6d321c32f688272871e15bb22d1c61d9da96cad90faa5bb48424064e6eaf3cb8 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: scripts/personal/testing/fake-claude/cli.test.mjs; selected 26 test files
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: PASS, selected: e2e inputs changed: scripts/personal/testing/fake-claude/cli.test.mjs; selected 12 journeys
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/dev-team-tools/hbots-async-gates.mjs, scripts/personal/linux/dev-team-tools/hbots-release-finish.sh, scripts/personal/linux/dev-team-tools/tools.test.mjs; selected 16 test files
+- not run by any gate: apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/select-flows.test.mjs
+- not run by any gate: scripts/personal/testing/fake-claude/cli.test.mjs
+
+<!-- gate-evidence:end -->
+
+<!-- gate-timing:begin -->
+
+```
+gate timing: 787 s wall, 1061 s if serial; budget 5 of 12 cores, server lanes 4; min MemAvailable 19835 MB, swap growth 55 MB, peak load 13.1
+  preflight            guards   start    0 s      7 s   1 job  PASS  |#
+  server-tests         selected start    7 s    190 s   1 job  PASS  | ##############
+  server-tsc           skip     start    0 s      0 s   0 jobs SKIP  |
+  web-tests            skip     start    0 s      0 s   0 jobs SKIP  |
+  web-tsc              skip     start    0 s      0 s   0 jobs SKIP  |
+  e2e                  selected start   94 s    278 s   1 job  PASS  |       #####################
+  personal-client      skip     start    0 s      0 s   0 jobs SKIP  |
+  hbots-mobile         whole    start    0 s     94 s   1 job  PASS  |#######
+  hbots-mobile-kotlin  skip     start    0 s      0 s   0 jobs SKIP  |
+  parity               whole    start   94 s     11 s   1 job  PASS  |       #
+  release-tools        selected start    7 s    481 s   1 job  PASS  | #####################################
+  arm64 build (bg)     android  start  372 s    415 s   1 job  PASS  |                            ################################
+```
+
+<!-- gate-timing:end -->
