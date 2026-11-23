@@ -1,6 +1,6 @@
 # 1.67.54: Email for bots through Thunderbird
 
-Based on 1.67.53 (trunk `4d8a036db2`). Branch `release/hbots-1.67.54`, built in release slot 1. Merges `feat/hbots-email` (head `ff90df1916`, 27 commits). **Schema 160 to 161** (migration `161_PersonalEmailConnections`), so the runner takes the pre-migration backup and the whole gate suite blocks before the release (guard 2: no async tier). This release ships Android APK 1.67.54 and server 1.67.54.
+Based on 1.67.53 (trunk `4d8a036db2`). Branch `release/hbots-1.67.54`, built in release slot 1. Merges `feat/hbots-email` (head `ff90df1916`, 27 commits, then `c63af3da1a`). **Schema 160 to 161** (migration `161_PersonalEmailConnections`), so the runner takes the pre-migration backup and the whole gate suite blocks before the release (guard 2: no async tier). This release ships Android APK 1.67.54 and server 1.67.54.
 
 ## Why
 
@@ -19,6 +19,7 @@ Harout, 23 Nov 2026: "Ship email, skip drain mode". Bots read and draft Harout's
   - A rewritten reply draft keeps its Re: subject (5).
   - No "Found" flash and no stale view on the Email screen (6).
   - The unused native Google sign-in module is removed from the APK (8).
+- **Thunderbird survives hbots restarts** (found during release prep). hbots starts Thunderbird through `systemd-run --user --scope`, so it no longer sits in `hbots.service`'s cgroup. Before this, every hbots restart closed Thunderbird, including the release restart itself. Without a user bus, it starts as before.
 - **Release tools.** The release-tools test runs its Python probes with `PYTHONDONTWRITEBYTECODE=1`, so it no longer leaves `scripts/personal/linux/dev-team-tools/__pycache__` in the checkout (1.67.53 leftover).
 - **Version.** `scripts/personal/app-version.txt` and `apps/hbots-mobile/package.json` move to `1.67.54`.
 
