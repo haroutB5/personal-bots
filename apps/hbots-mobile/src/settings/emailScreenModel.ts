@@ -30,6 +30,51 @@ export const REPAIR_LINES = {
 } as const;
 
 /**
+ * The lines hbots itself writes for an `unsupported` status
+ * (commonpostClient, bridgeChannel). They are already plain and are shown as
+ * they are.
+ */
+const PLAIN_UNSUPPORTED_LINES: ReadonlySet<string> = new Set([
+  "The Commonpost mail bridge is not installed on the laptop.",
+  "The Commonpost mail bridge is not the version hbots was reviewed with.",
+  "The add-on's tools differ from the version hbots was reviewed with.",
+  "The mail bridge stopped before it answered.",
+  "The mail bridge refused to start a session.",
+  "The mail bridge failed.",
+]);
+
+export const UNSUPPORTED_LINES = {
+  addonOld: "Thunderbird's mail add-on is out of date. Ask a bot to update it.",
+  addonNotice: "Thunderbird's mail add-on needs attention on the laptop.",
+  bridgeStart: "The mail bridge could not start on the laptop.",
+  bridgeSlow: "The mail bridge took too long to answer. Try again in a minute.",
+  cancelled: "The check was stopped before it finished. Try again.",
+  noAnswer: "Thunderbird's mail add-on did not answer.",
+  addonError: "Thunderbird's mail add-on reported an error.",
+} as const;
+
+/**
+ * The `unsupported` reason in plain words (1.67.54 finding 6c). The reason can
+ * be the add-on's own notice or raw error text, which never reaches the
+ * screen: only hbots's own sentences pass through unchanged.
+ */
+export function unsupportedLine(reason: string): string {
+  const text = reason.trim();
+  if (PLAIN_UNSUPPORTED_LINES.has(text)) return text;
+  if (/^Commonpost notice/i.test(text)) {
+    return /older than|out of date|update/i.test(text)
+      ? UNSUPPORTED_LINES.addonOld
+      : UNSUPPORTED_LINES.addonNotice;
+  }
+  if (text.startsWith("Could not start the mail bridge")) return UNSUPPORTED_LINES.bridgeStart;
+  if (/^The mail bridge did not answer .* in time\.$/.test(text))
+    return UNSUPPORTED_LINES.bridgeSlow;
+  if (text === "Cancelled.") return UNSUPPORTED_LINES.cancelled;
+  if (text === "No answer.") return UNSUPPORTED_LINES.noAnswer;
+  return UNSUPPORTED_LINES.addonError;
+}
+
+/**
  * A failed read wins over whatever an earlier read left behind, and a status
  * that says the accounts are confirmed waits for the connection rows, because
  * without them every account would flash as merely found.
@@ -48,7 +93,7 @@ export function emailView(
     case "addon-missing":
       return { kind: "repair", line: REPAIR_LINES["addon-missing"] };
     case "unsupported":
-      return { kind: "repair", line: thunderbird.reason };
+      return { kind: "repair", line: unsupportedLine(thunderbird.reason) };
     case "ready": {
       if (thunderbird.accounts.length === 0) return { kind: "no-accounts" };
       if (status.accountsConfirmed && connections === null) return { kind: "loading" };

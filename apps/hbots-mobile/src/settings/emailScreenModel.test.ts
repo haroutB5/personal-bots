@@ -1,7 +1,14 @@
 import type { PersonalConnection, PersonalEmailStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { canUseAccounts, emailView, profileSizeLabel, thunderbirdLine } from "./emailScreenModel";
+import {
+  canUseAccounts,
+  emailView,
+  profileSizeLabel,
+  thunderbirdLine,
+  UNSUPPORTED_LINES,
+  unsupportedLine,
+} from "./emailScreenModel";
 
 const account = (
   accountId: string,
@@ -40,11 +47,20 @@ describe("emailView", () => {
     expect(emailView(closed, [], null)).toEqual({ kind: "closed" });
     expect(
       emailView(
-        { ...closed, thunderbird: { _tag: "unsupported", reason: "The bridge is old." } },
+        {
+          ...closed,
+          thunderbird: {
+            _tag: "unsupported",
+            reason: "The Commonpost mail bridge is not installed on the laptop.",
+          },
+        },
         [],
         null,
       ),
-    ).toEqual({ kind: "repair", line: "The bridge is old." });
+    ).toEqual({
+      kind: "repair",
+      line: "The Commonpost mail bridge is not installed on the laptop.",
+    });
     expect(emailView({ ...closed, thunderbird: { _tag: "addon-missing" } }, [], null).kind).toBe(
       "repair",
     );
@@ -128,5 +144,52 @@ describe("labels", () => {
     expect(profileSizeLabel(400)).toBe("1 KB");
     expect(profileSizeLabel(25_000_000)).toBe("25 MB");
     expect(profileSizeLabel(1_234_000_000)).toBe("1.2 GB");
+  });
+});
+
+// 1.67.54 finding 6c: the add-on's notice or raw error never reaches the screen.
+describe("unsupportedLine", () => {
+  it("keeps hbots's own plain sentences", () => {
+    expect(unsupportedLine("The mail bridge stopped before it answered.")).toBe(
+      "The mail bridge stopped before it answered.",
+    );
+  });
+
+  it("maps the add-on's version notice to plain words", () => {
+    expect(
+      unsupportedLine(
+        "Commonpost notice (please tell the user): the Thunderbird add-on is version 0.9.0, older than 0.12.0",
+      ),
+    ).toBe(UNSUPPORTED_LINES.addonOld);
+    expect(unsupportedLine("Commonpost notice (please tell the user): restart needed")).toBe(
+      UNSUPPORTED_LINES.addonNotice,
+    );
+  });
+
+  it("maps the bridge's own failures", () => {
+    expect(unsupportedLine("Could not start the mail bridge: Error: spawn ENOENT")).toBe(
+      UNSUPPORTED_LINES.bridgeStart,
+    );
+    expect(unsupportedLine("The mail bridge did not answer tools/list in time.")).toBe(
+      UNSUPPORTED_LINES.bridgeSlow,
+    );
+    expect(unsupportedLine("Cancelled.")).toBe(UNSUPPORTED_LINES.cancelled);
+    expect(unsupportedLine("No answer.")).toBe(UNSUPPORTED_LINES.noAnswer);
+  });
+
+  it("never shows a raw add-on error", () => {
+    const raw = 'TypeError: can\'t access property "accounts", messenger is undefined at bg.js:12';
+    expect(unsupportedLine(raw)).toBe(UNSUPPORTED_LINES.addonError);
+    expect(
+      emailView(
+        {
+          thunderbird: { _tag: "unsupported", reason: raw },
+          accountsConfirmed: false,
+          profileSizeBytes: null,
+        },
+        [],
+        null,
+      ),
+    ).toEqual({ kind: "repair", line: UNSUPPORTED_LINES.addonError });
   });
 });
