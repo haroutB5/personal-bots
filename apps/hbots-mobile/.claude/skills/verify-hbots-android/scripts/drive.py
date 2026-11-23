@@ -423,6 +423,7 @@ class Run:
             d.run("push", f"{HERE}/photos/{name}", f"/sdcard/Pictures/verify-{tag}.png", check=True)
             d.sh(f"am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/verify-{tag}.png")
         d.run("logcat", "-c")
+        self.note(f"screen dumps: {d.start_dumper(os.path.join(os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.cache'), 'hbots-verify-uidump'))}")
         d.sh(f"monkey -p {PKG} -c android.intent.category.LAUNCHER 1")
         self.pair()
         self.srv("fakepush", a.srv)
@@ -443,7 +444,7 @@ class Run:
     def save_diag(self, tag, link=""):
         """A screen dump and the logcat, with the pairing link and token blanked, so a setup failure can be diagnosed afterwards."""
         try:
-            raw = self.d.run("exec-out", "uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; cat /sdcard/ui.xml")
+            raw = self.d.dump_xml()
             with open(f"{self.ev}/{tag}-dump.xml", "w") as f:
                 f.write(self.redact(raw, link))
         except Exception as e:
@@ -1035,9 +1036,12 @@ class Run:
             err = s.first(rid="restart-laptop-error")
             return "FAIL", f"no restarting text after Restart; error: {err.text if err else 'none'}"
         dry = bool(s.first(text=r"Dry run: .*"))
-        logged = any("would reboot" in line for line in open(self.srvlog, errors='replace').read().splitlines())
+        # The server accepts at once and logs "would reboot" when its dry run fires, 1000 ms later.
+        t = time.time()
+        while not (logged := any("would reboot" in line for line in open(self.srvlog, errors='replace').read().splitlines())) and time.time() - t < 8:
+            time.sleep(0.5)
         if not logged:
-            return "FAIL", "the throwaway server log has no 'would reboot' line"
+            return "FAIL", "the throwaway server log has no 'would reboot' line within 8 s of the restarting text"
         return "PASS", f"row shown to the owner; short tap gives the hold hint; 2.6 s hold opened the confirm sheet; Restart showed the restarting text (dry-run note {'shown' if dry else 'not shown'}); server logged 'would reboot'"
 
     def secret_card(self, s):
@@ -1123,15 +1127,14 @@ class Run:
             return "FAIL", "typing a valid address did not clear the problem text"
         self.d.tap(self.secret_fields(s)[2])
         saved = r"You saved QA flow 12 key\..*"
-        s, ok = self.d.wait(lambda s: s.first(text=saved), 20)
-        # The task resumes once the key is saved and its reply can push the settled card up the chat.
-        for _ in range(4 if not ok else 0):
+        # The task resumes once the key is saved and its reply can push the settled card up the chat,
+        # so look for a few seconds, then scroll back up a little and look again (24 s at most).
+        t = time.time()
+        s, ok = self.d.wait(lambda s: s.first(text=saved), 5)
+        while not ok and time.time() - t < 24:
             self.d.swipe(540, 700, 540, 1500, 300)
             time.sleep(0.6)
-            s = self.d.dump()
-            ok = s.first(text=saved)
-            if ok:
-                break
+            s, ok = self.d.wait(lambda s: s.first(text=saved), 3)
         self.shot("f12-saved")
         if not ok:
             shown = [x for x in s.texts() if "secret" in x.lower() or "try again" in x.lower() or "address" in x.lower()][:4]
@@ -1360,6 +1363,13 @@ def main():
     a = p.parse_args()
     time.sleep = counted_sleep  # every sleep in drive.py and ui.py is counted for the timing lines
     r = Run(a)
+    try:
+        return run_all(r, a)
+    finally:
+        r.d.stop_dumper()
+
+
+def run_all(r, a):
     try:
         r.setup()
     except Exception as e:
