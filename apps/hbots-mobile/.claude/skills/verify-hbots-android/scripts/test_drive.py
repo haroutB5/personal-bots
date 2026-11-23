@@ -104,5 +104,21 @@ class LinkProblem(unittest.TestCase):
         self.assertIn("aborted", self.run_with(["2026 ERR Request failed error=\"stream canceled\""], screen(("Reconnecting to your laptop…", "", False))))
 
 
+class F10Overlap(unittest.TestCase):
+    ORDER = [(f, str(f), None) for f in (1, 7, 9, 3, 2, "4s", 5, 4, 6, 8, 10, 11, 12, 13, 14)]
+
+    def test_fillers_follow_flow_10(self):
+        got = [e[0] for e in drive.overlap_order(self.ORDER)]
+        self.assertEqual(got, [1, 7, 9, 3, 2, "4s", 5, 4, 6, 8, 10, 11, 13, 12, 14])
+
+    def test_fillers_stay_in_settings(self):
+        # 6 (push), 4 and 8 (Work tab needs-you bar) and every Developer chat flow must not run during the wait.
+        self.assertEqual(set(drive.F10_FILLERS) & {1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14}, set())
+
+    def test_order_without_fillers_is_unchanged(self):
+        order = [e for e in self.ORDER if e[0] not in drive.F10_FILLERS]
+        self.assertEqual(drive.overlap_order(order), order)
+
+
 if __name__ == "__main__":
     unittest.main()
