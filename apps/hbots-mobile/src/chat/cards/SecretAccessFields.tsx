@@ -88,10 +88,12 @@ function PlacementFields({
   state,
   onChange,
   disabled,
+  onInputFocus,
 }: {
   readonly state: SecretPlacementState;
   readonly onChange: (next: SecretPlacementState) => void;
   readonly disabled: boolean;
+  readonly onInputFocus?: () => void;
 }) {
   const [open, setOpen] = useState(
     state.header !== "" || state.anywhere || state.pathPrefix !== "" || state.methods.length > 0,
@@ -121,6 +123,7 @@ function PlacementFields({
             autoCapitalize="none"
             placeholder="x-api-key"
             placeholderTextColor={tokens.textTertiary}
+            onFocus={onInputFocus}
             onChangeText={(header) => onChange({ ...state, header })}
             style={styles.input}
           />
@@ -140,6 +143,7 @@ function PlacementFields({
             autoCapitalize="none"
             placeholder="/v1"
             placeholderTextColor={tokens.textTertiary}
+            onFocus={onInputFocus}
             onChangeText={(pathPrefix) => onChange({ ...state, pathPrefix })}
             style={styles.input}
           />
@@ -177,15 +181,19 @@ export function SecretAccessFields({
   onChange,
   disabled = false,
   showProblem = false,
+  showProblemText = true,
   botName,
   showPlacement = false,
+  onInputFocus,
 }: {
   readonly state: SecretAccessState;
   readonly onChange: (next: SecretAccessState) => void;
   readonly showPlacement?: boolean;
   readonly disabled?: boolean;
   readonly showProblem?: boolean;
+  readonly showProblemText?: boolean;
   readonly botName?: string;
+  readonly onInputFocus?: () => void;
 }) {
   const problem = secretAccessProblem(state);
   const who = botName ?? "bots";
@@ -231,6 +239,7 @@ export function SecretAccessFields({
             autoCapitalize="none"
             placeholder="https://api.vercel.com"
             placeholderTextColor={tokens.textTertiary}
+            onFocus={onInputFocus}
             onChangeText={(originsText) => onChange({ ...state, originsText })}
             style={[styles.input, showProblem && problem !== null ? styles.inputInvalid : null]}
           />
@@ -238,11 +247,14 @@ export function SecretAccessFields({
             The server adds the key only to requests sent here. Separate several addresses with a
             space.
           </Text>
-          {showProblem && problem !== null ? <Text style={cardStyles.error}>{problem}</Text> : null}
+          {showProblem && showProblemText && problem !== null ? (
+            <Text style={cardStyles.error}>{problem}</Text>
+          ) : null}
           {showPlacement ? (
             <PlacementFields
               state={state.placement}
               disabled={disabled}
+              onInputFocus={onInputFocus}
               onChange={(placement) => onChange({ ...state, placement })}
             />
           ) : null}
