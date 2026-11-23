@@ -10,9 +10,15 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Flows that run while flow 10 waits for the server's 2-minute auto-decline. They stay in Settings: no
-# Developer chat (the pending card), no push (flow 6), no Work tab (flows 4 and 8 show a needs-you bar).
-F10_FILLERS = (11, 13)
+# Flow 10's timeout leg waits for the server's real 2-minute auto-decline. With the overlap on, the driver
+# asks for that approval first, in the F10_TIMEOUT_BOT chat, and runs the fillers during the wait. A filler
+# must not open that bot's chat, the Work tab (flows 4 and 8 show a needs-you bar), the Tasks tab (flow 5:
+# no bot working) or the Bots list order (flow 14), or go to the background (flow 6: push).
+F10_TIMEOUT_BOT = "Researcher"  # a Chats row from the start; its own flows (seed, 6, 8) run after the decline
+F10_FILLERS = (1, 7, 9, 3, 2, 11, 13, 12)
+# Seconds each filler takes with its reset (fast3, 23 Nov 2026); no filler starts that would end after this.
+F10_TYPICAL = {1: 8, 7: 10, 9: 13, 3: 6, 2: 14, 11: 14, 13: 17, 12: 31}
+F10_DECLINE_AT = 116
 sys.path.insert(0, HERE)
 from ui import Device  # noqa: E402
 
@@ -938,13 +944,13 @@ class Run:
             return "FAIL", f"steps failed: {','.join(bad) or 'none'}; pid={pid or 'none'} FATAL={fatal} JS-errors={js}"
         return "PASS", f"Researcher chat (its question visible) and Planner chat (its question visible) opened from Chats and from a Work card and closed with the system Back key, Computer and Files visited, app pid {pid} alive, FATAL 0, JS errors 0"
 
-    def approval_card(self, s):
-        return s.first(text=r"Developer needs approval") and s.first(text="Run a command") and s.first(desc="Approve")
+    def approval_card(self, s, bot="Developer"):
+        return s.first(text=rf"{bot} needs approval") and s.first(text="Run a command") and s.first(desc="Approve")
 
-    def ask_approval(self, tag):
+    def ask_approval(self, tag, bot="Developer"):
         """Send SAFETYQ: the fake CLI asks for a Bash approval like Claude Code's safety check does. Waits for the card."""
-        self.say("Developer", "SAFETYQ")
-        s, ok = self.d.wait(self.approval_card, 30)
+        self.say(bot, "SAFETYQ")
+        s, ok = self.d.wait(lambda s: self.approval_card(s, bot), 30)
         self.shot(f"f10-{tag}-card")
         if not ok:
             raise AssertionError(f"{tag}: no approval card (title, 'Run a command', Approve) appeared")
@@ -983,20 +989,28 @@ class Run:
         if not ok:
             return "FAIL", "after Deny the bot did not get 'User declined tool execution.' or the card stayed"
         self.learn(self.d.dump())
+        legs = "card with command and reason; Chats row Needs approval opened the chat at the card; Approve ran it; Deny declined it"
+        if self.f10_timeout:
+            verdict, reason = self.f10_timeout
+            return verdict, (f"{legs}; {reason}" if verdict == "PASS" else f"timeout leg ({F10_TIMEOUT_BOT}): {reason}")
         self.ask_approval("timeout")
         self.f10_since = time.time()
-        if self.f10_overlap:
-            # The server declines this card after its real 2 minutes. Flows 11 and 13 (Settings only, no
-            # Developer chat, no push) run meanwhile; f10_tail then checks the decline and the row.
-            return "PENDING", "approve and deny passed; the unanswered card is waiting for the server's 2-minute auto-decline"
-        return self.f10_tail()
+        verdict, reason = self.f10_tail("Developer")
+        return verdict, (f"{legs}; {reason}" if verdict == "PASS" else reason)
 
-    def f10_tail(self):
-        """The rest of flow 10: the unanswered card is declined by the server after 2 minutes, and the Chats row clears."""
-        if self.f10_overlap:
-            self.open_bot("Developer")
-            if time.time() - self.f10_since < 105:
-                s, ok = self.d.wait(self.approval_card, 10)
+    def f10_start(self):
+        """Flow 10's timeout leg, first: ask for an approval in the F10_TIMEOUT_BOT chat and leave it unanswered."""
+        self.open_bot(F10_TIMEOUT_BOT)
+        self.ask_approval("timeout", F10_TIMEOUT_BOT)
+        self.f10_since = time.time()
+        self.leave_chat()
+
+    def f10_tail(self, bot):
+        """The end of flow 10's timeout leg: the server declines the unanswered card after 2 minutes, and the Chats row clears."""
+        if self.f10_early:
+            self.open_bot(bot)
+            if time.time() - self.f10_since < 112:
+                s, ok = self.d.wait(lambda s: self.approval_card(s, bot), 10)
                 self.shot("f10-reopened-pending")
                 if not ok:
                     return "FAIL", f"reopened {round(time.time() - self.f10_since)}s after the card was sent, the card was no longer waiting with Approve"
@@ -1009,11 +1023,12 @@ class Run:
             return "FAIL", f"the card was declined after {waited}s, before the 2 minutes it promises"
         self.leave_chat()
         self.to_chats()
-        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Developer, .*") if n.clickable), None), 10)
+        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=rf"{bot}, .*") if n.clickable), None), 10)
         self.shot("f10-chats-after")
         if row and "Needs approval" in row.desc:
-            return "FAIL", "the Chats row still reads Needs approval after the request resolved"
-        return "PASS", f"card with command and reason; Chats row Needs approval opened the chat at the card; Approve ran it; Deny declined it; unanswered card auto-declined after ~{waited}s with the retry advice; row cleared" + (" (flows 11 and 13 ran during the wait)" if self.f10_overlap else "")
+            return "FAIL", f"the {bot} Chats row still reads Needs approval after the request resolved"
+        during = f" ({bot} chat; flows {','.join(map(str, self.f10_filled))} ran during the wait)" if self.f10_early else ""
+        return "PASS", f"unanswered card auto-declined after ~{waited}s with the retry advice; row cleared{during}"
 
     def restart_row(self):
         for _ in range(8):
@@ -1312,22 +1327,25 @@ class Run:
         seed_secs = 0
         self.order = order
         ran = []
-        # Flow 10's last leg waits for the server's real 2-minute auto-decline. The fillers run during that wait.
+        # Flow 10's timeout leg waits for the server's real 2-minute auto-decline. With fillers to run,
+        # it starts first ("10t") and the fillers run during the wait; f10 later checks the other legs.
         fillers = [f for f in F10_FILLERS if not only or str(f) in only]
-        self.f10_overlap = os.environ.get("VERIFY_F10_OVERLAP", "1") != "0" and bool(fillers) and (not only or "10" in only)
-        self.f10_pending = None
-        if self.f10_overlap:
-            order = self.order = overlap_order(order)
+        self.f10_early = os.environ.get("VERIFY_F10_OVERLAP", "1") != "0" and bool(fillers) and (not only or "10" in only)
+        self.f10_pending = False
+        self.f10_timeout = None
+        self.f10_filled = []
+        if self.f10_early:
+            order = self.order = overlap_order(order, (("10t", "tool-approval-timeout-start", self.f10_start)))
         for flow, name, fn in order:
             # The seed ("4s") serves flow 4 and flow 8 (the two questions flow 8 opens).
-            if only and (flow == "4s" and not only & {"4", "8"} or flow != "4s" and str(flow) not in only):
+            if only and (flow == "4s" and not only & {"4", "8"} or flow not in ("4s", "10t") and str(flow) not in only):
                 continue
-            if self.f10_pending and flow not in F10_FILLERS and not self.finish_f10():
-                return
-            if self.f10_pending and flow in F10_FILLERS and time.time() - self.f10_since > 90:
-                # Too late to fit this filler into the wait: finish flow 10 first.
-                if not self.finish_f10():
+            if self.f10_pending and (flow not in F10_FILLERS or time.time() - self.f10_since + F10_TYPICAL[flow] > F10_DECLINE_AT):
+                # The fillers are done, or this one would end after the decline: finish the timeout leg first.
+                if not self.finish_f10(ran):
                     return
+            if self.f10_pending:
+                self.f10_filled.append(flow)
             ran.append(flow)
             s0 = self.snap()
             try:
@@ -1351,18 +1369,25 @@ class Run:
                 self.timing[str(flow)]["flow"] = split(s2, self.snap())
                 self.note(f"timing seed: reset {split_text(self.timing[str(flow)]['reset'])}; flow {split_text(self.timing[str(flow)]['flow'])}")
                 continue
+            if flow == "10t":
+                try:
+                    fn()
+                    self.f10_pending = True
+                    self.note(f"flow 10 timeout leg: an unanswered approval is waiting in the {F10_TIMEOUT_BOT} chat for the server's 2-minute auto-decline")
+                except Exception as e:
+                    self.f10_timeout = ("FAIL", f"{type(e).__name__}: {str(e)[:160]}")
+                    self.save_diag("f10-timeout-start-fail")
+                self.f10_secs = time.time() - t
+                self.timing[str(flow)]["flow"] = split(s2, self.snap())
+                self.note(f"timing f10 timeout start: reset {split_text(self.timing[str(flow)]['reset'])}; flow {split_text(self.timing[str(flow)]['flow'])}")
+                continue
             try:
                 verdict, reason = fn()
             except Exception as e:
                 verdict, reason = "FAIL", f"{type(e).__name__}: {str(e)[:160]}"
-            secs = time.time() - t + (seed_secs if flow == 4 else 0)
+            secs = time.time() - t + (seed_secs if flow == 4 else 0) + (getattr(self, "f10_secs", 0) if flow == 10 else 0)
             tm = self.timing[str(flow)]
             tm["flow"] = split(s2, self.snap())
-            if verdict == "PENDING":
-                self.note(f"timing f{flow} (first part): reset {split_text(tm['reset'])}; link check {tm['link']['wall']:.1f} s; flow {split_text(tm['flow'])}")
-                self.note(f"flow {flow} {name}: {reason}")
-                self.f10_pending = (flow, name, secs, ran)
-                continue
             self.note(f"timing f{flow}: reset {split_text(tm['reset'])}; link check {tm['link']['wall']:.1f} s; flow {split_text(tm['flow'])}")
             if verdict == "FAIL":
                 try:
@@ -1377,12 +1402,12 @@ class Run:
                     return
             self.result(flow, name, verdict, reason, secs)
         if self.f10_pending:
-            self.finish_f10()
+            self.finish_f10(ran)
 
-    def finish_f10(self):
-        """Run flow 10's tail after the fillers and record flow 10's one verdict. False when the link was lost."""
-        flow, name, secs, ran = self.f10_pending
-        self.f10_pending = None
+    def finish_f10(self, ran):
+        """Finish flow 10's timeout leg after the fillers; f10 reports it with the other legs. False when the link was lost."""
+        flow, name = 10, "tool-approval-card"
+        self.f10_pending = False
         s0 = self.snap()
         try:
             self.reset()
@@ -1396,43 +1421,43 @@ class Run:
         s2 = self.snap()
         t = time.time()
         try:
-            verdict, reason = self.f10_tail()
+            verdict, reason = self.f10_tail(F10_TIMEOUT_BOT)
         except Exception as e:
             verdict, reason = "FAIL", f"{type(e).__name__}: {str(e)[:160]}"
-        tm = self.timing[str(flow)]
-        tm["tail"] = {"reset": split(s0, s1), "link": split(s1, s2), "flow": split(s2, self.snap())}
-        self.note(f"timing f{flow} (tail): reset {split_text(tm['tail']['reset'])}; link check {tm['tail']['link']['wall']:.1f} s; flow {split_text(tm['tail']['flow'])}")
-        secs += time.time() - t
+        self.timing["10t"]["tail"] = {"reset": split(s0, s1), "link": split(s1, s2), "flow": split(s2, self.snap())}
+        tm = self.timing["10t"]["tail"]
+        self.note(f"timing f10 timeout tail: reset {split_text(tm['reset'])}; link check {tm['link']['wall']:.1f} s; flow {split_text(tm['flow'])}")
+        self.f10_secs = getattr(self, "f10_secs", 0) + time.time() - t
         if verdict == "FAIL":
             try:
-                self.shot(f"f{flow}-fail")
-                self.save_diag(f"f{flow}-fail")
+                self.shot("f10-timeout-fail")
+                self.save_diag("f10-timeout-fail")
             except Exception:
                 pass
             prob = self.link_problem(full=True)
             if prob:
-                self.result(flow, name, "LINK-LOST", f"{reason} (not an app verdict: {prob})", secs)
+                self.result(flow, name, "LINK-LOST", f"{reason} (not an app verdict: {prob})", self.f10_secs)
                 self.link_lost(flow, name, prob, ran)
                 return False
-        self.result(flow, name, verdict, reason, secs)
+        self.note(f"flow 10 timeout leg {verdict}: {reason}")
+        self.f10_timeout = (verdict, reason)
         return True
 
     def link_lost(self, flow, name, prob, ran):
         """The link to the throwaway server dropped. That is a setup failure (exit 2), never a flow FAIL: flows after this one are not judged."""
         only = set(self.a.only.split(",")) if self.a.only else None
         done = {str(x[0]) for x in self.results}
-        left = [str(f) for f, _, _ in self.order if f != "4s" and str(f) not in done and (not only or str(f) in only)]
+        left = [str(f) for f, _, _ in self.order if str(f).isdigit() and str(f) not in done and (not only or str(f) in only)]
         self.setup_reason = f"link lost at flow {flow} ({name}), not an app verdict, flows {','.join(left)} not judged, rerun: {prob}"
         self.note(f"LINK LOST: {self.setup_reason}")
         self.shot(f"link-lost-f{flow}")
 
 
-def overlap_order(order):
-    """The run order with the F10_FILLERS moved to right after flow 10, so they run inside its wait."""
+def overlap_order(order, start):
+    """The run order for the overlap: flow 10's timeout start first, then the F10_FILLERS, then the rest in order."""
     fill = [e for e in order if e[0] in F10_FILLERS]
     rest = [e for e in order if e[0] not in F10_FILLERS]
-    at = next(i for i, e in enumerate(rest) if e[0] == 10) + 1
-    return rest[:at] + fill + rest[at:]
+    return [start] + fill + rest
 
 
 def main():

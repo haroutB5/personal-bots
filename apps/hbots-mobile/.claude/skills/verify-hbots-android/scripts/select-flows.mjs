@@ -9,7 +9,7 @@ import * as NodeUtil from "node:util";
 
 export const FLOWS = [1, 7, 9, 3, 2, 5, 4, 6, 8, 10, 11, 12, 13, 14];
 /** drive.py's F10_FILLERS. */
-export const F10_FILLERS = [11, 13];
+export const F10_FILLERS = [1, 7, 9, 3, 2, 11, 13, 12];
 export const CORE = [1, 8];
 const ALL = "all";
 const SKILL = "apps/hbots-mobile/.claude/skills/verify-hbots-android/";
@@ -173,6 +173,7 @@ export const DRIVE_METHODS = {
   f10: [10],
   f10_tail: [10],
   finish_f10: [10],
+  f10_start: [10],
   restart_row: [11],
   f11: [11],
   secret_card: [12],

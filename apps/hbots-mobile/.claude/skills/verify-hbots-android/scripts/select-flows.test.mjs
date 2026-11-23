@@ -61,8 +61,8 @@ NodeTest.test("a feature change blocks its own flows plus the core", () => {
       [`${SRC}chat/cards/SecretRequestCard.tsx`, `${SRC}chat/cards/secretRequestCardModel.ts`],
       [12],
     ],
-    [[`${SRC}chat/cards/ToolApprovalCard.tsx`], [10, 11, 13]],
-    [["apps/server/src/personal/approvals/approvalTimeoutPolicy.ts"], [10, 11, 13]],
+    [[`${SRC}chat/cards/ToolApprovalCard.tsx`], [10, 7, 9, 3, 2, 11, 13, 12]],
+    [["apps/server/src/personal/approvals/approvalTimeoutPolicy.ts"], [10, 7, 9, 3, 2, 11, 13, 12]],
     [[`${SRC}settings/RestartLaptopRow.tsx`], [11]],
     [
       [
@@ -84,9 +84,9 @@ NodeTest.test("a feature change blocks its own flows plus the core", () => {
     [[`${SRC}chat/MessageList.tsx`], [7, 9]],
     [[`${SRC}tasks/TasksScreen.tsx`], [5, 4]],
     [[`${SRC}notifications/pushController.ts`], [5, 6]],
-    [[`${SRC}chat/useChatCards.ts`], [10, 11, 13, 12, 14, 4]],
+    [[`${SRC}chat/useChatCards.ts`], [10, 7, 9, 3, 2, 11, 13, 12, 14, 4]],
     [[`${SRC}chat/chatModel.ts`], [7, 9, 3, 2, 10, 11, 13, 12, 14]],
-    [[`${SRC}shell/BotsScreen.tsx`], [6, 10, 11, 13, 14]],
+    [[`${SRC}shell/BotsScreen.tsx`], [6, 10, 7, 9, 3, 2, 11, 13, 12, 14]],
     [[`${SRC}settings/MemoryScreen.tsx`], []],
   ];
   for (const [paths, want] of cases) {

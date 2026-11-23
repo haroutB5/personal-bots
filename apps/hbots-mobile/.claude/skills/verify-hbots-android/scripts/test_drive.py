@@ -106,18 +106,23 @@ class LinkProblem(unittest.TestCase):
 
 class F10Overlap(unittest.TestCase):
     ORDER = [(f, str(f), None) for f in (1, 7, 9, 3, 2, "4s", 5, 4, 6, 8, 10, 11, 12, 13, 14)]
+    START = ("10t", "start", None)
 
-    def test_fillers_follow_flow_10(self):
-        got = [e[0] for e in drive.overlap_order(self.ORDER)]
-        self.assertEqual(got, [1, 7, 9, 3, 2, "4s", 5, 4, 6, 8, 10, 11, 13, 12, 14])
+    def test_timeout_start_then_fillers_then_the_rest(self):
+        got = [e[0] for e in drive.overlap_order(self.ORDER, self.START)]
+        self.assertEqual(got, ["10t", 1, 7, 9, 3, 2, 11, 12, 13, "4s", 5, 4, 6, 8, 10, 14])
 
-    def test_fillers_stay_in_settings(self):
-        # 6 (push), 4 and 8 (Work tab needs-you bar) and every Developer chat flow must not run during the wait.
-        self.assertEqual(set(drive.F10_FILLERS) & {1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14}, set())
+    def test_fillers_keep_out_of_the_pending_card(self):
+        # 4 and 8 (Work tab needs-you bar), 5 (Tasks tab: no bot working), 6 (push in the background) and
+        # 14 (Bots order) would see the pending approval; flow 10's own legs run after the decline.
+        self.assertEqual(set(drive.F10_FILLERS) & {4, 5, 6, 8, 10, 14}, set())
+        self.assertNotEqual(drive.F10_TIMEOUT_BOT, "Developer", "every Developer-chat flow is a filler")
+        self.assertEqual(set(drive.F10_TYPICAL), set(drive.F10_FILLERS))
+        self.assertLess(drive.F10_DECLINE_AT, 120, "a filler must end before the server's 2 minutes")
 
-    def test_order_without_fillers_is_unchanged(self):
+    def test_order_without_fillers(self):
         order = [e for e in self.ORDER if e[0] not in drive.F10_FILLERS]
-        self.assertEqual(drive.overlap_order(order), order)
+        self.assertEqual(drive.overlap_order(order, self.START), [self.START] + order)
 
 
 if __name__ == "__main__":
