@@ -1,6 +1,6 @@
 ---
 name: verify-hbots-android
-description: "Installs an x86_64 hbots APK on a throwaway Android emulator, pairs it with a throwaway server and a fake Claude bot, and drives fourteen daily-use flows (a phone release runs the core plus the touched flows before release and the rest after live) the way a thumb does: chat send and reply, swipe-to-quote, long-press then Reply, one camera entry, three photos at once, work card for unread questions only, in-app versus push, open and back with a clean logcat. Run it before every phone release and before committing changes to the chat screen, composer, attachments, Work view, presence or push code. Does not cover a real arm64 phone, FCM, voice, most of Settings, Team, Files content or light mode."
+description: "Installs an x86_64 hbots APK on a throwaway Android emulator, pairs it with a throwaway server and a fake Claude bot, and drives fourteen daily-use flows (a phone release runs all fourteen before it arms) the way a thumb does: chat send and reply, swipe-to-quote, long-press then Reply, one camera entry, three photos at once, work card for unread questions only, in-app versus push, open and back with a clean logcat. Run it before every phone release and before committing changes to the chat screen, composer, attachments, Work view, presence or push code. Does not cover a real arm64 phone, FCM, voice, most of Settings, Team, Files content or light mode."
 ---
 
 # Verify hbots Android
@@ -11,15 +11,11 @@ Surface: the hbots Android app (`apps/hbots-mobile`). One command installs an AP
 env -u NODE_ENV bash apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/verify.sh <x86_64.apk> [label] [--only 1,2 | --tier blocking|async --base <live release sha>]
 ```
 
-### Before the release and after live (1.67.56)
+### A phone release runs all 14 flows before it arms (1.67.56)
 
-A phone release runs `--tier blocking --base <live release>` before it arms. `select-flows.mjs` reads the release's diff (`git diff <base>..HEAD`) and picks:
+Run `verify.sh <x86_64.apk> <label>` with no `--tier`, with `VERIFY_RELEASE` set to the staged release, before arming, and pass no `--emulator-apk` to `tools/hbots-release-finish.sh`. Opusito's decision after Fable's review (P1, 23 Nov 2026): replayed over the last 25 releases the selector picked all 14 flows for 23 of them, so it saved almost nothing, and the split between tiers could leave a flow in neither (F3). A full run takes about 4.3 min.
 
-- **The core, always before the release:** setup (install the release APK, launch, pair over the tunnel, version shown), flow 1 (chat send and reply) and flow 8 (open and back through every tab, app alive, logcat FATAL and JS errors 0). Together they prove the app starts, pairs, talks to the new server and does not crash.
-- **The touched flows:** each flow whose screens, cards, client model or server code the diff changes (the rules are in `select-flows.mjs`, `RULES`). When flow 10 runs, its fillers (1, 7, 9, 3, 2, 11, 13, 12) run too, because they fit inside its 2-minute wait for free.
-- **Every flow** when the change is shared or unsure: a migration, `nav/`, `App.tsx`, the app shell, contracts, client-runtime, a native module, the build, the lockfile, the skill's own scripts (`drive.py` is read per method), the fake Claude CLI or the release tools. An app source file with no rule is a test failure (`select-flows.test.mjs`), so a new folder must get a rule.
-
-The other flows run after the release went live, in the async tier: `tools/hbots-release-finish.sh --emulator-apk <x86_64 apk>` passes the APK to `tools/hbots-async-gates.mjs`, which runs `verify.sh --tier async` against the live release before the APK is published. A failed flow runs once more on its own. Only a flow that fails twice is a real failure, and it rolls the server back under the same guard as the async gates (live release is the tested one, no newer release armed or running, a tiered release, no migration). A setup or link failure (exit 2) never rolls back. Either way a failure publishes no APK and pushes nothing. `node select-flows.mjs --repo . --base <sha> --head HEAD` prints the split and why.
+**Parked, not used by releases:** `select-flows.mjs` and `--tier blocking|async --base <sha>` (the core is setup, flow 1 and flow 8; the rules are in `RULES`; any shared or unsure change selects all 14), and the async emulator tier (`hbots-release-finish.sh --emulator-apk`, which runs `--tier async` against the live release, retries a failed flow once, and rolls back only for a flow that fails twice). Both keep their tests (`select-flows.test.mjs`, `tools.test.mjs`). `node select-flows.mjs --repo . --base <sha> --head HEAD` still prints the split and why.
 
 Exit 0 is every flow PASS. Exit 1 is a failed flow. Exit 2 is a setup, device, doctor or link failure: a refusal, a usage error, a rig that is not free, or the link to the throwaway server dropping mid-run (below). The last line is always a RESULT line, also after a refusal: `RESULT PASS|FAIL|SETUP-FAIL (<why, for SETUP-FAIL>) in <total>s total, <queue>s waiting for a heavy-job slot, <work>s of work`. Judge speed by the work number.
 
