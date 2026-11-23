@@ -63,9 +63,17 @@ class Device:
         self.log = log or (lambda *a: None)
         self.width, self.height = 1080, 2355
         self.anr_taps = 0
+        # Where the driver's time goes, for the per-flow timing lines: {"dump"|"adb": [calls, seconds]}.
+        self.stats = {"dump": [0, 0.0], "adb": [0, 0.0]}
 
     def run(self, *args, timeout=40, text=True, check=False):
-        r = subprocess.run(self.adb + list(args), capture_output=True, timeout=timeout)
+        t0 = time.monotonic()
+        try:
+            r = subprocess.run(self.adb + list(args), capture_output=True, timeout=timeout)
+        finally:
+            kind = "dump" if args and args[0] == "exec-out" and "uiautomator dump" in str(args[1:2]) else "adb"
+            self.stats[kind][0] += 1
+            self.stats[kind][1] += time.monotonic() - t0
         out = r.stdout.decode("utf-8", "replace") if text else r.stdout
         if check and r.returncode:
             raise RuntimeError(f"adb {' '.join(args[:3])} failed: {r.stderr.decode('utf-8', 'replace')[:200]}")

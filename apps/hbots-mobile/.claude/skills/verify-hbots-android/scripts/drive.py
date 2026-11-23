@@ -52,6 +52,27 @@ def prompt_text(line):
     return ATTACHED.sub("", REPLY_QUOTE.sub("", text, count=1)).strip()
 
 
+SLEPT = [0.0]  # seconds spent in time.sleep since start (counted only when main() installs counted_sleep)
+_real_sleep = time.sleep
+
+
+def counted_sleep(secs):
+    SLEPT[0] += max(0.0, secs)
+    _real_sleep(secs)
+
+
+def split(a, b):
+    """Where the wall time between two snapshots went: uiautomator dumps, other adb calls, sleeps, and the rest (host work: logs, curl, srv.mjs)."""
+    wall = b[0] - a[0]
+    dn, ds, an, as_, sl = (b[i] - a[i] for i in range(1, 6))
+    return {"wall": round(wall, 1), "dumps": dn, "dump_s": round(ds, 1), "adb": an, "adb_s": round(as_, 1), "sleep_s": round(sl, 1),
+            "host_s": round(wall - ds - as_ - sl, 1)}
+
+
+def split_text(x):
+    return f"{x['wall']:.1f} s = {x['dumps']} dumps {x['dump_s']:.1f} s + {x['adb']} adb {x['adb_s']:.1f} s + sleeps {x['sleep_s']:.1f} s + host {x['host_s']:.1f} s"
+
+
 def field_is_draft(field, text):
     return bool(field and text in field.text)
 
@@ -64,11 +85,16 @@ class Run:
         self.d = Device(a.adb, self.note)
         self.t0 = time.time()
         self.results = []
+        self.timing = {}
         self.srvlog = f"{a.srv}/server.log"
         self.fakelog = f"{a.srv}/fake-pids/fake-claude.log"
         self.h = {}
         self.setup_reason = ""
         self.tlog_pos = os.path.getsize(a.tunnel_log) if a.tunnel_log and os.path.exists(a.tunnel_log) else 0
+
+    def snap(self):
+        st = self.d.stats
+        return (time.monotonic(), st["dump"][0], st["dump"][1], st["adb"][0], st["adb"][1], SLEPT[0])
 
     def note(self, msg):
         line = f"{time.strftime('%H:%M:%S', time.gmtime())} {msg}"
@@ -1267,14 +1293,18 @@ class Run:
             if only and str(flow).rstrip("s") not in only:
                 continue
             ran.append(flow)
+            s0 = self.snap()
             try:
                 self.reset()
             except Exception as e:
                 self.note(f"reset before flow {flow} failed: {type(e).__name__}: {str(e)[:120]}")
+            s1 = self.snap()
             prob = self.link_problem()
             if prob:
                 self.link_lost(flow, name, prob, ran)
                 return
+            s2 = self.snap()
+            self.timing[str(flow)] = {"reset": split(s0, s1), "link": split(s1, s2)}
             t = time.time()
             if flow == "4s":
                 try:
@@ -1282,12 +1312,17 @@ class Run:
                 except Exception as e:
                     self.note(f"seed for flow 4 failed: {type(e).__name__}: {e}")
                 seed_secs = time.time() - t
+                self.timing[str(flow)]["flow"] = split(s2, self.snap())
+                self.note(f"timing seed: reset {split_text(self.timing[str(flow)]['reset'])}; flow {split_text(self.timing[str(flow)]['flow'])}")
                 continue
             try:
                 verdict, reason = fn()
             except Exception as e:
                 verdict, reason = "FAIL", f"{type(e).__name__}: {str(e)[:160]}"
             secs = time.time() - t + (seed_secs if flow == 4 else 0)
+            tm = self.timing[str(flow)]
+            tm["flow"] = split(s2, self.snap())
+            self.note(f"timing f{flow}: reset {split_text(tm['reset'])}; link check {tm['link']['wall']:.1f} s; flow {split_text(tm['flow'])}")
             if verdict == "FAIL":
                 try:
                     self.shot(f"f{flow}-fail")
@@ -1323,6 +1358,7 @@ def main():
     p.add_argument("--tunnel-unit", default="")
     p.add_argument("--tunnel-log", default="")
     a = p.parse_args()
+    time.sleep = counted_sleep  # every sleep in drive.py and ui.py is counted for the timing lines
     r = Run(a)
     try:
         r.setup()
@@ -1340,7 +1376,7 @@ def main():
     r.flows()
     total = time.time() - t
     fails = [x for x in r.results if x[2] != "PASS"]
-    json.dump({"version": r.version, "flows_seconds": round(total), "setup_reason": r.setup_reason, "results": [dict(zip(("flow", "name", "verdict", "reason", "secs"), x)) for x in r.results]}, open(f"{r.ev}/drive.json", "w"), indent=1)
+    json.dump({"version": r.version, "flows_seconds": round(total), "setup_reason": r.setup_reason, "timing": r.timing, "setup_timing": getattr(r, "setup_timing", None), "results": [dict(zip(("flow", "name", "verdict", "reason", "secs"), x)) for x in r.results]}, open(f"{r.ev}/drive.json", "w"), indent=1)
     if r.setup_reason:
         open(f"{r.ev}/setup-reason.txt", "w").write(r.setup_reason + "\n")
         r.note(f"SETUP FAILED (exit 2): {r.setup_reason}")
