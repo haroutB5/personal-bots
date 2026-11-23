@@ -6,6 +6,10 @@ import path from 'node:path';
 import {spawnSync,spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const here=path.dirname(fileURLToPath(import.meta.url));
+// The tests run their own fixture collectors: a collector control inherited from the shell or a
+// release run (GATE_TIER, GATE_ANDROID_BUILD, ...) must not leak into them (1.67.53 started the
+// real arm64 build once per fixture run). Each test sets what it needs explicitly.
+for(const key of Object.keys(process.env))if(key.startsWith('GATE_'))delete process.env[key];
 const run=(cmd,args,opts={})=>spawnSync(cmd,args,{encoding:'utf8',timeout:15000,...opts});
 const node=(name,args,opts={})=>run(process.execPath,[path.join(here,name),...args],opts);
 const installScope=(repo)=>{
@@ -461,15 +465,15 @@ test('gate commands run without the live app environment',()=>{
   const fixture=path.join(root,'command.mjs');
   fs.writeFileSync(fixture,`import fs from 'node:fs';
 const kind=process.argv[2];
-if(kind==='server-tests') fs.writeFileSync(process.env.SEEN,JSON.stringify({t3:process.env.T3CODE_ENVIRONMENT_LABEL??'unset',personal:process.env.PERSONAL_SEED_MODEL??'unset',dsh:process.env.DSH_PROBE??'unset',keep:process.env.KEEP_ME??'unset'}));
+if(kind==='server-tests') fs.writeFileSync(process.env.SEEN,JSON.stringify({t3:process.env.T3CODE_ENVIRONMENT_LABEL??'unset',personal:process.env.PERSONAL_SEED_MODEL??'unset',dsh:process.env.DSH_PROBE??'unset',gate:process.env.GATE_FIXTURE_PROBE??'unset',keep:process.env.KEEP_ME??'unset'}));
 if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
   const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
-  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{SEEN:seen,T3CODE_ENVIRONMENT_LABEL:'Bots',PERSONAL_SEED_MODEL:'live',DSH_PROBE:'live',KEEP_ME:'ok'})});
+  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{SEEN:seen,T3CODE_ENVIRONMENT_LABEL:'Bots',PERSONAL_SEED_MODEL:'live',DSH_PROBE:'live',GATE_FIXTURE_PROBE:'live',KEEP_ME:'ok'})});
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.deepEqual(JSON.parse(fs.readFileSync(seen,'utf8')),{t3:'unset',personal:'unset',dsh:'unset',keep:'ok'});
+  assert.deepEqual(JSON.parse(fs.readFileSync(seen,'utf8')),{t3:'unset',personal:'unset',dsh:'unset',gate:'unset',keep:'ok'});
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
 test('each gate gets a private TMPDIR under /tmp, removed after it, and the pinned test browser',()=>{

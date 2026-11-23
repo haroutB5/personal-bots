@@ -154,12 +154,14 @@ if(process.env.HBOTS_HEAVY_JOB_HELD!=='1' || !holdsGate()) {
 // ~/.cache/ms-playwright holds a newer one and fails server-tests (1.67.17).
 const GATE_BROWSERS='/home/harout/Claude/AI/dev-team/tools/pw-browsers';
 const ANDROID_SDK='/home/harout/Android/Sdk';
-// Gate commands must not see the live app environment the bot shell carries.
+// Gate commands must not see the live app environment the bot shell carries, nor the
+// collector's own GATE_* controls: the release-tools tests run nested collectors, and an
+// inherited GATE_ANDROID_BUILD made each of them start the real arm64 build (1.67.53).
 // Each gate gets its own TMPDIR on /tmp (tmpfs, not on the server tests' deny
 // list, not a git-ignored worktree folder: 1.67.5 and 1.67.19), removed after it.
 const gateEnv=(cwd,tmp)=>{
   const env={};
-  for(const [key,value] of Object.entries(process.env)) if(!/^(?:T3CODE_|PERSONAL_|DSH_|PB_SECRET_)/.test(key)) env[key]=value;
+  for(const [key,value] of Object.entries(process.env)) if(!/^(?:T3CODE_|PERSONAL_|DSH_|PB_SECRET_|GATE_)/.test(key)) env[key]=value;
   env.PATH=`${cwd}/node_modules/.bin:${v.repo}/node_modules/.bin:${process.env.PATH}`;
   env.NO_COLOR='1';
   env.TMPDIR=tmp;
