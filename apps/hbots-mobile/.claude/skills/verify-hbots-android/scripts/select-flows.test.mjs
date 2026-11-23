@@ -81,7 +81,9 @@ NodeTest.test("a feature change blocks its own flows plus the core", () => {
     ],
     [[`${SRC}chat/AttachSheet.tsx`], [3, 2]],
     [[`${SRC}chat/Composer.tsx`], [7, 9, 3, 2]],
-    [[`${SRC}chat/MessageList.tsx`], [7, 9]],
+    // The list scrolls a pending card into view (flows 10 and 12), so it is every chat flow.
+    [[`${SRC}chat/MessageList.tsx`], [7, 9, 3, 2, 10, 11, 13, 12, 14]],
+    [[`${SRC}chat/jumpToLatest.ts`], [7, 9, 3, 2, 10, 11, 13, 12, 14]],
     [[`${SRC}tasks/TasksScreen.tsx`], [5, 4]],
     [[`${SRC}notifications/pushController.ts`], [5, 6]],
     [[`${SRC}chat/useChatCards.ts`], [10, 7, 9, 3, 2, 11, 13, 12, 14, 4]],

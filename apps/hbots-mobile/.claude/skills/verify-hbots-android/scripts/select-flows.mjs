@@ -78,8 +78,10 @@ export const RULES = [
     new RegExp(
       `^${SRC}chat/([Mm]essage|swipeTime|markdown|readerDoc|jumpToLatest|chatStreamPerf|useStreamCommitPerf|textSelectNative|ChipPill|chip|useFreshChipIds)`,
     ),
-    [7, 9],
-    "message list, swipe and long press",
+    // Every chat flow reads the list, and it also puts a card on screen: the chat opens at a pending
+    // card (flow 10) and the card stays above the keyboard (flow 12), both MessageList's scrollToCard.
+    CHAT,
+    "message list (every chat flow; it also scrolls a card into view)",
   ],
   [`${SRC}chat/`, CHAT, "the chat screen"],
   [`${SRC}screens/ChatScreen.tsx`, CHAT, "the chat screen"],
