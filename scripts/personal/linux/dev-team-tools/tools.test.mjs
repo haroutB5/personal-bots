@@ -846,6 +846,78 @@ test('async gates: untiered evidence runs nothing; --dry-run decides without run
  assert.equal(w.read('notices'),'');assert.equal(w.read('cli.calls'),'');
  assert.ok(!fs.existsSync(path.join(w.qa,'ASYNC-GATES.log')));
 });
+// The deferred emulator flows (1.67.56): a verify.sh stand-in answers each call with the next
+// line of emu.exits ("<exit> <flow lines ...>") and notes its args and env.
+const emuWorld=(opts,answers)=>{
+ const w=asyncWorld(opts);
+ const verify=path.join(w.root,'verify.sh'),apk=path.join(w.root,'qa.apk');
+ fs.writeFileSync(apk,'apk');
+ fs.writeFileSync(path.join(w.root,'emu.exits'),answers.join('\n')+'\n');
+ fs.writeFileSync(verify,`#!/usr/bin/env bash
+n=$(cat ${JSON.stringify(path.join(w.root,'emu.n'))} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${JSON.stringify(path.join(w.root,'emu.n'))}
+echo "$* | release=$VERIFY_RELEASE ev=$HBOTS_VERIFY_EVIDENCE node_env=\${NODE_ENV-unset}" >> ${JSON.stringify(path.join(w.root,'emu.calls'))}
+line=$(sed -n "\${n}p" ${JSON.stringify(path.join(w.root,'emu.exits'))})
+code=\${line%% *}; rest=\${line#* }
+[[ $rest == "$line" ]] || printf '%b\\n' "$rest"
+echo "RESULT exit $code"
+exit $code
+`);
+ const go=(args=[],extra={})=>w.go(['--emulator-apk',apk,...args],{HBOTS_ASYNC_VERIFY:verify,NODE_ENV:'production',...extra});
+ return {...w,go,calls:()=>w.read('emu.calls').trim().split('\n').filter(Boolean)};
+};
+test('async emulator: deferred flows run against the live release, even with untiered evidence',()=>{
+ const w=emuWorld({tier:null},['0 10:00:00 flow 4 work-card-unread-only PASS (30 s): ok']);
+ const r=w.go();
+ assert.equal(r.status,0,r.stdout+r.stderr);
+ assert.equal(w.read('collector.calls'),'','no gate deferred, so the collector never ran');
+ const [call]=w.calls();
+ assert.match(call,new RegExp(`qa\\.apk async-1\\.68\\.0 --tier async --base ${w.rb} \\| release=${w.rel} ev=${w.qa}/emulator-async node_env=unset`));
+ assert.match(r.stdout,/flow 4 work-card-unread-only PASS/);
+ assert.match(fs.readFileSync(path.join(w.qa,'ASYNC-RECORD.md'),'utf8'),/Outcome:\*\* `passed`[\s\S]*Emulator flows/);
+});
+test('async emulator: a flow that fails then passes on its own rerun is flaky, not a failure',()=>{
+ const w=emuWorld({},['1 10:00:00 flow 10 tool-approval-card FAIL (9 s): x\\n10:01:00 flow 11 restart-laptop-dry-run PASS (5 s): y','0 10:02:00 flow 10 tool-approval-card PASS (9 s): z']);
+ const r=w.go();
+ assert.equal(r.status,0,r.stdout+r.stderr);
+ assert.match(w.calls()[1],/async-1\.68\.0-retry --only 10 \|/);
+ assert.match(r.stdout,/flows 10 passed on the second run/);
+ assert.equal(w.read('cli.calls'),'');assert.equal(w.read('notices'),'');
+});
+test('async emulator: a flow that fails twice rolls back under guard 2, or stays live with untiered evidence',()=>{
+ const fail=['1 10:00:00 flow 12 secret-card-problem FAIL (9 s): x','1 10:02:00 flow 12 secret-card-problem FAIL (9 s): x'];
+ const w=emuWorld({},fail);
+ const r=w.go();
+ assert.equal(r.status,10,r.stdout+r.stderr);
+ assert.match(w.read('cli.calls'),new RegExp(`^restart --root dev --release ${w.rb}`));
+ assert.match(r.stdout,/deferred emulator flows exit 1/);
+ const full=emuWorld({tier:null},fail);
+ const k=full.go();
+ assert.equal(k.status,11,k.stdout+k.stderr);
+ assert.match(k.stdout,/no rollback: .*the evidence tier is full, not blocking/);
+ assert.equal(full.read('cli.calls'),'');
+ assert.match(full.read('notices'),/--outcome async_failed/);
+});
+test('async emulator: a setup or link failure (exit 2), or exit 1 with no FAIL line, never rolls back',()=>{
+ for(const answers of [['2 10:00:00 SETUP FAILED: no device'],['1 nothing named']]){
+  const w=emuWorld({},answers);
+  const r=w.go();
+  assert.equal(r.status,11,r.stdout+r.stderr);
+  assert.equal(w.calls().length,1,'no retry without a failed flow');
+  assert.match(r.stdout,/no rollback: the gates could not run \(exit 2\)/);
+  assert.equal(w.read('cli.calls'),'');
+ }
+});
+test('async emulator: a gate pass does not hide an emulator failure, and the gates run first',()=>{
+ const w=emuWorld({},['1 10:00:00 flow 5 in-app-on-tasks-tab FAIL (9 s): x','1 10:00:00 flow 5 in-app-on-tasks-tab FAIL (9 s): x']);
+ const r=w.go(['--no-rollback']);
+ assert.equal(r.status,11,r.stdout+r.stderr);
+ assert.match(w.read('collector.calls'),/"tier":"async"/);
+ assert.ok(r.stdout.indexOf('deferred gates exit 0')<r.stdout.indexOf('deferred emulator flows exit 1'));
+ const bad=emuWorld({},['0']);
+ fs.writeFileSync(path.join(bad.root,'gate.exit'),'1');
+ assert.equal(bad.go(['--no-rollback']).status,11,'a gate failure with a passing emulator still fails');
+ assert.equal(emuWorld({},['0']).go(['--emulator-apk','/nonexistent.apk']).status,2);
+});
 test('GATE_TIER: blocking defers e2e and the far server tests; async runs them and retries a failed job once',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-tier-'));
  try{

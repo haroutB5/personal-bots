@@ -66,6 +66,7 @@ Usage: hbots-release-finish.sh (--check | --launch | --run) \
   [--trunk <branch, default personal-bots/main>] [--out <data root, default ~/.personal-bots/dev>] \
   [--node <node binary>] [--java-home <dir, default mise temurin-21>] \
   [--timeout-sec <wait for the runner, default 14400>] [--no-livecheck] [--no-async] \
+  [--emulator-apk <x86_64 QA apk: run the emulator flows the release deferred, before publishing>] \
   [--slot-label <lease label; default the label holding the slot when the run starts>]
 
   --check   test java, apkanalyzer on the APK, sha, worktree, trunk and node; change nothing.
@@ -76,7 +77,7 @@ Exit codes: 0 done (or rolled back cleanly), 1 a step failed, 2 bad arguments, 3
 EOF
 }
 
-MODE=; VERSION=; RELEASE=; MAIN_SHA=; APK=; APK_SHA=; NOTES=; WT=; QA=; ANDROID_TEXT=; SLOT_LABEL=
+MODE=; VERSION=; RELEASE=; MAIN_SHA=; APK=; APK_SHA=; NOTES=; WT=; QA=; ANDROID_TEXT=; SLOT_LABEL=; EMU_APK=
 REPO=$REPO_DEFAULT; TRUNK=personal-bots/main; OUT=$OUT_DEFAULT; N=$NODE_DEFAULT
 JAVA_HOME_ARG=$JAVA_HOME_FIXED; TIMEOUT=14400; LIVECHECK=yes; ASYNC=yes; TRACK=full
 ORIG_ARGS=("$@")
@@ -103,6 +104,7 @@ while (( $# )); do
     --no-async) ASYNC=no;;
     --server-only) TRACK=server-only;;
     --slot-label) SLOT_LABEL=${2-}; shift;;
+    --emulator-apk) EMU_APK=${2-}; shift;;
     -h|--help) usage; exit 0;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2;;
   esac
@@ -121,13 +123,15 @@ if [[ $TRACK == full ]]; then
   [[ -n ${NOTES// /} ]] || argfail "--notes must not be empty"
   [[ -n $APK && -f $APK ]] || argfail "--apk file not found: '$APK'"
 else
-  [[ -z $APK && -z $APK_SHA && -z $NOTES ]] || argfail "--server-only takes no --apk, --apk-sha256 or --notes"
+  [[ -z $APK && -z $APK_SHA && -z $NOTES && -z $EMU_APK ]] || argfail "--server-only takes no --apk, --apk-sha256, --notes or --emulator-apk"
 fi
 [[ -n $WT ]] || argfail "--worktree is required"
 [[ -n $QA && -d $QA ]] || argfail "--qa-dir must be an existing folder: '$QA'"
 [[ $TIMEOUT =~ ^[0-9]+$ ]] || argfail "--timeout-sec must be a number"
 (( bad )) && { usage >&2; exit 2; }
+[[ -z $EMU_APK || -f $EMU_APK ]] || { argfail "--emulator-apk file not found: '$EMU_APK'"; usage >&2; exit 2; }
 [[ -n $APK ]] && APK=$(readlink -f "$APK"); QA=$(readlink -f "$QA")
+[[ -n $EMU_APK ]] && EMU_APK=$(readlink -f "$EMU_APK")
 [[ -d $WT ]] && WT=$(readlink -f "$WT")
 REPO=$(readlink -f "$REPO")
 IFS=. read -r V1 V2 V3 <<<"$VERSION"
@@ -224,6 +228,10 @@ run_check() {
   [[ -f $ANDROID_SHEET ]] && ok "android sheet $ANDROID_SHEET present" || fail "android sheet $ANDROID_SHEET missing"
   [[ -x $TOOLS/hbots-release-livecheck.sh ]] && ok "livecheck tool present" || fail "$TOOLS/hbots-release-livecheck.sh missing or not executable"
   [[ -f $TOOLS/hbots-async-gates.mjs ]] && ok "async gate tool present" || fail "$TOOLS/hbots-async-gates.mjs missing"
+  if [[ -n $EMU_APK ]]; then
+    sk=$WT/apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts
+    [[ -f $sk/verify.sh && -f $sk/select-flows.mjs ]] && ok "emulator flows after live: $(basename "$EMU_APK") with $sk/verify.sh --tier async" || fail "--emulator-apk given but $sk has no verify.sh or select-flows.mjs"
+  fi
   if [[ -f $RES ]]; then
     ok "runner result already exists: status $("$N" -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).status)}catch{console.log("unreadable")}' "$RES")"
   else
@@ -305,12 +313,13 @@ ROLLBACK=$(field rollback | tr -d '"')
 asyncgates=none
 EVID=$HOME/.personal-bots/releases/$REL12/gate-evidence.json
 tier=$("$N" -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).tier??"full")}catch{console.log("unreadable")}' "$EVID")
-if [[ $status == live_verified && $tier == blocking ]]; then
+# The emulator flows the release deferred (--emulator-apk) run here too, whatever the gate tier.
+if [[ $status == live_verified && ( $tier == blocking || -n $EMU_APK ) ]]; then
   if [[ $ASYNC == no ]]; then
     asyncgates=skipped; echo "async tier skipped (--no-async)"
   else
     echo "async tier start $(date -u +%FT%TZ)"
-    "$N" "$TOOLS/hbots-async-gates.mjs" --version "$VERSION" --release "$REL12" --worktree "$WT" --qa-dir "$QA"
+    "$N" "$TOOLS/hbots-async-gates.mjs" --version "$VERSION" --release "$REL12" --worktree "$WT" --qa-dir "$QA" ${EMU_APK:+--emulator-apk "$EMU_APK"}
     arc=$?
     case $arc in
       0) asyncgates=passed;;

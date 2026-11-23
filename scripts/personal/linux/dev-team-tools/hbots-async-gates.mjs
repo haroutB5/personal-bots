@@ -17,6 +17,13 @@
 //     base-to-release diff has no migration path (checked again here).
 // Otherwise the release stays live and the notice says why.
 //
+// The emulator flows (23 Nov 2026, 1.67.56): with --emulator-apk <x86_64 QA APK> it also runs
+// the emulator QA flows the release deferred (verify.sh --tier async: every flow select-flows.mjs
+// did not put before the release) against the live release. A failed flow is run once more on
+// its own; only a flow that fails twice is a real failure (rollback-eligible under the same
+// guard 2), while a setup, device or link failure (verify.sh exit 2) never rolls back. These run
+// whatever the gate tier is: with untiered evidence a failure keeps the release live and alerts.
+//
 // Exit codes: 0 passed or nothing deferred, 10 rolled back, 11 failed and kept live,
 // 12 rollback failed, 1 could not run (alerted as async_failed), 2 bad arguments.
 // --dry-run runs nothing: it prints the async plan and the rollback decision as of now
@@ -38,13 +45,14 @@ const THREAD_DEFAULT='759552c5-0b8c-4680-8cc6-5c7487c8081e';
 const TERMINAL=new Set(['live_verified','live_verified_doc_update_failed','rolled_back','rollback_failed','failed','dryrun_ok','guards_ok','prepared']);
 
 const usage=`Usage: hbots-async-gates.mjs --version X.Y.Z --release <sha12> --worktree <release worktree> --qa-dir <dir>
-  [--thread-id <id, default the Opusito thread>] [--no-rollback] [--dry-run]`;
+  [--emulator-apk <x86_64 QA apk>] [--thread-id <id, default the Opusito thread>] [--no-rollback] [--dry-run]`;
 let o;
 try{
-  o=parseArgs({options:{version:{type:'string'},release:{type:'string'},worktree:{type:'string'},'qa-dir':{type:'string'},'thread-id':{type:'string'},'no-rollback':{type:'boolean'},'dry-run':{type:'boolean'}}}).values;
+  o=parseArgs({options:{version:{type:'string'},release:{type:'string'},worktree:{type:'string'},'qa-dir':{type:'string'},'thread-id':{type:'string'},'no-rollback':{type:'boolean'},'dry-run':{type:'boolean'},'emulator-apk':{type:'string'}}}).values;
   if(!/^\d+\.\d+\.\d+$/.test(o.version??''))throw new Error('--version must be X.Y.Z');
   if(!/^[a-f0-9]{12}$/.test(o.release??''))throw new Error('--release must be a 12 char sha');
   if(!o.worktree||!fs.existsSync(o.worktree))throw new Error('--worktree must exist');
+  if(o['emulator-apk']!==undefined&&!fs.statSync(o['emulator-apk'],{throwIfNoEntry:false})?.isFile())throw new Error('--emulator-apk must be an existing file');
   if(!o['qa-dir']||!fs.statSync(o['qa-dir'],{throwIfNoEntry:false})?.isDirectory())throw new Error('--qa-dir must be an existing folder');
 }catch(e){console.error(`${e.message}\n${usage}`);process.exit(2)}
 const DRY=!!o['dry-run'];
@@ -139,6 +147,41 @@ function gates(dir,{dryRun}){
   return r.code;
 }
 
+// The deferred emulator flows. verify.sh exits 0 (every flow PASS), 1 (a flow FAILED) or 2 (setup,
+// device or link). A failed flow runs once more on its own; this returns 1 only for a flow that
+// failed both times, and 2 for anything that is not a flow verdict.
+const SKILL='apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts';
+function emulatorPlan(rollback){
+  const r=run(NODE,[path.join(WT,SKILL,'select-flows.mjs'),'--repo',WT,'--base',rollback,'--head','HEAD'],{cwd:WT});
+  return {code:r.code,text:r.out.trimEnd()};
+}
+function emulator(rollback){
+  const verify=process.env.HBOTS_ASYNC_VERIFY||path.join(WT,SKILL,'verify.sh');
+  const ev=path.join(QA,'emulator-async');
+  fs.mkdirSync(ev,{recursive:true});
+  const env={...process.env,HBOTS_VERIFY_EVIDENCE:ev,VERIFY_RELEASE:o.release};
+  delete env.NODE_ENV;
+  const apk=path.resolve(o['emulator-apk']);
+  const once=(label,args)=>{
+    const t=Date.now();
+    const r=run('bash',[verify,apk,label,...args],{env,cwd:WT});
+    fs.writeFileSync(path.join(QA,`${label}.out`),r.out);
+    const flows=r.out.split('\n').filter((l)=>/^\S+ flow \d+ \S+ (?:PASS|FAIL|LINK-LOST)\b|^emulator flows |^RESULT /.test(l));
+    for(const line of flows)say(`  ${line}`);
+    say(`emulator ${label}: exit ${r.code} after ${Math.round((Date.now()-t)/1000)} s`);
+    return r;
+  };
+  const first=once(`async-${o.version}`,['--tier','async','--base',rollback]);
+  if(first.code===0)return 0;
+  if(first.code!==1)return 2;
+  const failed=[...new Set([...first.out.matchAll(/^\S+ flow (\d+) \S+ FAIL\b/gm)].map((m)=>m[1]))];
+  if(!failed.length){say('emulator: exit 1 but no FAIL line names a flow; not a flow verdict');return 2}
+  say(`emulator: flows ${failed.join(',')} failed; running them once more`);
+  const again=once(`async-${o.version}-retry`,['--only',failed.join(',')]);
+  if(again.code===0){say(`emulator: flows ${failed.join(',')} passed on the second run (flaky, not a failure)`);return 0}
+  return again.code===1?1:2;
+}
+
 function rollBack(rollback,version){
   const cli=process.env.HBOTS_ASYNC_CLI||path.join(RUN_DIR,`release-tools-${version}`,'scripts/personal/node/hbots.mjs');
   const restart=run(NODE,[cli,'restart','--root','dev','--release',rollback]);
@@ -166,7 +209,8 @@ function record(status,{seconds,decision}){
     `- **Release:** \`${o.release}\``,
     `- **Outcome:** \`${status}\` after ${seconds} s`,
     ...(decision?[`- **Rollback:** ${decision.allowed?'allowed':`not allowed: ${decision.reasons.join('; ')}`}`]:[]),
-    `- **Log:** \`ASYNC-GATES.log\``,'',
+    `- **Log:** \`ASYNC-GATES.log\``,
+    ...(o['emulator-apk']?['- **Emulator flows:** evidence in `emulator-async/`, output in `async-<version>*.out`']:[]),'',
     '## Blocking tier timing','','```',waterfall(path.join(RELEASES,o.release,'gate-evidence-logs/waterfall.txt')),'```','',
     '## Async tier timing','','```',waterfall(path.join(QA,'async-releases',o.release,'gate-evidence-async-logs/waterfall.txt')),'```',''];
   fs.writeFileSync(path.join(QA,'ASYNC-RECORD.md'),body.join('\n'));
@@ -182,18 +226,24 @@ try{f=facts()}catch(e){
   record('could_not_run',{seconds:secs()});
   process.exit(1);
 }
-if(f.evidence.tier!=='blocking'){
+const TIERED=f.evidence.tier==='blocking';
+const EMU=!!o['emulator-apk'];
+if(!TIERED&&!EMU){
   say(`async gates: the evidence tier is ${f.evidence.tier??'full'}; nothing was deferred, nothing runs`);
   process.exit(0);
 }
 say(`async gates for ${o.version} (${o.release}), base ${f.rollback}, worktree ${WT}${DRY?' [dry run]':''}`);
+if(!TIERED)say(`async gates: the evidence tier is ${f.evidence.tier??'full'}; no gate was deferred, only the emulator flows run`);
 if(DRY){
-  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-async-dry-'));
-  try{
-    fs.mkdirSync(path.join(dir,o.release,'dist'),{recursive:true});
-    fs.writeFileSync(path.join(dir,'current.txt'),`${f.rollback}\n`);
-    gates(dir,{dryRun:true});
-  }finally{fs.rmSync(dir,{recursive:true,force:true})}
+  if(TIERED){
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-async-dry-'));
+    try{
+      fs.mkdirSync(path.join(dir,o.release,'dist'),{recursive:true});
+      fs.writeFileSync(path.join(dir,'current.txt'),`${f.rollback}\n`);
+      gates(dir,{dryRun:true});
+    }finally{fs.rmSync(dir,{recursive:true,force:true})}
+  }
+  if(EMU){const p=emulatorPlan(f.rollback);for(const line of p.text.split('\n'))say(`  ${line}`);if(p.code!==0)say(`emulator plan: select-flows.mjs exit ${p.code}`)}
   const failed=process.env.HBOTS_ASYNC_SIMULATE==='fail';
   const d=rollbackDecision(f);
   say(`dry run: on a failure the release would ${d.allowed?`roll back to ${f.rollback}`:`stay live (${d.reasons.join('; ')})`}${failed?' [simulated failure]':''}`);
@@ -213,7 +263,16 @@ function onTested(fn){
   }
 }
 let code;
-try{code=onTested(()=>gates(privateReleases(f.rollback),{dryRun:false}))}catch(e){say(`async gates: ${e.message}`);code=2}
+try{
+  code=onTested(()=>{
+    const g=TIERED?gates(privateReleases(f.rollback),{dryRun:false}):0;
+    if(TIERED)say(`async gates: the deferred gates exit ${g}`);
+    const e=EMU?emulator(f.rollback):0;
+    if(EMU)say(`async gates: the deferred emulator flows exit ${e}`);
+    // A real failure in either is a real failure; otherwise the first could-not-run code.
+    return g===1||e===1?1:g||e;
+  });
+}catch(e){say(`async gates: ${e.message}`);code=2}
 if(code===0){
   say(`async gates: PASS in ${secs()} s`);
   record('passed',{seconds:secs()});
