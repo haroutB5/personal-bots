@@ -14,6 +14,7 @@ import {
 } from "@hbots/personal-client/conversation/conversationModel";
 import {
   delegatedChildren,
+  threadIdsWaitingOnBackground,
   waitingLabelsByThread,
 } from "@hbots/personal-client/conversation/delegationModel";
 import {
@@ -79,6 +80,8 @@ export function useChatCards(input: {
   readonly items: ConversationItem[];
   readonly context: CardContext;
   readonly rulesUsage: PersonalMemoryRulesUsage | null;
+  /** This chat's own task waits on background work (the header's "Working in background"). */
+  readonly workingInBackground: boolean;
 } {
   const { native, environmentId, threadId } = input;
   const [projectQuestions] = useState(() => createQuestionCardProjector());
@@ -337,6 +340,12 @@ export function useChatCards(input: {
     return (botId: string) => names.get(botId) ?? null;
   }, [input.bots]);
   const waitingLabels = useMemo(() => waitingLabelsByThread(tasks, nameOf), [tasks, nameOf]);
+  // This chat's own task replied and waits on background work: the header
+  // says "Working in background", like the Bots row and the parent's card.
+  const workingInBackground = useMemo(
+    () => threadIdsWaitingOnBackground(tasks).has(threadId),
+    [tasks, threadId],
+  );
 
   const callCards = useVoiceCallCards({
     native,
@@ -430,5 +439,5 @@ export function useChatCards(input: {
 
   const rulesUsage = native.bots.usePersonalMemoryRulesUsage(environmentId);
 
-  return { items, context, rulesUsage: rulesUsage.data };
+  return { items, context, rulesUsage: rulesUsage.data, workingInBackground };
 }

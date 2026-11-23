@@ -22,6 +22,7 @@ import {
   providerWaitState,
   THINKING_LABEL,
 } from "../conversation/conversationModel.ts";
+import { WORKING_IN_BACKGROUND_LABEL } from "../conversation/delegationModel.ts";
 import { botActiveModelLabel, botActiveModelShortLabel } from "./botModelLabel.ts";
 import { chatActivityMs, chatActivityMsUncached } from "./chatActivity.ts";
 import { isChatArchived, isChatSnoozed } from "./chatState.ts";
@@ -50,6 +51,12 @@ export interface BotSummary {
   readonly threadTitles: ReadonlyArray<string>;
   /** A linked thread has a turn or session running right now (not stuck on a rate limit). */
   readonly live: boolean;
+  /**
+   * Not live, but a linked chat's task is still `running` and waits on
+   * background work that will invoke the bot again (`waitingOnBackgroundSince`).
+   * Optional: the cold-start snapshot predates it.
+   */
+  readonly workingInBackground?: boolean;
   /** The freshest such thread, the one a working bot's progress note comes from. */
   readonly liveThread?: EnvironmentThreadShell | null;
   /**
@@ -304,6 +311,11 @@ export function botStatus(
   if (summary.live) {
     return { label: summary.thinking ? THINKING_LABEL : "Working", tone: "normal" };
   }
+  // Just below live: the turn ended but the task runs on (gates, a build) and
+  // will wake the bot, the same words as its task card and chat header.
+  if (summary.workingInBackground === true) {
+    return { label: WORKING_IN_BACKGROUND_LABEL, tone: "normal" };
+  }
   if (summary.rateLimitedThread !== null) {
     return {
       label: conversationStateLabel(
@@ -328,6 +340,11 @@ export function botStatus(
     return { label: "Unavailable · tap to fix", tone: "review" };
   }
   return { label: "Ready", tone: "normal" };
+}
+
+/** Live, or working in background: the rows the Bots list keeps on top and marks with the working dot. */
+export function isBotWorking(summary: Pick<BotSummary, "live" | "workingInBackground">): boolean {
+  return summary.live || summary.workingInBackground === true;
 }
 
 export function botStatusLine(summary: BotSummary, now: number): string {
@@ -380,6 +397,8 @@ export function buildBotSummaries(input: {
   readonly browserHelpThreadId?: string | null;
   /** From `threadIdsAwaitingSecret`: chats with a pending secret request. */
   readonly secretRequestThreadIds?: ReadonlySet<string>;
+  /** From `threadIdsWaitingOnBackground`: chats of running tasks waiting on background work. */
+  readonly backgroundThreadIds?: ReadonlySet<string>;
   readonly routines?: ReadonlyArray<PersonalRoutine>;
   /**
    * The time a snooze is judged against (the screen's wake clock). A snoozed
@@ -479,6 +498,7 @@ export function buildBotSummaries(input: {
           (left, right) =>
             DateTime.toEpochMillis(left.nextDueAt!) - DateTime.toEpochMillis(right.nextDueAt!),
         )[0] ?? null;
+    const live = busyShells.some(isThreadLive);
     return {
       bot,
       provider: resolveBotProvider(bot.modelSelection.instanceId, input.providers),
@@ -488,7 +508,10 @@ export function buildBotSummaries(input: {
       newestMessage:
         newestThread === null ? null : (newestMessageByThread.get(newestThread.id) ?? null),
       threadTitles: shells.map((shell) => shell.title),
-      live: busyShells.some(isThreadLive),
+      live,
+      // Every linked chat, like `live`: the task chat may be archived or snoozed.
+      workingInBackground:
+        !live && busyShells.some((shell) => input.backgroundThreadIds?.has(shell.id) ?? false),
       liveThread: busyShells.find(isThreadLive) ?? null,
       thinking: isBotThinking(busyShells),
       rateLimited: rateLimitedThread !== null,
@@ -520,7 +543,10 @@ export function buildBotSummaries(input: {
     // Harout's rule (17 Oct): a bot working right now is always above an idle
     // one. `live` is the same flag the row's green dot and its "Working" label
     // read (BotRow, `botStatus`), so the order cannot disagree with the row.
-    if (left.live !== right.live) return left.live ? -1 : 1;
+    // A bot working in background is still working (1.67.55).
+    const leftWorking = isBotWorking(left);
+    const rightWorking = isBotWorking(right);
+    if (leftWorking !== rightWorking) return leftWorking ? -1 : 1;
     const byActivity = compareActivity(left, right);
     if (byActivity !== 0) return byActivity;
     if (left.bot.sortOrder !== right.bot.sortOrder) {

@@ -29,6 +29,7 @@ import {
   type ConversationState,
 } from "@hbots/personal-client/conversation/conversationModel";
 import { formatContextWindowTokens } from "@hbots/personal-client/conversation/contextWindowTokens";
+import { WORKING_IN_BACKGROUND_LABEL } from "@hbots/personal-client/conversation/delegationModel";
 
 export interface ChatBotRecord {
   readonly bot: PersonalBot;
@@ -46,6 +47,8 @@ export interface ChatHeaderModel {
   readonly stateLabel: string;
   readonly modelLabel: string | null;
   readonly thinking: boolean;
+  /** No live turn, but the chat's task runs on background work: the dot stays the working colour. */
+  readonly workingInBackground: boolean;
 }
 
 export function findChatBot(
@@ -127,6 +130,8 @@ export function chatHeaderModel(input: {
   readonly nowMs: number;
   /** The last list's name for this bot, used when the live list is offline. */
   readonly fallbackBotName?: string | null;
+  /** This chat's task waits on background work (`threadIdsWaitingOnBackground`). */
+  readonly workingInBackground?: boolean;
 }): ChatHeaderModel {
   const state = deriveConversationState({
     session: input.session,
@@ -139,6 +144,9 @@ export function chatHeaderModel(input: {
     latestTurn: input.latestTurn,
     activities: input.activities as never,
   });
+  // Only over "Idle": a live turn (the bot was woken), an error or a provider
+  // wait says more than the task's flag, which stays set until the task ends.
+  const workingInBackground = input.workingInBackground === true && state === "idle";
   const mute =
     input.bot === null ? { muted: false as const } : botMuteState(input.bot, input.nowMs);
   return {
@@ -148,15 +156,18 @@ export function chatHeaderModel(input: {
     muteLabel: mute.muted ? mutedUntilLabel(mute, input.nowMs) : null,
     contextBadge: contextUsageLabel(input.contextUsage),
     state,
-    stateLabel: conversationHeaderStateLabel({
-      state,
-      thinking,
-      waitingLabel: null,
-      session: input.session,
-      now: new Date(input.nowMs),
-    }),
+    stateLabel: workingInBackground
+      ? WORKING_IN_BACKGROUND_LABEL
+      : conversationHeaderStateLabel({
+          state,
+          thinking,
+          waitingLabel: null,
+          session: input.session,
+          now: new Date(input.nowMs),
+        }),
     modelLabel: input.bot === null ? null : botActiveModelShortLabel(input.bot, input.providers),
     thinking,
+    workingInBackground,
   };
 }
 

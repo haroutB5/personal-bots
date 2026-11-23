@@ -43,6 +43,38 @@ describe("chatHeaderModel", () => {
     });
     expect(header.contextBadge).toBe("84k / 1m");
   });
+
+  // 1.67.55: the task chat's header said "Idle" while its task ran gates in the background.
+  const backgroundHeader = (session: unknown, latestTurn: unknown, workingInBackground: boolean) =>
+    chatHeaderModel({
+      bot: null,
+      shell: null,
+      title: "hbots 1.67.55",
+      session: session as never,
+      latestTurn: latestTurn as never,
+      activities: [],
+      providers: [],
+      contextUsage: null,
+      nowMs: Date.parse("2026-11-23T12:00:00.000Z"),
+      workingInBackground,
+    });
+
+  it("says Working in background when the chat's task waits on background work", () => {
+    const header = backgroundHeader(null, null, true);
+    expect(header.stateLabel).toBe("Working in background");
+    expect(header.workingInBackground).toBe(true);
+    expect(backgroundHeader(null, null, false).stateLabel).toBe("Idle");
+  });
+
+  it("says Working once the background job wakes the bot for a live turn", () => {
+    const header = backgroundHeader(
+      { status: "running", activeTurnId: "t2", updatedAt: "2026-11-23T12:00:00.000Z" },
+      { turnId: "t2", state: "running", assistantMessageId: "m2", completedAt: null },
+      true,
+    );
+    expect(header.stateLabel).toBe("Working");
+    expect(header.workingInBackground).toBe(false);
+  });
 });
 
 describe("buildChatChips", () => {

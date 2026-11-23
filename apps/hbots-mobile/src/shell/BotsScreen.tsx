@@ -3,9 +3,11 @@ import {
   botStatus,
   buildBotSummaries,
   filterBotSummaries,
+  isBotWorking,
   partitionPinnedSummaries,
   type BotSummary,
 } from "@hbots/personal-client/bots/botSummaries";
+import { threadIdsWaitingOnBackground } from "@hbots/personal-client/conversation/delegationModel";
 import { useCtoTilePublisher } from "../tile/ctoTile";
 import {
   buildChatsSnapshot,
@@ -169,7 +171,7 @@ function PinnedTile({
   readonly onOpenActions: () => void;
 }) {
   const status = botStatus(summary, now);
-  const badge = status.tone === "review" ? "attention" : summary.live ? "working" : null;
+  const badge = status.tone === "review" ? "attention" : isBotWorking(summary) ? "working" : null;
   const unread = summary.unreadChats ?? 0;
   const botId = summary.bot.botId as string;
   // The responder is created once, so it reads the current props from here.
@@ -436,7 +438,7 @@ function BotRow({
               {summary.modelShortLabel}
             </Text>
           ) : null}
-          {summary.live ? <View style={styles.liveDot} /> : null}
+          {isBotWorking(summary) ? <View style={styles.liveDot} /> : null}
           {summary.lastActivityMs !== null ? (
             <Text style={styles.rowTime} maxFontSizeMultiplier={1.6}>
               {formatRelativeTime(summary.lastActivityMs, now)}
@@ -612,6 +614,13 @@ export function BotsScreen({
   const list = native.bots.usePersonalBotsList(environmentId);
   useCtoTilePublisher(list.data?.bots ?? null);
   const routines = native.bots.usePersonalRoutinesList(environmentId);
+  // Tasks whose turn ended but that still run on background work: their bot is
+  // "Working in background", not "Ready" (1.67.55).
+  const taskFeed = native.bots.usePersonalTasks(environmentId);
+  const backgroundThreadIds = useMemo(
+    () => threadIdsWaitingOnBackground(taskFeed.data === null ? [] : [...taskFeed.data.values()]),
+    [taskFeed.data],
+  );
   const groupsList = native.groups.usePersonalGroupsList(environmentId);
   const { feed: groupsFeed } = native.groups.usePersonalGroupsFeed(environmentId);
   const providers = native.useProviders();
@@ -720,9 +729,10 @@ export function BotsScreen({
             shells,
             providers,
             routines: routines.data?.routines ?? [],
+            backgroundThreadIds,
             nowMs: now,
           }),
-    [list.data, now, providers, shells, routines.data],
+    [list.data, now, providers, shells, routines.data, backgroundThreadIds],
   );
 
   const progressKey = useMemo(
