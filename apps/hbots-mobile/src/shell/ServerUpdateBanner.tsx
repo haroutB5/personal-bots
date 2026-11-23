@@ -58,13 +58,20 @@ export function ServerUpdateBanner({ native }: { readonly native: NativePersonal
   const list = native.bots.usePersonalBotsList(native.environmentId);
   const { shells } = useBotShells(native, native.environmentId);
   const [appVersion, setAppVersion] = useState("");
+  const [appUpdateVersion, setAppUpdateVersion] = useState<string | null>(null);
 
   useEffect(() => {
     let stopped = false;
     void readUpdateSnapshot().then((snapshot) => {
-      if (!stopped && snapshot !== null) setAppVersion(snapshot.installedVersion);
+      if (!stopped && snapshot !== null) {
+        setAppVersion(snapshot.installedVersion);
+        setAppUpdateVersion(snapshot.target?.version ?? null);
+      }
     });
-    const unsubscribe = subscribeUpdate((snapshot) => setAppVersion(snapshot.installedVersion));
+    const unsubscribe = subscribeUpdate((snapshot) => {
+      setAppVersion(snapshot.installedVersion);
+      setAppUpdateVersion(snapshot.target?.version ?? null);
+    });
     return () => {
       stopped = true;
       unsubscribe();
@@ -135,6 +142,7 @@ export function ServerUpdateBanner({ native }: { readonly native: NativePersonal
           finished: isServerUpdateFinished(polled.update),
           serverVersion: polled.update?.version ?? null,
           appVersion,
+          appUpdateVersion,
         });
   const statusAt = statusShownAt(
     lines === null || lines.tone === "problem" ? null : lines.title,
