@@ -1,7 +1,7 @@
 import {args,required,only,base,atomic,path,main} from './ops-common.mjs';
 import {randomUUID} from 'node:crypto';
 main(()=>{const a=args();only(a,['thread-id','version','release','outcome','smoke-exit','rollback-release','rollback-exit','rollback-smoke-exit','log-path','detail','root','base-dir','home']);required(a,'version','release','outcome');
- if(!['live','rolled_back','rollback_failed','failed'].includes(a.outcome))throw Error('invalid outcome');
+ if(!['live','rolled_back','rollback_failed','failed','async_failed','async_rolled_back','async_rollback_failed'].includes(a.outcome))throw Error('invalid outcome');
  if(!/^\d+\.\d+\.\d+$/.test(a.version)||!/^[a-f0-9]{7,40}$/.test(a.release))throw Error('invalid version/release');
  if(!a['thread-id']?.trim()){console.log('No thread-id: no release notice posted.');return;}
  const n={};for(const [key,field] of Object.entries({'thread-id':'threadId',version:'version',release:'release',outcome:'outcome','smoke-exit':'smokeExit','rollback-release':'rollbackRelease','rollback-exit':'rollbackExit','rollback-smoke-exit':'rollbackSmokeExit','log-path':'logPath',detail:'detail'})){

@@ -213,7 +213,9 @@ function stampProblems(repo, liveSha, releaseSha) {
     const stamp = stampOfRange(repo, liveSha, releaseSha);
     for (const line of stamp.lines) console.error(line);
     return stamp.blocks
-      ? [`verify stamp: ${stamp.unstamped.length} of ${stamp.total} commits unstamped in enforce mode: ${stamp.unstamped.map((commit) => commit.sha.slice(0, 10)).join(", ")}`]
+      ? [
+          `verify stamp: ${stamp.unstamped.length} of ${stamp.total} commits unstamped in enforce mode: ${stamp.unstamped.map((commit) => commit.sha.slice(0, 10)).join(", ")}`,
+        ]
       : [];
   } catch (error) {
     return [`cannot read the verify stamps: ${error.message.split("\n")[0]}`];
@@ -239,6 +241,9 @@ export async function writeSeal(cfg, a, names, note) {
   const plans = planEvidenceProblems(cfg, a, evidence);
   if (plans.length) throw new Error(`Cannot seal: ${plans.join(" ")}`);
   const e2eSkipped = e2e.mode === "skip";
+  // A blocking-tier release defers e2e to the async tier: nothing ran before the seal.
+  const e2eDeferred = e2e.mode === "deferred";
+  const e2eNotRun = e2eSkipped || e2eDeferred;
   const seal = {
     schema: 1,
     version: a.version,
@@ -263,19 +268,23 @@ export async function writeSeal(cfg, a, names, note) {
       startedAtIso: evidence.startedAt,
       startedAtMs: Date.parse(evidence.startedAt),
       finishedAtIso: evidence.finishedAt ?? null,
-      e2eJourneys: e2eSkipped ? 0 : Number(e2e.counts?.journeys ?? 0),
-      e2ePassed: e2eSkipped ? 0 : Number(e2e.counts?.passed ?? 0),
+      e2eJourneys: e2eNotRun ? 0 : Number(e2e.counts?.journeys ?? 0),
+      e2ePassed: e2eNotRun ? 0 : Number(e2e.counts?.passed ?? 0),
       e2eSkipped,
+      ...(e2eDeferred ? { e2eDeferred } : {}),
+      ...(evidence.tier ? { tier: String(evidence.tier) } : {}),
     },
   };
   const problems = compareArtifact(facts, seal, a);
   if (problems.length) throw new Error(`Cannot seal: ${problems.join(" ")}`);
   atomicWrite(names.seal, `${JSON.stringify(seal, null, 2)}\n`);
   note(
-    `Seal written: ${names.seal} (dist ${facts.dist.files} files, externals ${facts.externals.files}, tools ${facts.tools.files}, e2e ${e2eSkipped ? "skipped by the gate-inputs table" : `${seal.evidence.e2ePassed}/${seal.evidence.e2eJourneys}`} in the evidence).`,
+    `Seal written: ${names.seal} (dist ${facts.dist.files} files, externals ${facts.externals.files}, tools ${facts.tools.files}, e2e ${e2eSkipped ? "skipped by the gate-inputs table" : e2eDeferred ? "deferred to the async tier" : `${seal.evidence.e2ePassed}/${seal.evidence.e2eJourneys}`} in the evidence).`,
   );
   for (const gate of (evidence.gates ?? []).filter((g) => g?.mode === "skip"))
     note(`Gate ${gate.id} skipped: ${gate.reason}`);
+  for (const gate of (evidence.gates ?? []).filter((g) => g?.mode === "deferred"))
+    note(`Gate ${gate.id} deferred (${gate.deferredMode}): ${gate.reason}`);
   for (const gate of (evidence.gates ?? []).filter((g) => g?.mode === "selected"))
     note(
       `Gate ${gate.id} selected ${gate.args?.length ?? 0} ${gate.selector?.split("@")[0] ?? "items"}: ${gate.reason}`,

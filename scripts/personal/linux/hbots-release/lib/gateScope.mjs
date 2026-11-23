@@ -36,6 +36,7 @@ import {
   fsReader,
   gitReader,
   selectServerTests,
+  selectServerTestsDetailed,
 } from "./serverTestSelect.mjs";
 
 export const APP_VERSION = "scripts/personal/app-version.txt";
@@ -675,6 +676,216 @@ export function planChecks(paths, options = {}) {
   };
 }
 
+// ---- Tiers (Faster releases step 2, Harout 22 Nov 2026) -------------------------
+// Blocking, before the release: preflight, typechecks, unit tests, and the server
+// tests near the change (within BLOCKING_SERVER_DEPTH import hops). Async, after the
+// release is live: the rest of the selected server tests, e2e, parity and the Kotlin
+// unit tests. A release that changes a DB migration, or the toolchain, is not tiered:
+// every check blocks, so the async tier never has to roll back across a migration
+// (Harout's guard 2).
+export const ASYNC_CHECKS = ["e2e", "parity", "hbots-mobile-kotlin"];
+export const BLOCKING_SERVER_DEPTH = 1;
+// A wide change (a shared contract, say) puts hundreds of tests within one hop. Past
+// this many, the blocking tier keeps only the tests that import a changed file
+// directly (depth 0); the rest run after the release.
+export const BLOCKING_SERVER_MAX = 80;
+export const TIER_SELECTOR_NEAR = `serverTests@1/near${BLOCKING_SERVER_DEPTH}`;
+export const TIER_SELECTOR_FAR = `serverTests@1/far${BLOCKING_SERVER_DEPTH}`;
+export const MIGRATION_PATHS = [
+  "apps/server/src/persistence/Migrations.ts",
+  "apps/server/src/persistence/Migrations/",
+];
+export const isMigrationPath = (file) =>
+  MIGRATION_PATHS.some((p) => (p.endsWith("/") ? file.startsWith(p) : file === p));
+
+/**
+ * Split a plan from planChecks into the blocking and async tiers. Pure over the
+ * reader, so the collector, the seal and the async checker get the same split.
+ * Returns { tiered, reason, blocking, async }: `blocking` has one plan per check
+ * (a deferred check has mode "deferred"); `async` has the plans run after release.
+ */
+export function tierPlans(scope, { reader }) {
+  const untiered = (reason) => ({ tiered: false, reason, blocking: scope.plans, async: [] });
+  if (!Array.isArray(scope?.plans)) throw new Error("tierPlans needs a plan from planChecks");
+  const migrations = (scope.changedPaths ?? []).filter(isMigrationPath);
+  if (migrations.length)
+    return untiered(
+      `DB migration changed (${listed(migrations)}): the full suite blocks before the release`,
+    );
+  if (/^RUN every check whole/.test(scope.summary ?? ""))
+    return untiered(`${scope.summary}: every check blocks before the release`);
+  const blocking = [];
+  const async = [];
+  for (const plan of scope.plans) {
+    if (plan.mode === "skip") {
+      blocking.push(plan);
+      continue;
+    }
+    if (ASYNC_CHECKS.includes(plan.id)) {
+      blocking.push({
+        id: plan.id,
+        mode: "deferred",
+        deferredMode: plan.mode,
+        reason: `runs after the release (async tier): ${plan.reason}`,
+      });
+      async.push(plan);
+      continue;
+    }
+    if (plan.id === "server-tests" && plan.mode === "selected") {
+      const detail = selectServerTestsDetailed({ reader, changedPaths: scope.changedPaths });
+      const planned = new Set(plan.args);
+      let near = plan.args.filter(
+        (file) => (detail.depth.get(file) ?? 99) <= BLOCKING_SERVER_DEPTH,
+      );
+      let nearDepth = BLOCKING_SERVER_DEPTH;
+      if (near.length > BLOCKING_SERVER_MAX) {
+        const direct = plan.args.filter((file) => (detail.depth.get(file) ?? 99) === 0);
+        if (direct.length) {
+          near = direct;
+          nearDepth = 0;
+        }
+      }
+      // The least a blocking run is allowed to be: the always-run guards.
+      if (near.length === 0) near = SERVER_ALWAYS.filter((file) => planned.has(file));
+      if (near.length === 0) near = [...SERVER_ALWAYS];
+      const nearSet = new Set(near);
+      const far = plan.args.filter((file) => !nearSet.has(file));
+      if (far.length === 0) {
+        blocking.push(plan);
+        continue;
+      }
+      blocking.push({
+        ...plan,
+        selector: TIER_SELECTOR_NEAR,
+        args: near,
+        reason: `${plan.reason}; ${near.length} ${nearDepth === 0 ? `import a changed file directly (over ${BLOCKING_SERVER_MAX} within ${BLOCKING_SERVER_DEPTH} hop)` : `within ${BLOCKING_SERVER_DEPTH} import hop of the change`} block, ${far.length} run after the release`,
+      });
+      async.push({
+        ...plan,
+        selector: TIER_SELECTOR_FAR,
+        args: far,
+        reason: `${plan.reason}; the ${far.length} further than ${nearDepth} import hop${nearDepth === 1 ? "" : "s"}, after the release`,
+      });
+      continue;
+    }
+    blocking.push(plan);
+  }
+  return {
+    tiered: async.length > 0,
+    reason:
+      async.length > 0
+        ? `tiered: ${async.map((plan) => plan.id).join(", ")} run after the release`
+        : "nothing to defer: every planned check blocks",
+    blocking,
+    async,
+  };
+}
+
+// ---- Release track (Faster releases step 3) ------------------------------------
+// A release that changes nothing the phone app is built from skips the x86 and arm64
+// builds and the emulator and publishes no new latest.json. The app is built from
+// apps/hbots-mobile, the workspace packages it depends on (transitively, through
+// "dependencies"), the lockfile and the root toolchain files. A version bump alone
+// (apps/hbots-mobile/package.json with only "version" changed, app-version.txt) is
+// not an app change. Anything unsure is "full".
+const MOBILE_APP = "apps/hbots-mobile/"; // PACKAGE_FILE (verifyStamp) is its package.json
+const MOBILE_ROOT_INPUTS = [
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "package.json",
+  ".npmrc",
+  "tsconfig.base.json",
+  "patches/",
+];
+
+// Files that never reach the APK: docs, agent notes, unit tests and their fixtures.
+// Build config and scripts are not listed: they shape the build, so they count.
+const notInTheApp = (file) =>
+  /(^|\/)\.claude\//.test(file) ||
+  /\.md$/.test(file) ||
+  /\.test\.(ts|tsx|mts|js|mjs)$/.test(file) ||
+  /(^|\/)(__tests__|__mocks__|testFixtures|fixtures)\//.test(file) ||
+  /^apps\/hbots-mobile\/modules\/[^/]+\/android\/src\/test\//.test(file);
+
+function mobilePackageDirs(reader) {
+  const byName = new Map();
+  for (const file of reader.listFiles("packages")) {
+    if (!/^packages\/[^/]+\/package\.json$/.test(file)) continue;
+    try {
+      const manifest = JSON.parse(reader.read(file) ?? "null");
+      if (manifest && typeof manifest === "object")
+        byName.set(manifest.name, { dir: file.slice(0, -"package.json".length), manifest });
+    } catch {}
+  }
+  const workspaceDeps = (manifest) =>
+    Object.entries({ ...manifest.dependencies, ...manifest.peerDependencies })
+      .filter(([, spec]) => String(spec).startsWith("workspace:"))
+      .map(([name]) => name);
+  let app;
+  try {
+    app = JSON.parse(reader.read(PACKAGE_FILE) ?? "null");
+  } catch {
+    return null;
+  }
+  if (!app || typeof app !== "object") return null;
+  const dirs = new Set();
+  const todo = workspaceDeps(app);
+  while (todo.length) {
+    const name = todo.pop();
+    const pkg = byName.get(name);
+    if (!pkg || dirs.has(pkg.dir)) continue;
+    dirs.add(pkg.dir);
+    todo.push(...workspaceDeps(pkg.manifest));
+  }
+  return [...dirs].sort();
+}
+
+/**
+ * "server-only" or "full" for a live-to-release diff. `reader` reads the release,
+ * `baseReader` the live release (to tell a version-only package.json bump).
+ * Returns { track, reason, appPaths, packageDirs }.
+ */
+export function releaseTrack({ changedPaths, reader, baseReader }) {
+  const packageDirs = mobilePackageDirs(reader);
+  if (packageDirs === null)
+    return { track: "full", reason: `cannot read ${PACKAGE_FILE}`, appPaths: [], packageDirs: [] };
+  const appPaths = [];
+  for (const file of changedPaths) {
+    if (notInTheApp(file)) continue;
+    if (file === PACKAGE_FILE) {
+      const before = baseReader?.read(file);
+      const after = reader.read(file);
+      if (before != null && after != null && versionOnlyChange(before, after)) continue;
+      appPaths.push(file);
+    } else if (file.startsWith(MOBILE_APP)) appPaths.push(file);
+    else if (packageDirs.some((dir) => file.startsWith(dir))) appPaths.push(file);
+    else if (MOBILE_ROOT_INPUTS.some((p) => (p.endsWith("/") ? file.startsWith(p) : file === p)))
+      appPaths.push(file);
+  }
+  return appPaths.length
+    ? {
+        track: "full",
+        reason: `the phone app is built from changed files: ${listed(appPaths)}`,
+        appPaths,
+        packageDirs,
+      }
+    : {
+        track: "server-only",
+        reason: `nothing the phone app is built from changed (apps/hbots-mobile, its ${packageDirs.length} workspace packages, the lockfile and the root toolchain): no APK builds, no emulator, no new latest.json`,
+        appPaths,
+        packageDirs,
+      };
+}
+
+/** The plans an evidence file must match: the whole plan, or one tier of it. */
+export function plansForTier(scope, tier, { reader }) {
+  if (tier === undefined || tier === null || tier === "full") return scope.plans;
+  const split = tierPlans(scope, { reader });
+  if (tier === "blocking") return split.blocking;
+  if (tier === "async") return split.async;
+  throw new Error(`unknown tier ${tier}`);
+}
+
 const shellArg = (value) =>
   /^[A-Za-z0-9_./:@=+-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 
@@ -728,7 +939,26 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
   if (scope.error === "unmapped")
     return [`the live-to-release diff has unmapped paths: ${scope.paths.join(", ")}`];
   const expected = [...scope.changedPaths].sort();
-  const byId = new Map(scope.plans.map((plan) => [plan.id, plan]));
+  // Evidence of one tier is checked against that tier of the recomputed plan; a
+  // blocking file for a release that may not be tiered (a migration) is refused.
+  const tier = evidence?.tier ?? "full";
+  if (!["full", "blocking", "async"].includes(tier))
+    return [`the evidence names an unknown tier ${tier}`];
+  let tierPlansList;
+  try {
+    if (tier !== "full") {
+      const split = tierPlans(scope, { reader });
+      if (!split.tiered)
+        return [
+          `the evidence is the ${tier} tier, but this release is not tiered: ${split.reason}`,
+        ];
+    }
+    tierPlansList = plansForTier(scope, tier, { reader });
+  } catch (error) {
+    return [`cannot split the gate plan into tiers: ${error.message}`];
+  }
+  const planScope = { ...scope, plans: tierPlansList };
+  const byId = new Map(planScope.plans.map((plan) => [plan.id, plan]));
   const gates = Array.isArray(evidence?.gates) ? evidence.gates : [];
   if (gates.length === 0) problems.push("the evidence has no gates");
   for (const gate of gates) {
@@ -751,6 +981,10 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
       claimed.some((file, index) => file !== expected[index])
     )
       problems.push(`gate ${gate.id} changedPaths differ from the live-to-release diff`);
+    if (plan.mode === "deferred" && gate.deferredMode !== plan.deferredMode)
+      problems.push(
+        `deferred gate ${gate.id} names ${gate.deferredMode ?? "(missing)"}, the recomputed plan defers ${plan.deferredMode}`,
+      );
     if (plan.mode === "selected" && gate.selector !== plan.selector)
       problems.push(
         `gate ${gate.id} selector ${gate.selector ?? "(missing)"} is not ${plan.selector}`,
@@ -783,7 +1017,7 @@ export function verifyPlans({ evidence, liveSha, releaseSha, changedPaths, reade
   // a refusal, whatever mode the plan gave it.
   const count = new Map();
   for (const gate of gates) count.set(gate?.id, (count.get(gate?.id) ?? 0) + 1);
-  for (const plan of scope.plans) {
+  for (const plan of planScope.plans) {
     const seen = count.get(plan.id) ?? 0;
     if (seen === 0)
       problems.push(`gate ${plan.id} is planned ${plan.mode} but missing from the evidence`);

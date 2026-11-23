@@ -41,7 +41,7 @@ done
 # evidence collector, and the shared heavy-job lock wrapper. They come from the
 # same reviewed tree as the runner, so installing cannot restore a helper the
 # repo already fixed.
-tools=(check-release-notes.mjs check-gate-evidence.mjs gate-common.mjs gate-evidence.mjs ops-common.mjs notify-release.mjs heavy-job.sh)
+tools=(check-release-notes.mjs check-gate-evidence.mjs gate-common.mjs gate-evidence.mjs ops-common.mjs notify-release.mjs heavy-job.sh hbots-async-gates.mjs)
 for file in "${tools[@]}"; do
   [[ -f "$tools_src/$file" ]] || { echo "missing tool source: $tools_src/$file" >&2; exit 1; }
   install_file "$tools_src/$file" "$tools_dest/$file"

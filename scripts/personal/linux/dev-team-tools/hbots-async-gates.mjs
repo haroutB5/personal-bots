@@ -1,0 +1,214 @@
+#!/usr/bin/env node
+// hbots async gate tier (Faster releases step 2, 22 Nov 2026).
+//
+// A release whose gate evidence is the "blocking" tier went live after preflight, the
+// typechecks, the near server tests and the unit suites. The slower checks it deferred
+// (the far server tests, e2e, parity, Kotlin) run here, after the release, from the same
+// release worktree and against the same base (the rollback release), so the plan is the
+// one the seal checked. hbots-release-finish.sh runs this before it publishes the APK or
+// pushes trunk, so a rollback never leaves phones on an APK for the newer server.
+//
+// On a failure (gate-evidence already ran each failed job a second time) it posts a
+// release notice to the Opusito thread and rolls the server back only when all of these
+// hold (Harout's guard 2):
+//   - the live release (current.txt) is still the release that was tested;
+//   - no hbots-release-run-* unit is active and no newer release is armed or running;
+//   - the release is tiered, which the planner refuses for any DB migration, and the
+//     base-to-release diff has no migration path (checked again here).
+// Otherwise the release stays live and the notice says why.
+//
+// Exit codes: 0 passed or nothing deferred, 10 rolled back, 11 failed and kept live,
+// 12 rollback failed, 1 could not run (alerted as async_failed), 2 bad arguments.
+// --dry-run runs nothing: it prints the async plan and the rollback decision as of now
+// (HBOTS_ASYNC_SIMULATE=fail decides as if a gate had failed).
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {parseArgs} from 'node:util';
+import {createRequire} from 'node:module';
+
+const HOME=os.homedir();
+const TOOLS=process.env.HBOTS_ASYNC_TOOLS||path.dirname(new URL(import.meta.url).pathname);
+const RUN_DIR=process.env.HBOTS_ASYNC_RUN_DIR||path.join(HOME,'.personal-bots/run');
+const RELEASES=process.env.HBOTS_ASYNC_RELEASES||path.join(HOME,'.personal-bots/releases');
+const NODE=process.env.HBOTS_ASYNC_NODE||process.execPath;
+const SYSTEMCTL=process.env.HBOTS_ASYNC_SYSTEMCTL||'systemctl';
+const THREAD_DEFAULT='759552c5-0b8c-4680-8cc6-5c7487c8081e';
+const TERMINAL=new Set(['live_verified','live_verified_doc_update_failed','rolled_back','rollback_failed','failed','dryrun_ok','guards_ok','prepared']);
+
+const usage=`Usage: hbots-async-gates.mjs --version X.Y.Z --release <sha12> --worktree <release worktree> --qa-dir <dir>
+  [--thread-id <id, default the Opusito thread>] [--no-rollback] [--dry-run]`;
+let o;
+try{
+  o=parseArgs({options:{version:{type:'string'},release:{type:'string'},worktree:{type:'string'},'qa-dir':{type:'string'},'thread-id':{type:'string'},'no-rollback':{type:'boolean'},'dry-run':{type:'boolean'}}}).values;
+  if(!/^\d+\.\d+\.\d+$/.test(o.version??''))throw new Error('--version must be X.Y.Z');
+  if(!/^[a-f0-9]{12}$/.test(o.release??''))throw new Error('--release must be a 12 char sha');
+  if(!o.worktree||!fs.existsSync(o.worktree))throw new Error('--worktree must exist');
+  if(!o['qa-dir']||!fs.statSync(o['qa-dir'],{throwIfNoEntry:false})?.isDirectory())throw new Error('--qa-dir must be an existing folder');
+}catch(e){console.error(`${e.message}\n${usage}`);process.exit(2)}
+const DRY=!!o['dry-run'];
+const QA=path.resolve(o['qa-dir']);
+const WT=path.resolve(o.worktree);
+const THREAD=o['thread-id']??THREAD_DEFAULT;
+const LOG=path.join(QA,'ASYNC-GATES.log');
+const lines=[];
+const say=(line)=>{console.log(line);lines.push(line);if(!DRY)fs.appendFileSync(LOG,`${line}\n`)};
+
+const run=(cmd,args,opts={})=>{
+  const r=spawnSync(cmd,args,{encoding:'utf8',maxBuffer:64*1024*1024,...opts});
+  return {code:r.status??(r.error?127:1),out:(r.stdout??'')+(r.stderr??'')};
+};
+const git=(...args)=>{const r=run('git',['-C',WT,...args]);if(r.code!==0)throw new Error(`git ${args[0]} failed: ${r.out.slice(0,200)}`);return r.out.trim()};
+const readJson=(file)=>{try{return JSON.parse(fs.readFileSync(file,'utf8'))}catch{return null}};
+const cmpVersion=(a,b)=>{const x=a.split('.').map(Number),y=b.split('.').map(Number);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]-y[i];return 0};
+
+// Everything a decision reads, gathered once so --dry-run and the real run agree.
+function facts(){
+  const result=readJson(path.join(RUN_DIR,`restart-${o.version}-result.json`));
+  if(!result)throw new Error(`no runner result restart-${o.version}-result.json in ${RUN_DIR}`);
+  if(!String(result.release??'').startsWith(o.release))throw new Error(`runner result is for release ${result.release}, not ${o.release}`);
+  if(!/^live_verified/.test(result.status??''))throw new Error(`runner status is ${result.status}: the release is not live, nothing runs after it`);
+  const rollback=String(result.rollback??'');
+  if(!/^[a-f0-9]{12}$/.test(rollback))throw new Error(`runner result has no rollback release (${rollback||'missing'})`);
+  const evidence=readJson(path.join(RELEASES,o.release,'gate-evidence.json'));
+  if(!evidence)throw new Error(`no gate-evidence.json for ${o.release} in ${RELEASES}`);
+  const head=git('rev-parse','HEAD');
+  if(evidence.sha&&head!==evidence.sha)throw new Error(`worktree HEAD ${head.slice(0,12)} is not the tested commit ${String(evidence.sha).slice(0,12)}`);
+  if(!head.startsWith(o.release))throw new Error(`worktree HEAD ${head.slice(0,12)} is not release ${o.release}`);
+  return {result,rollback,evidence,head};
+}
+
+// Harout's guard 2. Returns {allowed, reasons[]} where reasons say why not.
+function rollbackDecision({rollback,evidence,head}){
+  const reasons=[];
+  if(o['no-rollback'])reasons.push('--no-rollback was given');
+  let live='';
+  try{live=fs.readFileSync(path.join(RELEASES,'current.txt'),'utf8').trim()}catch{}
+  if(live!==o.release)reasons.push(`the live release is ${live||'(unknown)'}, not the tested ${o.release}`);
+  const units=run(SYSTEMCTL,['--user','list-units','--all','--plain','--no-legend','hbots-release-run-*']);
+  if(units.code!==0)reasons.push(`cannot list release units (${units.out.slice(0,120).trim()})`);
+  for(const line of units.out.split('\n')){
+    const m=/^(hbots-release-run-\S+)\.service\s+\S+\s+(active|activating|deactivating|reloading)/.exec(line.trim());
+    if(m)reasons.push(`release unit ${m[1]} is ${m[2]}`);
+  }
+  for(const name of fs.readdirSync(RUN_DIR)){
+    const m=/^restart-(\d+\.\d+\.\d+)-result\.json$/.exec(name);
+    if(!m||cmpVersion(m[1],o.version)<=0)continue;
+    const r=readJson(path.join(RUN_DIR,name));
+    if(r&&!TERMINAL.has(r.status))reasons.push(`release ${m[1]} is ${r.status} (armed or running)`);
+    else if(r&&/^live_verified/.test(r.status))reasons.push(`a newer release ${m[1]} went live`);
+  }
+  if(evidence.tier!=='blocking')reasons.push(`the evidence tier is ${evidence.tier??'full'}, not blocking`);
+  try{
+    const req=createRequire(path.join(WT,'package.json'));
+    const scope=req(path.join(WT,'scripts/personal/linux/hbots-release/lib/gateScope.mjs'));
+    const changed=git('diff','--no-renames','--name-only',`${rollback}`,head).split('\n').filter(Boolean);
+    const migrations=changed.filter((file)=>scope.isMigrationPath(file));
+    if(migrations.length)reasons.push(`the release changes DB migrations (${migrations.slice(0,3).join(', ')})`);
+  }catch(e){reasons.push(`cannot check for DB migrations: ${e.message}`)}
+  return {allowed:reasons.length===0,reasons};
+}
+
+// The async run gets its own releases dir whose current.txt is the rollback release, so
+// the collector plans the same base-to-release diff the blocking tier was sealed with.
+function privateReleases(rollback){
+  const dir=path.join(QA,'async-releases');
+  const own=path.join(dir,o.release);
+  fs.mkdirSync(path.join(own,'dist'),{recursive:true});
+  fs.writeFileSync(path.join(dir,'current.txt'),`${rollback}\n`);
+  fs.copyFileSync(path.join(RELEASES,o.release,'VERSION'),path.join(own,'VERSION'));
+  fs.copyFileSync(path.join(RELEASES,o.release,'dist/bin.mjs'),path.join(own,'dist/bin.mjs'));
+  return dir;
+}
+
+function gates(dir,{dryRun}){
+  const collector=process.env.HBOTS_ASYNC_COLLECTOR||path.join(TOOLS,'gate-evidence.mjs');
+  const args=[collector,'--version',o.version,'--release',o.release,'--repo-root',WT,'--releases-dir',dir,...(dryRun?['--dry-run']:[])];
+  const env={...process.env,GATE_TIER:'async'};
+  delete env.NODE_ENV;
+  const r=run(NODE,args,{env,cwd:WT});
+  for(const line of r.out.trimEnd().split('\n'))say(`  ${line}`);
+  return r.code;
+}
+
+function rollBack(rollback,version){
+  const cli=process.env.HBOTS_ASYNC_CLI||path.join(RUN_DIR,`release-tools-${version}`,'scripts/personal/node/hbots.mjs');
+  const restart=run(NODE,[cli,'restart','--root','dev','--release',rollback]);
+  say(`rollback: hbots.mjs restart --release ${rollback} exit ${restart.code}`);
+  for(const line of restart.out.trimEnd().split('\n').slice(-6))say(`  ${line}`);
+  if(restart.code!==0)return {rollbackExit:restart.code,rollbackSmokeExit:null};
+  const smoke=run(NODE,[cli,'smoke','--root','dev','--expect-release',rollback,'--stable-seconds','60','--start-timeout','120']);
+  say(`rollback smoke exit ${smoke.code}`);
+  for(const line of smoke.out.trimEnd().split('\n').slice(-6))say(`  ${line}`);
+  return {rollbackExit:restart.code,rollbackSmokeExit:smoke.code};
+}
+
+function notify(outcome,extra){
+  const notifier=process.env.HBOTS_ASYNC_NOTIFY||path.join(TOOLS,'notify-release.mjs');
+  const args=[notifier,'--thread-id',THREAD,'--version',o.version,'--release',o.release,'--outcome',outcome,'--log-path',LOG];
+  for(const [flag,value] of Object.entries(extra))if(value!==null&&value!==undefined)args.push(`--${flag}`,String(value));
+  const r=run(NODE,args);
+  say(`notice ${outcome}: exit ${r.code} ${r.out.trim().slice(0,200)}`);
+}
+
+function record(status,{seconds,decision}){
+  const waterfall=(file)=>{try{return fs.readFileSync(file,'utf8').trimEnd()}catch{return '(none)'}};
+  const body=[
+    `# hbots ${o.version} async gates`,'',
+    `- **Release:** \`${o.release}\``,
+    `- **Outcome:** \`${status}\` after ${seconds} s`,
+    ...(decision?[`- **Rollback:** ${decision.allowed?'allowed':`not allowed: ${decision.reasons.join('; ')}`}`]:[]),
+    `- **Log:** \`ASYNC-GATES.log\``,'',
+    '## Blocking tier timing','','```',waterfall(path.join(RELEASES,o.release,'gate-evidence-logs/waterfall.txt')),'```','',
+    '## Async tier timing','','```',waterfall(path.join(QA,'async-releases',o.release,'gate-evidence-async-logs/waterfall.txt')),'```',''];
+  fs.writeFileSync(path.join(QA,'ASYNC-RECORD.md'),body.join('\n'));
+}
+
+const t0=Date.now();
+const secs=()=>Math.round((Date.now()-t0)/1000);
+let f;
+try{f=facts()}catch(e){
+  say(`async gates: cannot run: ${e.message}`);
+  if(DRY)process.exit(1);
+  notify('async_failed',{detail:`async gates could not run: ${e.message}`.slice(0,400)});
+  record('could_not_run',{seconds:secs()});
+  process.exit(1);
+}
+if(f.evidence.tier!=='blocking'){
+  say(`async gates: the evidence tier is ${f.evidence.tier??'full'}; nothing was deferred, nothing runs`);
+  process.exit(0);
+}
+say(`async gates for ${o.version} (${o.release}), base ${f.rollback}, worktree ${WT}${DRY?' [dry run]':''}`);
+if(DRY){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-async-dry-'));
+  try{
+    fs.mkdirSync(path.join(dir,o.release,'dist'),{recursive:true});
+    fs.writeFileSync(path.join(dir,'current.txt'),`${f.rollback}\n`);
+    gates(dir,{dryRun:true});
+  }finally{fs.rmSync(dir,{recursive:true,force:true})}
+  const failed=process.env.HBOTS_ASYNC_SIMULATE==='fail';
+  const d=rollbackDecision(f);
+  say(`dry run: on a failure the release would ${d.allowed?`roll back to ${f.rollback}`:`stay live (${d.reasons.join('; ')})`}${failed?' [simulated failure]':''}`);
+  process.exit(0);
+}
+let code;
+try{code=gates(privateReleases(f.rollback),{dryRun:false})}catch(e){say(`async gates: ${e.message}`);code=1}
+if(code===0){
+  say(`async gates: PASS in ${secs()} s`);
+  record('passed',{seconds:secs()});
+  process.exit(0);
+}
+say(`async gates: FAIL (exit ${code}) after ${secs()} s; failed jobs were already run twice`);
+const d=rollbackDecision(f);
+if(!d.allowed){
+  say(`no rollback: ${d.reasons.join('; ')}`);
+  notify('async_failed',{detail:`kept live: ${d.reasons.join('; ')}`.slice(0,400)});
+  record('async_failed',{seconds:secs(),decision:d});
+  process.exit(11);
+}
+const rb=rollBack(f.rollback,o.version);
+const ok=rb.rollbackExit===0&&rb.rollbackSmokeExit===0;
+notify(ok?'async_rolled_back':'async_rollback_failed',{'rollback-release':f.rollback,'rollback-exit':rb.rollbackExit,'rollback-smoke-exit':rb.rollbackSmokeExit});
+record(ok?'async_rolled_back':'async_rollback_failed',{seconds:secs(),decision:d});
+process.exit(ok?10:12);

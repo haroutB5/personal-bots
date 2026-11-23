@@ -196,7 +196,7 @@ const IMPORT_RE =
 // the tree is near 255 characters.
 const NAMED_SOURCE_RE = /[A-Za-z0-9_$@.\-/]{1,255}\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx)\b/g;
 
-export function selectServerTests({ reader, changedPaths }) {
+export function selectServerTests({ reader, changedPaths, detail = false }) {
   const tests = SERVER_GATE_DIRS.flatMap((dir) =>
     reader.listFiles(`${SERVER_PKG_DIR}/${dir}`),
   ).filter(isTest);
@@ -407,16 +407,25 @@ export function selectServerTests({ reader, changedPaths }) {
     }
   }
 
+  // Depth of each selected test: 0 for a changed test or a literal reference, else
+  // the number of import hops from the nearest changed file. The blocking tier keeps
+  // the near ones; the walk itself is unchanged.
+  const depth = new Map();
+  for (const test of selected) depth.set(test, 0);
   const reached = new Set();
   let frontier = [...changed];
+  let level = 0;
   while (frontier.length) {
+    level++;
     const next = [];
     for (const file of frontier) {
       if (reached.has(file)) continue;
       reached.add(file);
       for (const importer of reverse.get(file) ?? []) {
-        if (isTest(importer)) selected.add(importer);
-        else next.push(importer);
+        if (isTest(importer)) {
+          selected.add(importer);
+          if (!depth.has(importer)) depth.set(importer, level);
+        } else next.push(importer);
       }
     }
     frontier = next;
@@ -429,8 +438,66 @@ export function selectServerTests({ reader, changedPaths }) {
   }
   if (fixtureParents.size) {
     for (const test of tests)
-      for (const parent of fixtureParents) if (test.startsWith(`${parent}/`)) selected.add(test);
+      for (const parent of fixtureParents)
+        if (test.startsWith(`${parent}/`)) {
+          selected.add(test);
+          depth.set(test, 0);
+        }
   }
   const relative = (file) => file.slice(SERVER_PKG_DIR.length + 1);
-  return [...selected].map(relative).sort();
+  const list = [...selected].map(relative).sort();
+  if (!detail) return list;
+  // Fan-out per changed file (Harout's guard 5), from the graph already built: the
+  // tests the file reaches alone through imports and literal names. One walk per
+  // changed file over the in-memory reverse graph, so no second parse.
+  const fanOut = [];
+  const testsReaching = (start) => {
+    const out = new Set();
+    const seenHere = new Set();
+    let front = [...start];
+    while (front.length) {
+      const next = [];
+      for (const file of front) {
+        if (seenHere.has(file)) continue;
+        seenHere.add(file);
+        for (const importer of reverse.get(file) ?? []) {
+          if (isTest(importer)) out.add(importer);
+          else next.push(importer);
+        }
+      }
+      front = next;
+    }
+    return out;
+  };
+  for (const file of changedPaths) {
+    const own = new Set();
+    if (testSet.has(file)) own.add(file);
+    const start = changed.has(file) ? [file] : [];
+    const base = NodePath.posix.basename(file);
+    const fileNeedles = [`${parentOf(file)}/${base}`];
+    if (file.startsWith(`${SERVER_PKG_DIR}/`) && !/^index\./.test(base))
+      fileNeedles.push(`/${base}`);
+    for (const test of tests) {
+      const source = reader.read(test);
+      if (source && fileNeedles.some((needle) => source.includes(needle))) own.add(test);
+    }
+    for (const module of graphModules) {
+      if (isTest(module)) continue;
+      const source = reader.read(module);
+      if (source && fileNeedles.some((needle) => source.includes(needle))) start.push(module);
+    }
+    for (const test of testsReaching(start)) own.add(test);
+    if (own.size) fanOut.push({ file, tests: own.size });
+  }
+  fanOut.sort((a, b) => b.tests - a.tests || (a.file < b.file ? -1 : 1));
+  return {
+    tests: list,
+    depth: new Map([...depth].map(([file, d]) => [relative(file), d])),
+    fanOut,
+  };
+}
+
+/** The selection with each test's import depth from the nearest changed file. */
+export function selectServerTestsDetailed({ reader, changedPaths }) {
+  return selectServerTests({ reader, changedPaths, detail: true });
 }

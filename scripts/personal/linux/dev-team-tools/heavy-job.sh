@@ -10,24 +10,40 @@
 # restart the server while any job is running. A third job waits for a slot
 # without holding the gate, so it never starves a waiting release.
 set -euo pipefail
-label='' workdir="$PWD" wait_seconds=10800
+label='' workdir="$PWD" wait_seconds=10800 lane=light
 while (($#)); do
   case "$1" in
     --label) label=${2:?}; shift 2;;
+    --lane) lane=${2:?}; shift 2;;
     --work-dir) workdir=${2:?}; shift 2;;
     --wait-seconds) wait_seconds=${2:?}; shift 2;;
     --) shift; break;;
-    *) echo 'Usage: heavy-job.sh --label NAME [--work-dir DIR] [--wait-seconds N] -- COMMAND [ARG...]' >&2; exit 2;;
+    *) echo 'Usage: heavy-job.sh --label NAME [--lane light|android] [--work-dir DIR] [--wait-seconds N] -- COMMAND [ARG...]' >&2; exit 2;;
   esac
 done
 [[ -n "$label" && $# -gt 0 && "$wait_seconds" =~ ^[0-9]+$ ]] || { echo 'Label and command required; wait must be seconds.' >&2; exit 2; }
+# Two lanes (Faster releases step 6, 22 Nov 2026). light: tests, typechecks, installs;
+# up to HEAVY_JOB_SLOTS at once. android: Gradle and the emulator; it also holds one
+# exclusive Android lock, so only one Gradle build or emulator runs at a time (Harout's
+# guard 4) while light jobs keep running beside it.
+[[ "$lane" == light || "$lane" == android ]] || { echo 'heavy-job: --lane must be light or android.' >&2; exit 2; }
 cd -- "$workdir"
+# Fail fast and plainly when the command cannot start, before taking a slot: otherwise
+# the exec deep inside the memory scope dies with a Python traceback (Opuser, 22 Nov,
+# `vp` is not on PATH; it lives in node_modules/.bin).
+if [[ "$1" == */* ]]; then
+  [[ -f "$1" && -x "$1" ]] || { echo "heavy-job: '$1' is not an executable file (from $PWD)." >&2; exit 127; }
+elif ! type -P -- "$1" >/dev/null; then
+  echo "heavy-job: command '$1' is not on PATH. Repo tools such as vp live in node_modules/.bin: run 'pnpm exec $1 ...' (or 'npx $1 ...') from the package folder, or 'bash -c \"...\"'." >&2
+  exit 127
+fi
 # Single machine paths, independent of HOME, cwd, repo and XDG isolation.
 # HEAVY_JOB_BASE exists for tests: it must stay an absolute path.
 base=${HEAVY_JOB_BASE:-/home/harout/.personal-bots/run/omarchy-heavy}
 slots=${HEAVY_JOB_SLOTS:-4}
 min_free_gb=${HEAVY_JOB_MIN_FREE_GB:-6}
 main=$base.lock
+android_lock=$base-android.lock
 [[ "$base" == /* ]] || { echo 'HEAVY_JOB_BASE must be an absolute path.' >&2; exit 2; }
 [[ "$slots" =~ ^[1-8]$ && "$min_free_gb" =~ ^[0-9]+$ ]] || { echo 'HEAVY_JOB_SLOTS must be 1 to 8; HEAVY_JOB_MIN_FREE_GB a whole number.' >&2; exit 2; }
 slot_for() { echo "$base-$1.lock"; }
@@ -60,14 +76,35 @@ done
 if [[ -e $main && ( -L $main || ! -O $main ) ]]; then
   echo 'Unsafe release-gate lock owner or symlink; ask the owner to provision it.' >&2; exit 2
 fi
+if [[ -e $android_lock && ( -L $android_lock || ! -O $android_lock ) ]]; then
+  echo 'Unsafe Android lane lock owner or symlink; ask the owner to provision it.' >&2; exit 2
+fi
+holds_android() { [[ -e /proc/$$/fd/7 && $(readlink /proc/$$/fd/7) == "$android_lock" ]]; }
+# The Android lane lock, waited for in the foreground. Fd 7 is inherited by the job.
+take_android() {
+  [[ "$lane" == android ]] || return 0
+  holds_android && return 0
+  exec 7<>"$android_lock"
+  while ! flock -n 7; do
+    printf 'heavy-job: waiting for the Android lane (one Gradle build or emulator at a time); holder: ' >&2
+    cat "$android_lock" >&2 2>/dev/null || echo >&2
+    ((SECONDS < deadline)) || exit 75
+    remaining=$((deadline - SECONDS))
+    ((remaining > 15)) && remaining=15
+    if flock -w "$remaining" 7; then break; fi
+  done
+  printf 'pid=%s started=%s label=%s cwd=%s lane=android\n' "$$" "$(date -Is)" "${label//$'\n'/ }" "$PWD" > "$android_lock"
+}
 # Nested call inside a job that already holds both locks: just run the command.
 if [[ ${HBOTS_HEAVY_JOB_HELD:-} == 1 && -e /proc/$$/fd/8 && -e /proc/$$/fd/9 ]] &&
    [[ $(readlink /proc/$$/fd/8) == "$main" && $(readlink /proc/$$/fd/9) == "$base-"*.lock ]]; then
+  deadline=$((SECONDS + wait_seconds)); take_android
   exec "$@"
 fi
 # A job started by the previous single-lock wrapper already owns the gate exclusively.
 if [[ ${HBOTS_HEAVY_JOB_HELD:-} == 1 && -e /proc/$$/fd/9 ]] &&
    [[ $(readlink /proc/$$/fd/9) == "$main" ]]; then
+  deadline=$((SECONDS + wait_seconds)); take_android
   exec "$@"
 fi
 umask 077
@@ -87,6 +124,9 @@ while release_armed; do
   ((remaining > 30)) && remaining=30
   sleep "$remaining"
 done
+# 0b. An android job takes the Android lane before a slot, so waiting for the lane
+#     never holds a slot or the release gate.
+take_android
 # 1. A slot first: a job that cannot get one holds nothing, so it cannot keep a
 #    release from starting.
 until try_slots; do
@@ -108,7 +148,7 @@ while ! flock -s -n 8; do
   if flock -s -w "$remaining" 8; then break; fi
 done
 label=${label//$'\n'/ }
-printf 'pid=%s started=%s label=%s cwd=%s slot=%s\n' "$$" "$(date -Is)" "$label" "$PWD" "${lock##*-}" > "$lock"
+printf 'pid=%s started=%s label=%s cwd=%s slot=%s lane=%s\n' "$$" "$(date -Is)" "$label" "$PWD" "${lock##*-}" "$lane" > "$lock"
 export HBOTS_HEAVY_JOB_HELD=1
 # nice -n is relative; setpriority makes the inherited nice value exactly 10.
 prio=(ionice -c 3 python3 -c 'import os,sys; os.setpriority(os.PRIO_PROCESS,0,10); os.execvp(sys.argv[1],sys.argv[1:])')
@@ -124,14 +164,18 @@ prio=(ionice -c 3 python3 -c 'import os,sys; os.setpriority(os.PRIO_PROCESS,0,10
 high=${HEAVY_JOB_MEMORY_HIGH:-7G}
 max=${HEAVY_JOB_MEMORY_MAX:-8G}
 swap=${HEAVY_JOB_SWAP_MAX:-8G}
+# Optional hard CPU cap for the whole scope, as systemd's CPUQuota (700% is 7 cores).
+cpu_quota=${HEAVY_JOB_CPU_QUOTA:-off}
 size_re='^(off|[1-9][0-9]*[KMG])$'
+[[ "$cpu_quota" =~ ^(off|[1-9][0-9]*%)$ ]] || { echo 'HEAVY_JOB_CPU_QUOTA must be off or a percentage such as 700%.' >&2; exit 2; }
 [[ "$high" =~ $size_re ]] || { echo 'HEAVY_JOB_MEMORY_HIGH must be off or a size such as 6G.' >&2; exit 2; }
 [[ "$max" =~ $size_re ]] || { echo 'HEAVY_JOB_MEMORY_MAX must be off or a size such as 6G.' >&2; exit 2; }
 [[ "$swap" =~ $size_re ]] || { echo 'HEAVY_JOB_SWAP_MAX must be off or a size such as 4G.' >&2; exit 2; }
 if [[ "$high" != off ]]; then
   if systemd-run --user --scope --quiet --collect true 2>/dev/null; then
-    printf 'heavy-job: nice 10, ionice idle, MemoryHigh %s, MemoryMax %s, MemorySwapMax %s :: %s\n' "$high" "$max" "$swap" "$label" >&2
+    printf 'heavy-job: nice 10, ionice idle, MemoryHigh %s, MemoryMax %s, MemorySwapMax %s%s, lane %s :: %s\n' "$high" "$max" "$swap" "$([[ $cpu_quota == off ]] || printf ', CPUQuota %s' "$cpu_quota")" "$lane" "$label" >&2
     caps=(-p MemoryHigh="$high" -p CPUWeight=20)
+    [[ "$cpu_quota" == off ]] || caps+=(-p CPUQuota="$cpu_quota")
     [[ "$max" == off ]] || caps+=(-p MemoryMax="$max")
     [[ "$swap" == off ]] || caps+=(-p MemorySwapMax="$swap")
     exec systemd-run --user --scope --quiet --collect --expand-environment=no "${caps[@]}" \

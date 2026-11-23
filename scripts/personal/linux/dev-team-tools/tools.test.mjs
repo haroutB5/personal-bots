@@ -241,41 +241,120 @@ else console.log('Tests 3 passed (3)');`);
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
 
-test('e2e waits when server-tests has two lanes',()=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-serial-'));
- try{
-  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),starts=path.join(root,'starts');
-  fs.mkdirSync(repo);installScope(repo);
-  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
-  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
-  fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','fixture');
-  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
-  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
-  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
-  fs.writeFileSync(path.join(releases,'current.txt'),`${release}\n`);
-  const fixture=path.join(root,'command.mjs');
-  fs.writeFileSync(fixture,`import fs from 'node:fs';
+test('server-tests lanes and e2e run together within the CPU budget, one at a time with a budget of 1',()=>{
+ const once=(extra)=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-lanes-'));
+  try{
+   const repo=path.join(root,'repo'),releases=path.join(root,'releases'),starts=path.join(root,'starts');
+   fs.mkdirSync(repo);installScope(repo);
+   const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+   git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+   fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','fixture');
+   const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+   fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+   fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+   fs.writeFileSync(path.join(releases,'current.txt'),`${release}\n`);
+   const fixture=path.join(root,'command.mjs');
+   fs.writeFileSync(fixture,`import fs from 'node:fs';
 const kind=process.argv[2];
 if(kind.startsWith('server-tests')||kind==='e2e'){
   fs.appendFileSync(process.env.STARTS,kind+':'+Date.now()+'\\n');
-  if(kind.startsWith('server-tests')) await new Promise((resolve)=>setTimeout(resolve,400));
+  await new Promise((resolve)=>setTimeout(resolve,400));
 }
 if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
 else console.log('Tests 3 passed (3)');`);
-  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
-  defs[0].concurrent=[[`node '${fixture}' server-tests-1`],[`node '${fixture}' server-tests-2`]];
-  delete defs[0].commands;
+   const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
+   defs[0].concurrent=[[`node '${fixture}' server-tests-1`],[`node '${fixture}' server-tests-2`]];
+   delete defs[0].commands;
+   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+   const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
+   const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{STARTS:starts,GATE_MEM_RESERVE_MB:'0',...extra})});
+   assert.equal(r.status,0,r.stdout+r.stderr);
+   const rows=fs.readFileSync(starts,'utf8').trim().split('\n').map((line)=>line.split(':')).map(([id,at])=>[id,Number(at)]);
+   const evidence=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
+   return {rows,evidence,stdout:r.stdout,dir};
+  }finally{fs.rmSync(root,{recursive:true,force:true})}
+ };
+ const together=once({});
+ const times=together.rows.map(([,at])=>at);
+ assert.equal(together.rows.length,3,'two lanes and e2e');
+ assert.ok(Math.max(...times)-Math.min(...times)<350,`all three start together: spread ${Math.max(...times)-Math.min(...times)} ms`);
+ // The waterfall: printed, and kept in the evidence with every planned gate.
+ assert.match(together.stdout,/^gate timing: \d+ s wall, \d+ s if serial; budget \d+ of \d+ cores/m);
+ assert.match(together.stdout,/^  server-tests +whole +start +\d+ s +\d+ s +2 jobs PASS/m);
+ assert.equal(together.evidence.timing.rows.length,10);
+ assert.equal(together.evidence.gates.find(g=>g.id==='server-tests').timing.jobs.length,2);
+ const serial=once({GATE_CPU_BUDGET:'1'});
+ const sorted=serial.rows.map(([,at])=>at).sort((a,b)=>a-b);
+ for(let i=1;i<sorted.length;i++)assert.ok(sorted[i]-sorted[i-1]>=350,`budget 1 runs one job at a time: gap ${sorted[i]-sorted[i-1]} ms`);
+ assert.equal(serial.evidence.timing.cpuBudget,1);
+});
+test('a selected server-tests set is cut into balanced chunks whose union is the plan, guards in the first only',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-chunks-'));
+ try{
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases');
+  fs.mkdirSync(path.join(repo,'apps/server/src/personal'),{recursive:true});installScope(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'apps/server/src/personal/shared.ts'),'export const value=1;\n');
+  for(let i=0;i<120;i++)fs.writeFileSync(path.join(repo,`apps/server/src/personal/t${String(i).padStart(3,'0')}.test.ts`),"import {value} from './shared.ts';\nexport const seen=value;\n");
+  git('add','-A');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+  fs.writeFileSync(path.join(repo,'apps/server/src/personal/shared.ts'),'export const value=2;\n');git('add','-A');git('commit','-qm','shared change');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  fs.writeFileSync(path.join(releases,'current.txt'),`${base.slice(0,12)}\n`);
+  const fixture=path.join(root,'command.mjs');
+  fs.writeFileSync(fixture,`const kind=process.argv[2];
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0,j1,j2,j3,j4').split(',').map(id=>({id,ok:true}))}));
+else { console.log('ARGS '+process.argv.slice(3).join(' ')); console.log('Tests '+Math.max(1,process.argv.length-3)+' passed'); }`);
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:id==='server-tests'?'apps/server':'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':id==='server-tests'?' {args} src/persistence/Migrations.registry.test.ts':''}`]})),id=>`node '${fixture}' ${id}`);
   const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
-  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile];
-  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{STARTS:starts})});
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile,'--skip-notes'];
+  const dry=node('gate-evidence.mjs',[...args,'--dry-run'],{env:{...process.env,HBOTS_HEAVY_JOB_HELD:''}});
+  assert.equal(dry.status,0,dry.stdout+dry.stderr);
+  // Harout's guard 5: over 100 selected files names the changed file behind the fan-out.
+  assert.match(dry.stdout,/^fan-out: server-tests selected 120 files \(over 100\)/m);
+  assert.match(dry.stdout,/^ +120 +apps\/server\/src\/personal\/shared\.ts$/m);
+  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{GATE_MEM_RESERVE_MB:'0',GATE_SKIP_PREFLIGHT:'1'})});
   assert.equal(r.status,0,r.stdout+r.stderr);
-  const rows=fs.readFileSync(starts,'utf8').trim().split('\n').map((line)=>line.split(':'));
-  const lanes=rows.filter(([id])=>id.startsWith('server-tests')).map(([,at])=>Number(at));
-  const e2e=rows.find(([id])=>id==='e2e');
-  assert.equal(lanes.length,2);
-  assert.ok(e2e,'e2e ran');
-  assert.ok(Number(e2e[1])-Math.max(...lanes)>=350,`e2e started ${Number(e2e[1])-Math.max(...lanes)} ms after both lanes`);
+  const evidence=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
+  const gate=evidence.gates.find(g=>g.id==='server-tests');
+  assert.equal(gate.mode,'selected');assert.equal(gate.args.length,120);
+  assert.ok(gate.commands.length>=4,`chunks: ${gate.commands.length}`);
+  const named=gate.commands.flatMap(c=>c.command.split(' ').filter(t=>/^src\/personal\/t\d+\.test\.ts$/.test(t)));
+  assert.deepEqual([...named].sort(),[...gate.args].sort(),'every planned file runs exactly once');
+  assert.equal(gate.commands.filter(c=>c.command.includes('Migrations.registry.test.ts')).length,1,'the guards ride one chunk');
+  assert.deepEqual(evidence.gateScope.fanOut.byChangedFile,[{file:'apps/server/src/personal/shared.ts',tests:120}]);
+  assert.equal(node('check-gate-evidence.mjs',args.filter(a=>!['--gates-json',defFile,'--skip-notes'].includes(a))).status,0);
  }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
+test('the android lane runs one Gradle or emulator job at a time; light jobs pass beside it',async()=>{
+ const base=lockBase();
+ const env=jobEnv(base,{HEAVY_JOB_MIN_FREE_GB:'0'});
+ const p=spawn('bash',[path.join(here,'heavy-job.sh'),'--label','gradle-a','--lane','android','--','sleep','2'],{stdio:['ignore','ignore','pipe'],env});
+ await new Promise(resolve=>p.stderr.on('data',(d)=>{if(/nice 10/.test(String(d)))resolve()}));
+ assert.match(fs.readFileSync(`${base}-android.lock`,'utf8'),/label=gradle-a .*lane=android/);
+ const second=run('bash',[path.join(here,'heavy-job.sh'),'--label','emulator-b','--lane','android','--wait-seconds','0','--','true'],{env});
+ assert.equal(second.status,75,second.stderr);assert.match(second.stderr,/waiting for the Android lane.*gradle-a/s);
+ const light=run('bash',[path.join(here,'heavy-job.sh'),'--label','tsc-c','--wait-seconds','0','--','true'],{env});
+ assert.equal(light.status,0,light.stderr);
+ const bad=run('bash',[path.join(here,'heavy-job.sh'),'--label','bad','--lane','gpu','--','true'],{env});
+ assert.equal(bad.status,2);
+ await new Promise(resolve=>p.once('exit',resolve));
+ const after=run('bash',[path.join(here,'heavy-job.sh'),'--label','emulator-b','--lane','android','--wait-seconds','0','--','true'],{env});
+ assert.equal(after.status,0,after.stderr);
+});
+test('a CPU quota is passed to the scope only when set',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-quota-')),bin=path.join(dir,'bin'),args=path.join(dir,'args');
+ fs.mkdirSync(bin);
+ fs.writeFileSync(path.join(bin,'systemd-run'),'#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "$SYSTEMD_RUN_ARGS"\n',{mode:0o755});
+ const once=(extra)=>{const r=run('bash',[path.join(here,'heavy-job.sh'),'--label','quota','--','true'],{env:{...process.env,HEAVY_JOB_BASE:path.join(dir,'gate'),HEAVY_JOB_SLOTS:'1',SYSTEMD_RUN_ARGS:args,PATH:`${bin}:${process.env.PATH}`,...extra}});return {r,argv:fs.existsSync(args)?fs.readFileSync(args,'utf8').trim().split('\n'):[]}};
+ const set=once({HEAVY_JOB_CPU_QUOTA:'700%'});
+ assert.equal(set.r.status,0,set.r.stderr);assert.ok(set.argv.includes('CPUQuota=700%'));
+ const unset=once({});
+ assert.ok(!unset.argv.some(a=>a.startsWith('CPUQuota=')));
+ assert.equal(once({HEAVY_JOB_CPU_QUOTA:'lots'}).r.status,2);
 });
 test('a changed test that no gate runs is printed, recorded and noted',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-notrun-'));
@@ -550,7 +629,9 @@ console.log('Tests 3 passed (3)');`);
  ]){
   const f=fixture(mutation);
   try{
-   const r=node('gate-evidence.mjs',f.args,{env:jobEnv(lockBase(),{RAN:f.ran})});
+   // One job at a time, so "the next gate never started" holds; in parallel the abort
+   // still kills the others and writes no evidence (the same assertions below).
+   const r=node('gate-evidence.mjs',f.args,{env:jobEnv(lockBase(),{RAN:f.ran,GATE_CPU_BUDGET:'1'})});
    assert.equal(r.status,2,r.stdout+r.stderr);
    assert.match(r.stderr,/the git tree or HEAD changed after server-tests/);
    assert.match(r.stderr,pattern);
@@ -621,4 +702,264 @@ test('gates-linux.json (read by the installed tool) holds no placeholder the old
  const scoped=JSON.parse(fs.readFileSync(path.join(root,'scripts/personal/node/gates-linux.scoped.json'),'utf8'));
  for(const d of defs)assert.ok(scoped.some(s=>s.id===d.id),`${d.id} is missing from gates-linux.scoped.json`);
  assert.match(JSON.stringify(scoped),/\{args\}/,'the scoped file carries the templates');
+});
+// ---- async gate tier (Faster releases step 2) ----
+// A fixture world: a release worktree, the releases and run dirs, and stand-ins for the
+// collector, systemctl, hbots.mjs and the notifier, each driven by a file it reads.
+const asyncWorld=({tier='blocking',current,units='',newer=null,migration=false}={})=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-async-'));
+ const wt=path.join(root,'wt'),releases=path.join(root,'releases'),runDir=path.join(root,'run'),qa=path.join(root,'qa'),bin=path.join(root,'bin');
+ for(const d of [wt,releases,runDir,qa,bin])fs.mkdirSync(d,{recursive:true});
+ installScope(wt);
+ const g=(...a)=>{const r=run('git',['-C',wt,...a]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+ g('init','-q');g('config','user.email','f@example.invalid');g('config','user.name','F');
+ fs.writeFileSync(path.join(wt,'a.ts'),'1\n');g('add','-A');g('commit','-qm','base');const base=g('rev-parse','HEAD');
+ fs.writeFileSync(path.join(wt,'a.ts'),'2\n');
+ if(migration){fs.mkdirSync(path.join(wt,'apps/server/src/persistence/Migrations'),{recursive:true});fs.writeFileSync(path.join(wt,'apps/server/src/persistence/Migrations/099_x.ts'),'x\n')}
+ g('add','-A');g('commit','-qm','release');const head=g('rev-parse','HEAD');
+ const rel=head.slice(0,12),rb=base.slice(0,12);
+ fs.mkdirSync(path.join(releases,rel,'dist'),{recursive:true});
+ fs.writeFileSync(path.join(releases,rel,'VERSION'),'version=1.68.0\n');fs.writeFileSync(path.join(releases,rel,'dist/bin.mjs'),'//\n');
+ fs.writeFileSync(path.join(releases,rel,'gate-evidence.json'),JSON.stringify({sha:head,release:rel,...(tier?{tier}:{})}));
+ fs.writeFileSync(path.join(releases,'current.txt'),`${current??rel}\n`);
+ fs.writeFileSync(path.join(runDir,'restart-1.68.0-result.json'),JSON.stringify({status:'live_verified',release:rel,rollback:rb}));
+ if(newer)fs.writeFileSync(path.join(runDir,'restart-1.68.1-result.json'),JSON.stringify({status:newer}));
+ const sh=(name,body)=>{fs.writeFileSync(path.join(bin,name),`#!/usr/bin/env bash\n${body}\n`);fs.chmodSync(path.join(bin,name),0o755)};
+ // The collector stand-in: exits with the code in gate.exit and notes its env and args.
+ fs.writeFileSync(path.join(bin,'collector.mjs'),`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(path.join(root,'collector.calls'))},JSON.stringify({tier:process.env.GATE_TIER,args:process.argv.slice(2)})+'\\n');const a=process.argv;const d=a[a.indexOf('--releases-dir')+1];fs.appendFileSync(${JSON.stringify(path.join(root,'collector.calls'))},'current='+fs.readFileSync(d+'/current.txt','utf8'));process.exit(Number(fs.readFileSync(${JSON.stringify(path.join(root,'gate.exit'))},'utf8')))`);
+ fs.writeFileSync(path.join(root,'gate.exit'),'0');
+ sh('systemctl',`printf '%s' ${JSON.stringify(units)}`);
+ fs.writeFileSync(path.join(bin,'cli.mjs'),`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(path.join(root,'cli.calls'))},process.argv.slice(2).join(' ')+'\\n');process.exit(process.argv[2]==='smoke'?Number(process.env.FAKE_SMOKE_EXIT??0):0)`);
+ fs.writeFileSync(path.join(bin,'notify.mjs'),`import fs from 'node:fs';fs.appendFileSync(${JSON.stringify(path.join(root,'notices'))},process.argv.slice(2).join(' ')+'\\n')`);
+ const env=(extra={})=>({...process.env,HBOTS_ASYNC_RUN_DIR:runDir,HBOTS_ASYNC_RELEASES:releases,HBOTS_ASYNC_SYSTEMCTL:path.join(bin,'systemctl'),HBOTS_ASYNC_COLLECTOR:path.join(bin,'collector.mjs'),HBOTS_ASYNC_CLI:path.join(bin,'cli.mjs'),HBOTS_ASYNC_NOTIFY:path.join(bin,'notify.mjs'),...extra});
+ const go=(args=[],extra={})=>node('hbots-async-gates.mjs',['--version','1.68.0','--release',rel,'--worktree',wt,'--qa-dir',qa,...args],{env:env(extra)});
+ const read=(name)=>{try{return fs.readFileSync(path.join(root,name),'utf8')}catch{return ''}};
+ return {root,rel,rb,go,read,setExit:(n)=>fs.writeFileSync(path.join(root,'gate.exit'),String(n)),qa};
+};
+test('async gates: a pass runs the async tier against the rollback base and posts nothing',()=>{
+ const w=asyncWorld();
+ const r=w.go();
+ assert.equal(r.status,0,r.stdout+r.stderr);
+ assert.match(w.read('collector.calls'),/"tier":"async"/);
+ assert.match(w.read('collector.calls'),new RegExp(`current=${w.rb}`));
+ assert.equal(w.read('notices'),'');assert.equal(w.read('cli.calls'),'');
+ assert.match(fs.readFileSync(path.join(w.qa,'ASYNC-RECORD.md'),'utf8'),/Outcome:\*\* `passed`/);
+});
+test('async gates: a failure on the tested live release rolls back, smokes and posts async_rolled_back',()=>{
+ const w=asyncWorld();w.setExit(1);
+ const r=w.go();
+ assert.equal(r.status,10,r.stdout+r.stderr);
+ assert.match(w.read('cli.calls'),new RegExp(`^restart --root dev --release ${w.rb}\\nsmoke --root dev --expect-release ${w.rb}`));
+ assert.match(w.read('notices'),/--thread-id 759552c5-0b8c-4680-8cc6-5c7487c8081e .*--outcome async_rolled_back .*--rollback-release [0-9a-f]{12} --rollback-exit 0 --rollback-smoke-exit 0/);
+ const bad=asyncWorld();bad.setExit(1);
+ assert.equal(bad.go([],{FAKE_SMOKE_EXIT:'1'}).status,12);
+ assert.match(bad.read('notices'),/--outcome async_rollback_failed/);
+});
+test('async gates: no rollback when a newer release is live, armed or running, or on a migration',()=>{
+ const cases=[
+  [{current:'f'.repeat(12)},/live release is f{12}, not the tested/],
+  [{units:'hbots-release-run-1.68.1.service loaded active running x\n'},/hbots-release-run-1\.68\.1 is active/],
+  [{newer:'waiting_for_idle'},/release 1\.68\.1 is waiting_for_idle/],
+  [{migration:true},/DB migrations/],
+  [{},/--no-rollback was given/,['--no-rollback']],
+ ];
+ for(const [opts,why,args=[]] of cases){
+  const w=asyncWorld(opts);w.setExit(1);
+  const r=w.go(args);
+  assert.equal(r.status,11,`${why}: ${r.stdout}${r.stderr}`);
+  assert.equal(w.read('cli.calls'),'',`${why}: nothing restarted`);
+  assert.match(w.read('notices'),/--outcome async_failed/);
+  assert.match(r.stdout,why);
+ }
+});
+test('async gates: untiered evidence runs nothing; --dry-run decides without running or posting',()=>{
+ const full=asyncWorld({tier:null});
+ const r=full.go();
+ assert.equal(r.status,0);assert.match(r.stdout,/nothing was deferred/);assert.equal(full.read('collector.calls'),'');
+ const w=asyncWorld();
+ const d=w.go(['--dry-run'],{HBOTS_ASYNC_SIMULATE:'fail'});
+ assert.equal(d.status,0,d.stdout+d.stderr);
+ assert.match(w.read('collector.calls'),/--dry-run/);
+ assert.match(d.stdout,new RegExp(`would roll back to ${w.rb}`));
+ assert.equal(w.read('notices'),'');assert.equal(w.read('cli.calls'),'');
+ assert.ok(!fs.existsSync(path.join(w.qa,'ASYNC-GATES.log')));
+});
+test('GATE_TIER: blocking defers e2e and the far server tests; async runs them and retries a failed job once',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-tier-'));
+ try{
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),src=path.join(repo,'apps/server/src/personal/tier');
+  fs.mkdirSync(src,{recursive:true});installScope(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(src,'core.ts'),'export const core=1;\n');
+  fs.writeFileSync(path.join(src,'mid.ts'),"import {core} from './core.ts';\nexport const mid=core;\n");
+  fs.writeFileSync(path.join(src,'far.ts'),"import {mid} from './mid.ts';\nexport const far=mid;\n");
+  fs.writeFileSync(path.join(src,'core.test.ts'),"import {core} from './core.ts';\ncore;\n");
+  fs.writeFileSync(path.join(src,'far.test.ts'),"import {far} from './far.ts';\nfar;\n");
+  git('add','-A');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+  fs.writeFileSync(path.join(src,'core.ts'),'export const core=2;\n');git('add','-A');git('commit','-qm','core change');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  fs.writeFileSync(path.join(releases,'current.txt'),`${base.slice(0,12)}\n`);
+  const fixture=path.join(root,'command.mjs'),flaky=path.join(root,'flaky-once');
+  // far.test.ts fails on its first run only, so the async retry is what passes it.
+  fs.writeFileSync(fixture,`import fs from 'node:fs';
+const kind=process.argv[2];
+fs.appendFileSync(${JSON.stringify(path.join(root,'ran'))},kind+' '+process.argv.slice(3).join(' ')+'\\n');
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0').split(',').map(id=>({id,ok:true}))}));
+else if(kind==='server-tests'&&process.argv.includes('src/personal/tier/far.test.ts')&&!fs.existsSync(${JSON.stringify(flaky)})){fs.writeFileSync(${JSON.stringify(flaky)},'1');console.log('Tests 1 failed (1)');process.exit(1)}
+else console.log('Tests 1 passed (1)');`);
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:id==='server-tests'?'apps/server':'.',commands:[`node '${fixture}' ${id}${id==='e2e'||id==='server-tests'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile,'--skip-notes'];
+  const env=(tier)=>jobEnv(lockBase(),{GATE_MEM_RESERVE_MB:'0',GATE_SKIP_PREFLIGHT:'1',GATE_TIER:tier});
+  const dry=node('gate-evidence.mjs',[...args,'--dry-run'],{env:{...env('blocking'),HBOTS_HEAVY_JOB_HELD:''}});
+  assert.equal(dry.status,0,dry.stdout+dry.stderr);
+  assert.match(dry.stdout,/^tier: blocking \(tiered: .*e2e.*\)/m);
+  const blocking=node('gate-evidence.mjs',args,{env:env('blocking')});
+  assert.equal(blocking.status,0,blocking.stdout+blocking.stderr);
+  const e=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8'));
+  assert.equal(e.tier,'blocking');
+  const e2e=e.gates.find(g=>g.id==='e2e');
+  assert.equal(e2e.mode,'deferred');assert.equal(e2e.deferredMode,'selected');assert.deepEqual(e2e.commands,[]);
+  const near=e.gates.find(g=>g.id==='server-tests');
+  assert.ok(near.args.includes('src/personal/tier/core.test.ts'));assert.ok(!near.args.includes('src/personal/tier/far.test.ts'));
+  assert.ok(!fs.readFileSync(path.join(root,'ran'),'utf8').includes('far.test.ts'),'the far test does not run before the release');
+  const checkArgs=args.filter(a=>!['--gates-json',defFile,'--skip-notes'].includes(a));
+  assert.equal(node('check-gate-evidence.mjs',checkArgs).status,0,'blocking evidence passes the checker');
+  const later=node('gate-evidence.mjs',args,{env:env('async')});
+  assert.equal(later.status,0,later.stdout+later.stderr);
+  assert.match(later.stdout,/^retry server-tests job 1: failed \(exit 1\); running it once more$/m);
+  const a=JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence-async.json'),'utf8'));
+  assert.equal(a.tier,'async');
+  assert.deepEqual(a.gates.map(g=>g.id).sort(),['e2e','server-tests']);
+  const far=a.gates.find(g=>g.id==='server-tests');
+  assert.deepEqual(far.args,['src/personal/tier/far.test.ts']);
+  assert.equal(far.retries.length,1);assert.equal(far.retries[0].firstAttempt[0].exit,1);
+  assert.ok(fs.existsSync(far.retries[0].firstLog),'the first attempt log is kept');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence.json'),'utf8')).tier,'blocking','the blocking evidence is untouched');
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
+test('a process a gate leaves behind in the collector scope is stopped at the end of the run',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-sweep-'));
+ try{
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),pidFile=path.join(root,'leftover.pid');
+  fs.mkdirSync(repo);installScope(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(repo,'source'),'fixture');git('add','.');git('commit','-qm','fixture');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  fs.writeFileSync(path.join(releases,'current.txt'),`${release}\n`);
+  const fixture=path.join(root,'command.mjs');
+  // web-tests starts a process in a new session (outside its group) and exits.
+  fs.writeFileSync(fixture,`import {spawn} from 'node:child_process';import fs from 'node:fs';
+const kind=process.argv[2];
+if(kind==='web-tests'){const c=spawn('sleep',['300'],{detached:true,stdio:'ignore'});c.unref();fs.writeFileSync(${JSON.stringify(pidFile)},String(c.pid))}
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0').split(',').map(id=>({id,ok:true}))}));
+else console.log('Tests 1 passed (1)');`);
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:'.',commands:[`node '${fixture}' ${id}${id==='e2e'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile,'--skip-notes'];
+  const r=node('gate-evidence.mjs',args,{env:jobEnv(lockBase(),{HEAVY_JOB_MEMORY_HIGH:'8G',GATE_MEM_RESERVE_MB:'0',GATE_SKIP_PREFLIGHT:'1'})});
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.match(r.stdout,/^scope sweep \(end of run\): stopped 1 leftover process$/m);
+  const pid=Number(fs.readFileSync(pidFile,'utf8'));
+  let alive=true;for(let i=0;i<20&&alive;i++){try{process.kill(pid,0);spawnSync('sleep',['0.1'])}catch{alive=false}}
+  assert.equal(alive,false,'the leftover sleep is gone');
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
+test('release slots: a lease per task, switch cleans untracked files but keeps ignored caches, only slot paths',()=>{
+ const root=fs.mkdtempSync('/tmp/hbots-slot-test.');
+ try{
+  const repo=path.join(root,'repo'),wt=path.join(root,'wt');
+  const git=(cwd,...args)=>{const r=run('git',['-C',cwd,'-c','user.email=t@t','-c','user.name=t',...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim();};
+  fs.mkdirSync(repo);git(repo,'init','-q','-b','main');
+  fs.writeFileSync(path.join(repo,'.gitignore'),'.env\nnode_modules/\nandroid/\n');fs.writeFileSync(path.join(repo,'a.txt'),'one\n');
+  git(repo,'add','.');git(repo,'commit','-qm','one');
+  fs.writeFileSync(path.join(repo,'a.txt'),'two\n');git(repo,'commit','-qam','two');
+  for(const n of [1,2])git(repo,'worktree','add','-q','--detach',path.join(wt,`hbots-slot-${n}`),'HEAD~1');
+  fs.writeFileSync(path.join(repo,'.env'),'SECRET=x\n');
+  const env={...process.env,HBOTS_SLOT_ROOT:wt,HBOTS_SLOT_REPO:repo,HBOTS_SLOT_STATE:path.join(root,'state'),HBOTS_SLOT_TEST:'1'};
+  const slot=(...args)=>run('bash',[path.join(here,'hbots-slot.sh'),...args],{env});
+  const a=slot('lease','--label','task A');assert.equal(a.status,0,a.stderr);assert.equal(a.stdout.trim(),path.join(wt,'hbots-slot-1'));
+  const b=slot('lease','--label','task B');assert.equal(b.status,0,b.stderr);assert.equal(b.stdout.trim(),path.join(wt,'hbots-slot-2'));
+  const c=slot('lease','--label','task C');assert.equal(c.status,1);assert.match(c.stderr,/no free slot.*task A.*task B/);
+  const s1=path.join(wt,'hbots-slot-1');
+  fs.writeFileSync(path.join(s1,'stray.txt'),'left from the last release\n');
+  fs.mkdirSync(path.join(s1,'android'));fs.writeFileSync(path.join(s1,'android','cache.bin'),'warm\n');
+  // Only the holder switches, and never over tracked changes.
+  assert.match(slot('switch','--slot','1','--label','task B','--detach','main').stderr,/leased by 'task A'/);
+  fs.writeFileSync(path.join(s1,'a.txt'),'edited\n');
+  assert.match(slot('switch','--slot','1','--label','task A','--detach','main').stderr,/tracked changes/);
+  git(s1,'checkout','--','a.txt');
+  const sw=slot('switch','--slot','1','--label','task A','--branch','release/x','--from','main');
+  assert.equal(sw.status,0,sw.stderr);
+  assert.equal(fs.readFileSync(path.join(s1,'a.txt'),'utf8'),'two\n');
+  assert.equal(git(s1,'rev-parse','--abbrev-ref','HEAD'),'release/x');
+  assert.ok(!fs.existsSync(path.join(s1,'stray.txt')),'untracked file removed');
+  assert.equal(fs.readFileSync(path.join(s1,'android','cache.bin'),'utf8'),'warm\n','ignored cache kept');
+  assert.equal(fs.readFileSync(path.join(s1,'.env'),'utf8'),'SECRET=x\n');assert.doesNotMatch(sw.stdout+sw.stderr,/SECRET/);
+  assert.match(slot('release','--slot','1','--label','task B').stderr,/leased by 'task A'/);
+  assert.equal(slot('release','--slot','1','--label','task A').status,0);
+  assert.match(slot('status').stdout,/slot 1 .*: free/);
+  // A slot root that is not the real slot path is refused before any git clean.
+  const other=fs.mkdtempSync('/tmp/hbots-other-');
+  try{
+   git(repo,'worktree','add','-q','--detach',path.join(other,'hbots-slot-1'),'main');
+   fs.writeFileSync(path.join(other,'hbots-slot-1','keep.txt'),'mine\n');
+   const bad=run('bash',[path.join(here,'hbots-slot.sh'),'lease','--label','x'],{env:{...env,HBOTS_SLOT_ROOT:other,HBOTS_SLOT_STATE:path.join(other,'state')}});
+   assert.equal(bad.status,1);assert.match(bad.stderr,/not a release slot path/);
+   assert.ok(fs.existsSync(path.join(other,'hbots-slot-1','keep.txt')));
+  }finally{git(repo,'worktree','remove','--force',path.join(other,'hbots-slot-1'));fs.rmSync(other,{recursive:true,force:true});}
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('the background arm64 build starts once its trigger gates pass, and is stopped when a gate fails',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hbots-gate-bg-'));
+ try{
+  const repo=path.join(root,'repo'),releases=path.join(root,'releases'),src=path.join(repo,'apps/server/src/personal/bg');
+  fs.mkdirSync(src,{recursive:true});installScope(repo);
+  const git=(...args)=>{const r=run('git',['-C',repo,...args]);assert.equal(r.status,0,r.stderr);return r.stdout.trim()};
+  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  fs.writeFileSync(path.join(src,'core.ts'),'export const core=1;\n');fs.writeFileSync(path.join(src,'core.test.ts'),"import {core} from './core.ts';\ncore;\n");
+  git('add','-A');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+  fs.writeFileSync(path.join(src,'core.ts'),'export const core=2;\n');git('add','-A');git('commit','-qm','change');
+  const sha=git('rev-parse','HEAD'),release=sha.slice(0,12),dir=path.join(releases,release);
+  fs.mkdirSync(path.join(dir,'dist'),{recursive:true});fs.writeFileSync(path.join(dir,'dist/bin.mjs'),'fixture artifact');
+  fs.writeFileSync(path.join(dir,'VERSION'),`version=1.2.3\nsha=${release}\ndirty=false\n`);
+  fs.writeFileSync(path.join(releases,'current.txt'),`${base.slice(0,12)}\n`);
+  const fixture=path.join(root,'command.mjs'),failFlag=path.join(root,'server-tsc-fails'),order=path.join(root,'order');
+  fs.writeFileSync(fixture,`import fs from 'node:fs';
+const kind=process.argv[2];
+fs.appendFileSync(${JSON.stringify(order)},'gate '+kind+'\\n');
+if(kind==='e2e') console.log(JSON.stringify({failed:0,journeys:(process.argv[3]||'j0').split(',').map(id=>({id,ok:true}))}));
+else if(kind==='server-tsc'){await new Promise(r=>setTimeout(r,1500));if(fs.existsSync(${JSON.stringify(failFlag)})){console.log('error TS1');process.exit(2)}}
+else console.log('Tests 1 passed (1)');`);
+  const defs=withExtra(Object.entries({'server-tests':'vitest','server-tsc':'tsc','web-tests':'vitest','web-tsc':'tsc',e2e:'e2e'}).map(([id,kind])=>({id,kind,cwd:id==='server-tests'?'apps/server':'.',commands:[`node '${fixture}' ${id}${id==='e2e'||id==='server-tests'?' {args}':''}`]})),id=>`node '${fixture}' ${id}`);
+  const defFile=path.join(root,'gates.json');fs.writeFileSync(defFile,JSON.stringify(defs));
+  const args=['--version','1.2.3','--release',release,'--repo-root',repo,'--releases-dir',releases,'--gates-json',defFile,'--skip-notes'];
+  const env=(build)=>jobEnv(lockBase(),{GATE_MEM_RESERVE_MB:'0',GATE_SKIP_PREFLIGHT:'1',GATE_ANDROID_BUILD:build,GATE_ANDROID_BUILD_AFTER:'preflight,server-tests'});
+  const bgJson=()=>JSON.parse(fs.readFileSync(path.join(dir,'gate-evidence-logs','android-build.json'),'utf8'));
+  // Pass: the build starts after its trigger gate passed (hbots-mobile by default; server-tests here, which this diff runs) and the run waits for it.
+  const ok=node('gate-evidence.mjs',args,{env:env(`echo build >> '${order}'; sleep 1; echo apk-sha256=abc`),timeout:60000});
+  assert.equal(ok.status,0,ok.stdout+ok.stderr);
+  const lines=fs.readFileSync(order,'utf8').trim().split('\n');
+  assert.ok(lines.indexOf('build')>lines.indexOf('gate server-tests'),lines.join(' | '));
+  assert.equal(bgJson().state,'pass');
+  assert.match(ok.stdout,/^arm64 build \(background\): PASS \(exit 0, \d+ s\)/m);
+  assert.match(ok.stdout,/^ {2}arm64 build \(bg\) +android .* PASS +\|/m);
+  assert.match(fs.readFileSync(path.join(dir,'gate-evidence-logs','android-build.log'),'utf8'),/apk-sha256=abc/);
+  // Fail: server-tsc fails while the build runs; the build is stopped, not waited out.
+  fs.writeFileSync(failFlag,'1');fs.rmSync(order);
+  const started=Date.now();
+  const bad=node('gate-evidence.mjs',args,{env:env(`echo $$ > '${path.join(root,'bg.pid')}'; exec sleep 60`),timeout:60000});
+  assert.notEqual(bad.status,0);
+  assert.ok(Date.now()-started<30000,'the build was not waited out: '+bad.stdout.slice(-1500));
+  assert.match(bad.stdout,/^arm64 build \(background\): stopping it, gate server-tsc failed$/m);
+  assert.equal(bgJson().state,'killed');
+  const pid=Number(fs.readFileSync(path.join(root,'bg.pid'),'utf8'));
+  assert.throws(()=>process.kill(pid,0),'the build process is gone');
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
 });

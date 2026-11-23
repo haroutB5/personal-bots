@@ -141,7 +141,9 @@ export function planProblems(e,v) {
 }
 export function gatePass(g,{skipAllowed=false}={}) {
   if(!g) return false;
-  if(g.mode==='skip') return skipAllowed===true && typeof g.reason==='string' && g.reason.trim().length>0 && typeof g.baseSha==='string' && Array.isArray(g.changedPaths) && g.changedPaths.length>0;
+  // A deferred gate (blocking tier) runs after the release; like a skip it passes only
+  // when the recomputed plan defers it, which planProblems has checked.
+  if(g.mode==='skip'||g.mode==='deferred') return skipAllowed===true && typeof g.reason==='string' && g.reason.trim().length>0 && typeof g.baseSha==='string' && Array.isArray(g.changedPaths) && g.changedPaths.length>0;
   if(g.exit!==0 || !Array.isArray(g.commands) || !g.commands.length || g.commands.some(c=>c.exit!==0)) return false;
   if(g.kind==='vitest') return Number.isInteger(g.counts?.passed) && g.counts.passed>0 && g.counts.failed===0;
   if(g.kind==='e2e') return Array.isArray(g.journeys) && g.journeys.length>=5 && new Set(g.journeys.map(j=>j.id)).size===g.journeys.length && g.journeys.every(j=>typeof j.id==='string' && j.id && j.ok===true) && g.counts?.failed===0 && g.counts.passed===g.journeys.length && g.counts.journeys===g.journeys.length;
@@ -163,9 +165,11 @@ export function validate(e,v) {
   errors.push(...planProblemsFound);
   const skipAllowed=planProblemsFound.length===0;
   check(new Set(gates.map(g=>g.id)).size===gates.length,'Duplicate gate ids');
-  for(const [id,kind] of Object.entries(required)) check(gates.some(g=>g.id===id && g.kind===kind),`Missing required gate ${id}`);
+  // Async evidence holds the deferred checks only; the blocking file holds the required set.
+  check([undefined,'blocking','async'].includes(e.tier),`Unknown evidence tier ${e.tier}`);
+  if(e.tier!=='async') for(const [id,kind] of Object.entries(required)) check(gates.some(g=>g.id===id && g.kind===kind),`Missing required gate ${id}`);
   for(const g of gates) {
-    check(['skip','whole','selected'].includes(g.mode),`Gate ${g.id} has no plan mode`);
+    check(['skip','whole','selected',...(e.tier==='blocking'?['deferred']:[])].includes(g.mode),`Gate ${g.id} has no plan mode`);
     check(gatePass(g,{skipAllowed}),`Gate failed: ${g.id}`);
   }
   check(e.ok===true,'Evidence says FAIL');
