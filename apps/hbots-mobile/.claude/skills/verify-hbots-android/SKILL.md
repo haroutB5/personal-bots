@@ -63,7 +63,7 @@ Fake bot triggers: `LONGMSG` (1009 character report), `CHOICES` (a choices quest
 
 ## Drive
 
-`drive.py` runs the flows in order: 1, 7, 9, 3, 2, seed, 5, 4, 6, 8. Each flow has its own file in `features/`. To run a subset use `--only 1,7`. Flow 4 needs the seed. Flow 8 needs the seed too, for the two questions it looks for.
+`drive.py` runs the flows in order: 1, 7, 9, 3, 2, seed, 5, 4, 6, 8, 10, 11, 12. Each flow has its own file in `features/`. To run a subset use `--only 1,7`. Flow 4 needs the seed. Flow 8 needs the seed too, for the two questions it looks for.
 
 Before every flow the driver resets to a known screen: it closes a message menu or plus sheet (Back), cancels an open reply bar, removes leftover photos from the tray, clears leftover draft text, and shows the Chats tab. It prints `reset: closed ...` when it had to clean something. Opening a chat also empties its composer (tray photos and draft text), because a draft is saved per chat and survives leaving it. Every flow then checks that the prompt the bot received equals the text the flow sent, exactly (the reply quote and attached-photo notes taken off, outer whitespace trimmed); a prompt that only contains it, such as a stray draft glued in front, is a FAIL. Every chat flow opens its own chat, so a failing flow (flow 9 with its reply bar open) cannot turn the next one red, and `--only 2` works alone.
 

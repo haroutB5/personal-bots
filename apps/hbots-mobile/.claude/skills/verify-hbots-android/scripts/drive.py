@@ -1014,9 +1014,98 @@ class Run:
             return "FAIL", "the throwaway server log has no 'would reboot' line"
         return "PASS", f"row shown to the owner; short tap gives the hold hint; 2.6 s hold opened the confirm sheet; Restart showed the restarting text (dry-run note {'shown' if dry else 'not shown'}); server logged 'would reboot'"
 
+    def secret_card(self, s):
+        return next((n for n in s.find(desc=r"Developer needs a secret")), None)
+
+    def secret_fields(self, s):
+        """(value field, address field, Save button) of the pending card, each None when not drawn. The value field sits right under
+        the key name, the address field right under the 'Allowed address' label; the composer is left out."""
+        card, name, label = self.secret_card(s), s.first(text="QA_FLOW12_KEY"), s.first(text="Allowed address")
+        edits = [n for n in s.find() if n.cls.endswith("EditText") and card and n.box[1] >= card.box[1] and n.box[3] <= card.box[3]]
+        value = next((n for n in edits if name and n.box[1] >= name.box[3] and (not label or n.box[3] <= label.box[1])), None)
+        address = next((n for n in edits if label and n.box[1] >= label.box[3]), None)
+        save = next((n for n in s.find(desc="Save secret") if n.clickable), None) or s.first(text="Save secret")
+        return value, address, save
+
+    def card_to_top(self, s):
+        """The card scrolls inside a fixed height: swipe down within it until the value field is drawn."""
+        for _ in range(4):
+            value, _, _ = self.secret_fields(s)
+            if value:
+                return s
+            card = self.secret_card(s)
+            if not card:
+                return s
+            x = (card.box[0] + card.box[2]) // 2
+            self.d.swipe(x, card.box[1] + 120, x, card.box[3] - 200, 400)
+            time.sleep(0.8)
+            s = self.d.dump()
+        return s
+
+    def card_to_bottom(self, s):
+        """Swipe up within the chat until the card's address field and Save button are both drawn."""
+        for _ in range(4):
+            _, address, save = self.secret_fields(s)
+            if address and save:
+                return s
+            self.d.swipe(540, 1500, 540, 900, 400)
+            time.sleep(0.8)
+            s = self.d.dump()
+        return s
+
+    def f12(self):
+        """Secret request card (1.67.53): Save with no address shows the problem above the buttons, drawn on screen; typing the address clears it and Save stores the key.
+        The pending card sets FLAG_SECURE, so the screenshots are black: the checks read the UI dump."""
+        self.open_bot("Developer")
+        self.say("Developer", 'MCPTOOL request_secret {"name":"QA_FLOW12_KEY","label":"QA flow 12 key","purpose":"verify flow 12"}')
+        s, ok = self.d.wait(lambda s: self.secret_card(s), 30)
+        if not ok:
+            return "FAIL", "no secret card (Developer needs a secret) appeared"
+        s = self.card_to_top(s)
+        value, _, _ = self.secret_fields(s)
+        if not value:
+            return "FAIL", "the card's value field never came into view"
+        self.d.tap(value)
+        time.sleep(0.4)
+        self.d.type("qa-flow12-value")
+        self.d.key(111)
+        time.sleep(0.8)
+        s = self.card_to_bottom(self.d.dump())
+        _, address, save = self.secret_fields(s)
+        if address and address.text not in ("", "https://api.vercel.com"):
+            return "FAIL", f"the value went into the address field ({address.text!r})"
+        if not save:
+            return "FAIL", "Save secret is not on screen after typing the value"
+        self.d.tap(save)
+        problem = r"Enter the address this key may be sent to.*"
+        s, ok = self.d.wait(lambda s: s.first(text=problem), 8)
+        open(f"{self.ev}/f12-problem-dump.txt", "w").write("\n".join(repr(n) for n in s.nodes if n.text or n.desc))
+        if not ok:
+            return "FAIL", "Save with no address showed no problem text on screen (the 1.67.52 card could leave it out of view)"
+        p = s.first(text=problem)
+        _, address, save = self.secret_fields(s)
+        if save and not (p.box[3] <= save.box[1] + 4 and save.box[1] - p.box[3] < 400):
+            return "FAIL", f"the problem text is not just above the buttons (text {p.box}, Save {save.box})"
+        if not address:
+            return "FAIL", "the address field is not on screen next to the problem"
+        self.d.tap(address)
+        time.sleep(0.4)
+        self.d.type("https://api.example.com")
+        self.d.key(111)
+        s, ok = self.d.wait(lambda s: not s.first(text=problem) and self.secret_fields(s)[2], 8)
+        if not ok:
+            return "FAIL", "typing a valid address did not clear the problem text"
+        self.d.tap(self.secret_fields(s)[2])
+        s, ok = self.d.wait(lambda s: s.first(text=r"You saved QA flow 12 key\..*"), 20)
+        self.shot("f12-saved")
+        if not ok:
+            shown = [x for x in s.texts() if "secret" in x.lower() or "try again" in x.lower() or "address" in x.lower()][:4]
+            return "FAIL", f"the card did not settle as saved; on screen: {shown}"
+        return "PASS", f"Save with no address showed the address problem on screen just above the buttons (text {p.box}); a valid address cleared it; Save settled the card as saved"
+
     def flows(self):
         order = [(1, "chat-send-reply", self.f1), (7, "swipe-quote", self.f7), (9, "long-press-reply", self.f9), (3, "camera-entry-once", self.f3), (2, "pick-three-photos", self.f2),
-                 ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8), (10, "tool-approval-card", self.f10), (11, "restart-laptop-dry-run", self.f11)]
+                 ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8), (10, "tool-approval-card", self.f10), (11, "restart-laptop-dry-run", self.f11), (12, "secret-card-problem", self.f12)]
         only = set(self.a.only.split(",")) if self.a.only else None
         seed_secs = 0
         self.order = order
