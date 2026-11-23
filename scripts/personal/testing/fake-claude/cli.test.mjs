@@ -142,6 +142,24 @@ NodeTest.test("calls in a chat handoff are not run either", async () => {
   NodeAssert.deepEqual(calls, [{ name: "ok_tool", arguments: { from: "owner" } }]);
 });
 
+NodeTest.test("MCPONCE runs once; its task's continuation answers without a call", async () => {
+  const call = 'MCPONCE ok_tool {"from":"owner"}';
+  const first = await prompt(call);
+  NodeAssert.deepEqual(calls, [{ name: "ok_tool", arguments: { from: "owner" } }]);
+  NodeAssert.match(first, /^MCPTOOL ok_tool ok: /);
+  const continuation = [
+    "[Task continuation]",
+    "Secret QA_KEY is now saved.",
+    "Continue the task below.",
+    `Title: ${call.slice(0, 40)}`,
+    `Objective:\n${call}`,
+  ].join("\n\n");
+  const reply = await prompt(continuation);
+  NodeAssert.equal(calls.length, 0, "no second call");
+  NodeAssert.doesNotMatch(reply, /bad JSON/);
+  NodeAssert.match(reply, /Got it\./);
+});
+
 NodeTest.test(
   "DELEGATE runs on the owner's prompt but not on a [Task continuation] that quotes it",
   async () => {

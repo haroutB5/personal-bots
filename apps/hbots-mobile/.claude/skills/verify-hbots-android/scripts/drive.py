@@ -1096,7 +1096,16 @@ class Run:
         if not ok:
             return "FAIL", "typing a valid address did not clear the problem text"
         self.d.tap(self.secret_fields(s)[2])
-        s, ok = self.d.wait(lambda s: s.first(text=r"You saved QA flow 12 key\..*"), 20)
+        saved = r"You saved QA flow 12 key\..*"
+        s, ok = self.d.wait(lambda s: s.first(text=saved), 20)
+        # The task resumes once the key is saved and its reply can push the settled card up the chat.
+        for _ in range(4 if not ok else 0):
+            self.d.swipe(540, 700, 540, 1500, 300)
+            time.sleep(0.6)
+            s = self.d.dump()
+            ok = s.first(text=saved)
+            if ok:
+                break
         self.shot("f12-saved")
         if not ok:
             shown = [x for x in s.texts() if "secret" in x.lower() or "try again" in x.lower() or "address" in x.lower()][:4]

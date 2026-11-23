@@ -838,7 +838,10 @@ Text after the placeholder.
   // later call can still be found. Nothing is ever run that did not parse.
   // Only the owner's message is searched (not the memory block or handoff in front of it).
   const toolCandidates = [];
-  if (!(ownerText.includes("MCPONCE ") && ownerText.startsWith("[Task continuation]"))) {
+  // A continuation that quotes an MCPONCE call answers like any other message (1.67.55: it used
+  // to report "bad JSON", which pushed flow 12's saved card off screen once the task resumed).
+  const onceSkipped = ownerText.includes("MCPONCE ") && ownerText.startsWith("[Task continuation]");
+  if (!onceSkipped) {
     const greedy = ownerText.match(/MCP(?:TOOL|ONCE) (\w+) (\{.*\})/);
     if (greedy) toolCandidates.push({ name: greedy[1], json: greedy[2] });
     const trigger = /MCP(?:TOOL|ONCE) (\w+) /g;
@@ -877,7 +880,7 @@ Text after the placeholder.
       }
     }
   }
-  if (toolCandidates.length > 0 || /MCP(?:TOOL|ONCE) \w+ \{/.test(ownerText)) {
+  if (toolCandidates.length > 0 || (!onceSkipped && /MCP(?:TOOL|ONCE) \w+ \{/.test(ownerText))) {
     const calls = [];
     let lastError;
     let firstName;
