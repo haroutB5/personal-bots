@@ -10,6 +10,9 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 // release run (GATE_TIER, GATE_ANDROID_BUILD, ...) must not leak into them (1.67.53 started the
 // real arm64 build once per fixture run). Each test sets what it needs explicitly.
 for(const key of Object.keys(process.env))if(key.startsWith('GATE_'))delete process.env[key];
+// So must the scope caps gate-evidence sets for its own heavy-job scope (HEAVY_JOB_MEMORY_HIGH=14G,
+// HEAVY_JOB_CPU_QUOTA, ...): the heavy-job tests check the defaults.
+for(const key of ['HEAVY_JOB_MEMORY_HIGH','HEAVY_JOB_MEMORY_MAX','HEAVY_JOB_SWAP_MAX','HEAVY_JOB_CPU_QUOTA'])delete process.env[key];
 const run=(cmd,args,opts={})=>spawnSync(cmd,args,{encoding:'utf8',timeout:15000,...opts});
 const node=(name,args,opts={})=>run(process.execPath,[path.join(here,name),...args],opts);
 const installScope=(repo)=>{
