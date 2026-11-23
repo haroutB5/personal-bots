@@ -245,6 +245,10 @@ export const CHECKS = {
       "scripts/personal/idle-classification-",
       "scripts/personal/dsh-runtime/",
       "scripts/personal/release-runner/",
+      // node tests that no other gate runs: the fake Claude CLI the e2e and emulator
+      // servers use, and the emulator QA flow selector
+      "scripts/personal/testing/fake-claude/",
+      "apps/hbots-mobile/.claude/skills/verify-hbots-android/",
     ],
     select: "releaseTools@1",
   },
@@ -424,6 +428,14 @@ const RELEASE_TOOL_GROUPS = [
   {
     prefix: "scripts/personal/copy-externals.mjs",
     tests: ["scripts/personal/node/test"],
+  },
+  {
+    prefix: "scripts/personal/testing/fake-claude/",
+    tests: ["scripts/personal/testing/fake-claude/cli.test.mjs"],
+  },
+  {
+    prefix: "apps/hbots-mobile/.claude/skills/verify-hbots-android/",
+    tests: ["apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/select-flows.test.mjs"],
   },
   {
     prefix: "scripts/personal/idle-classification-",
