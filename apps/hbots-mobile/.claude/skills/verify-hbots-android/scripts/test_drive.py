@@ -125,5 +125,31 @@ class F10Overlap(unittest.TestCase):
         self.assertEqual(drive.overlap_order(order, self.START), [self.START] + order)
 
 
+class F10DeclineTime(unittest.TestCase):
+    ASK = '2026-11-23T19:36:20.584Z 759442 prompt "SAFETYQ"'
+    DECLINE = ('2026-11-23T19:38:23.228Z 759442 safety answered {"subtype":"success","response":{"behavior":"deny",'
+               '"message":"No one answered this approval within 2 minutes. Retry as a simpler command"}}')
+
+    def test_time_is_the_log_time_not_when_the_screen_was_read(self):
+        self.assertAlmostEqual(drive.decline_seconds([self.ASK, "x", self.DECLINE]), 122.644, places=2)
+
+    def test_an_early_decline_is_seen(self):
+        early = self.DECLINE.replace("19:38:23.228", "19:36:50.584")
+        self.assertAlmostEqual(drive.decline_seconds([self.ASK, early]), 30.0, places=2)
+        self.assertLess(drive.decline_seconds([self.ASK, early]), drive.F10_MIN_DECLINE)
+
+    def test_the_prompt_of_the_same_cli_and_the_last_one_before_the_decline(self):
+        other = '2026-11-23T19:38:00.000Z 762143 prompt "SAFETYQ"'
+        user_deny = '2026-11-23T19:39:33.422Z 762143 safety answered {"response":{"behavior":"deny","message":"User declined tool execution."}}'
+        self.assertAlmostEqual(drive.decline_seconds([self.ASK, other, self.DECLINE, user_deny]), 122.644, places=2)
+        again = '2026-11-23T19:36:25.228Z 759442 prompt "SAFETYQ"'
+        self.assertAlmostEqual(drive.decline_seconds(['2026-11-23T19:30:00.000Z 759442 prompt "SAFETYQ"', again, self.DECLINE]), 118.0, places=2)
+
+    def test_none_without_both_lines(self):
+        self.assertIsNone(drive.decline_seconds([self.ASK]))
+        self.assertIsNone(drive.decline_seconds([self.DECLINE]))
+        self.assertIsNone(drive.decline_seconds([]))
+
+
 if __name__ == "__main__":
     unittest.main()

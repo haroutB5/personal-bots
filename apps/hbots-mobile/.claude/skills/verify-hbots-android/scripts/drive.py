@@ -2,6 +2,7 @@
 """verify-hbots-android driver. python3 -I drive.py --apk A --adb "adb -P .. -s .." --evidence DIR --srv DIR --link-host URL [--only 1,2]
 Exit 0 all flows PASS, 1 a flow FAILED, 2 setup failed or the link to the throwaway server was lost (no verdict)."""
 import argparse
+import datetime
 import json
 import os
 import re
@@ -19,6 +20,8 @@ F10_FILLERS = (1, 7, 9, 3, 2, 11, 13, 12)
 # Seconds each filler takes with its reset (fast3, 23 Nov 2026); no filler starts that would end after this.
 F10_TYPICAL = {1: 8, 7: 10, 9: 13, 3: 6, 2: 14, 11: 14, 13: 17, 12: 31}
 F10_DECLINE_AT = 116
+# The server declines 2 minutes after the request; the fake CLI logs the request and the answer with times.
+F10_MIN_DECLINE = 119
 sys.path.insert(0, HERE)
 from ui import Device  # noqa: E402
 
@@ -80,6 +83,27 @@ def split(a, b):
 
 def split_text(x):
     return f"{x['wall']:.1f} s = {x['dumps']} dumps {x['dump_s']:.1f} s + {x['adb']} adb {x['adb_s']:.1f} s + sleeps {x['sleep_s']:.1f} s + host {x['host_s']:.1f} s"
+
+
+LOG_TIME = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)Z (\d+) ")
+
+
+def decline_seconds(lines):
+    """Seconds between the SAFETYQ prompt and the server's auto-decline of its approval, from the fake CLI's own log times:
+    the last 'safety answered' line that carries the timeout advice, and the last SAFETYQ prompt of the same CLI before it.
+    None when the log does not show both. The time the screen was read does not count: a card declined early and
+    only looked at after 2 minutes must not pass."""
+    stamp = lambda m: datetime.datetime.fromisoformat(m.group(1) + "+00:00").timestamp()
+    for i in range(len(lines) - 1, -1, -1):
+        m = LOG_TIME.match(lines[i])
+        if not (m and " safety answered " in lines[i] and "No one answered this approval" in lines[i]):
+            continue
+        for j in range(i - 1, -1, -1):
+            a = LOG_TIME.match(lines[j])
+            if a and a.group(2) == m.group(2) and prompt_text(lines[j]) == "SAFETYQ":
+                return stamp(m) - stamp(a)
+        return None
+    return None
 
 
 def field_is_draft(field, text):
@@ -1019,8 +1043,11 @@ class Run:
         self.shot("f10-timed-out")
         if not ok:
             return "FAIL", f"no auto-decline after {waited}s"
-        if waited < 110:
-            return "FAIL", f"the card was declined after {waited}s, before the 2 minutes it promises"
+        took = decline_seconds(self.fake_lines())
+        if took is None:
+            return "FAIL", "the fake CLI log does not show when the approval was asked and declined, so the 2 minutes cannot be checked"
+        if took < F10_MIN_DECLINE:
+            return "FAIL", f"the server declined the card {took:.0f}s after it was asked, before the 2 minutes it promises (seen on screen at {waited}s)"
         self.leave_chat()
         self.to_chats()
         s, row = self.d.wait(lambda s: next((n for n in s.find(desc=rf"{bot}, .*") if n.clickable), None), 10)
@@ -1028,7 +1055,7 @@ class Run:
         if row and "Needs approval" in row.desc:
             return "FAIL", f"the {bot} Chats row still reads Needs approval after the request resolved"
         during = f" ({bot} chat; flows {','.join(map(str, self.f10_filled))} ran during the wait)" if self.f10_early else ""
-        return "PASS", f"unanswered card auto-declined after ~{waited}s with the retry advice; row cleared{during}"
+        return "PASS", f"unanswered card auto-declined {took:.0f}s after it was asked (seen on screen at ~{waited}s) with the retry advice; row cleared{during}"
 
     def restart_row(self):
         for _ in range(8):
