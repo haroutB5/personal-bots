@@ -1,6 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 
 import type { SessionAuthMethod } from "./sessionAuth";
+import { clearRescueReboot } from "./settings/rescueRebootStore";
 
 export type { SessionAuthMethod } from "./sessionAuth";
 
@@ -41,4 +42,5 @@ export async function loadSession(): Promise<StoredSession | null> {
 
 export async function clearSession(): Promise<void> {
   await SecureStore.deleteItemAsync(SESSION_STORAGE_ID);
+  await clearRescueReboot();
 }

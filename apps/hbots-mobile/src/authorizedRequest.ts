@@ -27,3 +27,14 @@ export async function authorizedFetch(
   }
   return fetch(url, { ...init, headers });
 }
+
+/** Sends a request with a standalone bearer token (e.g. the out-of-band rescue reboot endpoint). */
+export async function bearerTokenFetch(
+  url: string | URL,
+  token: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
+}

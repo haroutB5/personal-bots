@@ -2,14 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
-import { SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
+import { RestartLaptopConfirmSheet } from "./RestartLaptopConfirmSheet";
 import { Notice } from "./SettingsUi";
 import {
-  RESTART_CANCEL_LABEL,
-  RESTART_CONFIRM_BODY,
-  RESTART_CONFIRM_LABEL,
-  RESTART_CONFIRM_TITLE,
+  RESTART_BACKUP_READY_HINT,
   RESTART_DRY_RUN_TEXT,
   RESTART_HOLD_HINT_TEXT,
   RESTART_HOLD_MS,
@@ -35,14 +32,25 @@ export function RestartLaptopRow({ native }: { readonly native: NativePersonal }
   const [sending, setSending] = useState(false);
   const [outcome, setOutcome] = useState<RestartOutcome | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [backupReady, setBackupReady] = useState(false);
   const [holdHint, setHoldHint] = useState(false);
 
-  // Opening Settings asks whether logind allows a restart, and lets the server
-  // remember this phone's credential for when its database fails.
+  // Opening Settings checks whether a backup restart path is cached, asks the
+  // server for preflight status, and warms the server's in-memory credential.
   useEffect(() => {
     let live = true;
+    void native.hasRescueReboot().then((ready) => {
+      if (live) setBackupReady(ready);
+    });
     void native.readRestartStatus().then((status) => {
-      if (live && status !== null) setRefusal(status.canRestart ? null : status.refusal);
+      if (!live) return;
+      if (status !== null) {
+        setRefusal(status.canRestart ? null : status.refusal);
+        if (status.rescue !== null) setBackupReady(true);
+      }
+      void native.hasRescueReboot().then((ready) => {
+        if (live) setBackupReady(ready);
+      });
     });
     return () => {
       live = false;
@@ -106,6 +114,7 @@ export function RestartLaptopRow({ native }: { readonly native: NativePersonal }
   };
 
   const width = fill.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] });
+  const rowHint = refusal !== null && !backupReady ? refusal : RESTART_ROW_HINT;
 
   return (
     <View>
@@ -132,8 +141,17 @@ export function RestartLaptopRow({ native }: { readonly native: NativePersonal }
             {RESTART_ROW_TITLE}
           </Text>
           <Text style={styles.rowHint} maxFontSizeMultiplier={1.4}>
-            {refusal ?? RESTART_ROW_HINT}
+            {rowHint}
           </Text>
+          {backupReady ? (
+            <Text
+              testID={RESTART_TEST_IDS.backupReadyHint}
+              style={styles.backupHint}
+              maxFontSizeMultiplier={1.4}
+            >
+              {RESTART_BACKUP_READY_HINT}
+            </Text>
+          ) : null}
         </View>
       </Pressable>
       {holdHint && outcome === null ? (
@@ -167,49 +185,12 @@ export function RestartLaptopRow({ native }: { readonly native: NativePersonal }
           <Notice tone="danger">{outcome.message}</Notice>
         </View>
       ) : null}
-      <SheetShell
+      <RestartLaptopConfirmSheet
         visible={confirmOpen}
-        title={RESTART_CONFIRM_TITLE}
-        onClose={() => {
-          if (!sending) setConfirmOpen(false);
-        }}
-      >
-        <View style={styles.sheetBody} testID={RESTART_TEST_IDS.confirmSheet}>
-          <Text style={styles.sheetText} maxFontSizeMultiplier={1.4}>
-            {RESTART_CONFIRM_BODY}
-          </Text>
-          <Pressable
-            testID={RESTART_TEST_IDS.confirm}
-            onPress={() => void confirm()}
-            disabled={sending}
-            accessibilityRole="button"
-            accessibilityLabel={RESTART_CONFIRM_LABEL}
-            accessibilityState={{ disabled: sending, busy: sending }}
-            style={({ pressed }) => [
-              styles.button,
-              styles.buttonDanger,
-              pressed ? styles.pressed : null,
-              sending ? styles.disabled : null,
-            ]}
-          >
-            <Text style={styles.buttonDangerLabel} maxFontSizeMultiplier={1.3}>
-              {sending ? "Restarting…" : RESTART_CONFIRM_LABEL}
-            </Text>
-          </Pressable>
-          <Pressable
-            testID={RESTART_TEST_IDS.cancel}
-            onPress={() => setConfirmOpen(false)}
-            disabled={sending}
-            accessibilityRole="button"
-            accessibilityLabel={RESTART_CANCEL_LABEL}
-            style={({ pressed }) => [styles.button, pressed ? styles.pressed : null]}
-          >
-            <Text style={styles.buttonLabel} maxFontSizeMultiplier={1.3}>
-              {RESTART_CANCEL_LABEL}
-            </Text>
-          </Pressable>
-        </View>
-      </SheetShell>
+        sending={sending}
+        onConfirm={() => void confirm()}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </View>
   );
 }
@@ -235,6 +216,7 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 2 },
   rowTitle: { color: tokens.danger, fontSize: 16, fontWeight: "500" },
   rowHint: { color: tokens.textSecondary, fontSize: 13, lineHeight: 18 },
+  backupHint: { color: tokens.textTertiary, fontSize: 12, lineHeight: 16 },
   inlineHint: {
     color: tokens.textSecondary,
     fontSize: 13,
@@ -243,19 +225,4 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   notice: { paddingHorizontal: 12, paddingBottom: 10, gap: 4 },
-  sheetBody: { paddingHorizontal: 16, paddingBottom: 16, gap: 10 },
-  sheetText: { color: tokens.textSecondary, fontSize: 14, lineHeight: 20 },
-  button: {
-    minHeight: 48,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: tokens.border,
-  },
-  buttonDanger: { backgroundColor: tokens.danger, borderColor: tokens.danger },
-  buttonDangerLabel: { color: tokens.bg, fontSize: 15, fontWeight: "600" },
-  buttonLabel: { color: tokens.text, fontSize: 15, fontWeight: "600" },
-  pressed: { opacity: 0.75 },
-  disabled: { opacity: 0.5 },
 });

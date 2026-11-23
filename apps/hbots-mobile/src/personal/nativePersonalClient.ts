@@ -50,17 +50,19 @@ import {
 } from "@hbots/personal-client/update/serverUpdate";
 
 import { parsePhoneSystemSummary, type PhoneSystemSummary } from "../computer/serverStats";
+import { loadRescueReboot, saveRescueReboot } from "../settings/rescueRebootStore";
 import {
   canRestartLaptop,
   parseRestartStatus,
+  performRestartWithRescueFallback,
   RESTART_LAPTOP_PATH,
+  RESTART_PRIMARY_TIMEOUT_MS,
   RESTART_REQUEST_TIMEOUT_MS,
-  restartOutcomeFromFailure,
-  restartOutcomeFromResponse,
+  RESTART_RESCUE_TIMEOUT_MS,
   type RestartOutcome,
   type RestartStatus,
 } from "../settings/restartLaptopModel";
-import { authorizedFetch } from "../authorizedRequest";
+import { authorizedFetch, bearerTokenFetch } from "../authorizedRequest";
 import { wipeOutgoingThread } from "../chat/composerSendModel";
 import { liveViewURLs, type LiveViewURLs } from "../computer/liveViewAccess";
 import { backoffMs } from "../connection";
@@ -179,6 +181,8 @@ export interface NativePersonal {
   readonly restartLaptop: () => Promise<RestartOutcome>;
   /** Whether logind allows a restart; also lets the server remember this credential. Null when unanswered. */
   readonly readRestartStatus: () => Promise<RestartStatus | null>;
+  /** Whether a cached backup rescue restart endpoint is stored on this phone. */
+  readonly hasRescueReboot: () => Promise<boolean>;
   /** Freshly ticketed browser and desktop live-view sockets. */
   readonly liveViews: () => Promise<LiveViewURLs>;
   readonly useConnectionState: () => SupervisorConnectionState;
@@ -401,6 +405,30 @@ export function createNativePersonal(
       setTimeout(resolve, ms);
     });
 
+  const ownerCanRestart = canRestartLaptop(stored.scope);
+
+  const readRestartStatus = async (): Promise<RestartStatus | null> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RESTART_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await authorizedFetch(
+        stored,
+        new URL(RESTART_LAPTOP_PATH, stored.httpBaseUrl),
+        { method: "GET", cache: "no-store", signal: controller.signal },
+      );
+      const body: unknown = await response.json().catch(() => null);
+      const status = parseRestartStatus(response.status, body);
+      if (status?.rescue !== null && status?.rescue !== undefined) {
+        void saveRescueReboot(status.rescue);
+      }
+      return status;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const loop = async () => {
     let attempt = 0;
     let lastDetail = "Can't reach your laptop.";
@@ -454,6 +482,11 @@ export function createNativePersonal(
           () => undefined,
         );
         setState(connectedState(generation.value));
+        if (ownerCanRestart) {
+          // Warm the server's in-memory credential cache and persist any rescue
+          // endpoint immediately on connect, before disk or server failures happen.
+          void readRestartStatus();
+        }
         let stopWatchdog: () => void = () => undefined;
         const liveness = new Promise<void>((resolve) => {
           let stopped = false;
@@ -595,41 +628,44 @@ export function createNativePersonal(
         clearTimeout(timer);
       }
     },
-    canRestartLaptop: canRestartLaptop(stored.scope),
-    restartLaptop: async () => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), RESTART_REQUEST_TIMEOUT_MS);
-      try {
-        const response = await authorizedFetch(
-          stored,
-          new URL(RESTART_LAPTOP_PATH, stored.httpBaseUrl),
-          { method: "POST", cache: "no-store", signal: controller.signal },
-        );
-        const body: unknown = await response.json().catch(() => null);
-        return restartOutcomeFromResponse(response.status, body);
-      } catch (cause) {
-        return restartOutcomeFromFailure(cause);
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-    readRestartStatus: async () => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), RESTART_REQUEST_TIMEOUT_MS);
-      try {
-        const response = await authorizedFetch(
-          stored,
-          new URL(RESTART_LAPTOP_PATH, stored.httpBaseUrl),
-          { method: "GET", cache: "no-store", signal: controller.signal },
-        );
-        const body: unknown = await response.json().catch(() => null);
-        return parseRestartStatus(response.status, body);
-      } catch {
-        return null;
-      } finally {
-        clearTimeout(timer);
-      }
-    },
+    canRestartLaptop: ownerCanRestart,
+    restartLaptop: () =>
+      performRestartWithRescueFallback({
+        postPrimary: async () => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), RESTART_PRIMARY_TIMEOUT_MS);
+          try {
+            const response = await authorizedFetch(
+              stored,
+              new URL(RESTART_LAPTOP_PATH, stored.httpBaseUrl),
+              { method: "POST", cache: "no-store", signal: controller.signal },
+            );
+            const body: unknown = await response.json().catch(() => null);
+            return { status: response.status, body };
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+        loadRescue: loadRescueReboot,
+        postRescue: async (config) => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), RESTART_RESCUE_TIMEOUT_MS);
+          try {
+            const response = await bearerTokenFetch(config.url, config.token, {
+              method: "POST",
+              cache: "no-store",
+              headers: { Accept: "application/json" },
+              signal: controller.signal,
+            });
+            const body: unknown = await response.json().catch(() => null);
+            return { status: response.status, body };
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+      }),
+    readRestartStatus,
+    hasRescueReboot: async () => (await loadRescueReboot()) !== null,
     liveViews: () => liveViewURLs(stored),
     useConnectionState: () => {
       const [state, setReactState] = useState<SupervisorConnectionState>(() =>

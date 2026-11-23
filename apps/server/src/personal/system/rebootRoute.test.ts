@@ -21,15 +21,21 @@ import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import type { DirectDbusCanRebootResult, DirectDbusRebootResult } from "./directDbusReboot.ts";
+import type { RebootDaemonResult } from "./rebootDaemonClient.ts";
 import {
   CAN_REBOOT_ARGV,
   PERSONAL_SYSTEM_REBOOT_PATH,
   REBOOT_ARGV,
   REBOOT_DELAY_MS,
   REBOOT_RATE_LIMIT_MS,
+  RESCUE_REBOOT_TOKEN_FILE_ENV,
+  RESCUE_REBOOT_URL_ENV,
+  loadRescueRebootConfigFromEnv,
   makePersonalSystemRebootRouteLayer,
   parseCanReboot,
   type RebootCommandResult,
+  type RescueRebootConfig,
 } from "./rebootRoute.ts";
 
 const URL_BASE = "http://t3.test";
@@ -54,6 +60,11 @@ afterEach(async () => {
 
 interface FixtureOptions {
   readonly canReboot?: RebootCommandResult;
+  readonly checkRebootDaemon?: () => Promise<RebootDaemonResult>;
+  readonly requestRebootDaemon?: () => Promise<RebootDaemonResult>;
+  readonly dbusCanReboot?: () => Promise<DirectDbusCanRebootResult>;
+  readonly dbusReboot?: () => Promise<DirectDbusRebootResult>;
+  readonly rescueConfig?: RescueRebootConfig | null;
   readonly dryRun?: boolean;
 }
 
@@ -86,6 +97,11 @@ const fixture = async (options: FixtureOptions = {}) => {
   let dryRun = options.dryRun ?? false;
 
   const routeLayer = makePersonalSystemRebootRouteLayer({
+    ...(options.checkRebootDaemon ? { checkRebootDaemon: options.checkRebootDaemon } : {}),
+    ...(options.requestRebootDaemon ? { requestRebootDaemon: options.requestRebootDaemon } : {}),
+    ...(options.dbusCanReboot ? { dbusCanReboot: options.dbusCanReboot } : {}),
+    ...(options.dbusReboot ? { dbusReboot: options.dbusReboot } : {}),
+    rescueConfig: options.rescueConfig ?? null,
     run: async (argv) => {
       commands.push(argv);
       if (argv === CAN_REBOOT_ARGV) {
@@ -154,6 +170,207 @@ describe("parseCanReboot", () => {
     expect(parseCanReboot('s "yes"\n')).toBe("yes");
     expect(parseCanReboot('s "challenge"')).toBe("challenge");
     expect(parseCanReboot("garbage")).toBeNull();
+  });
+});
+
+describe("loadRescueRebootConfigFromEnv", () => {
+  it("accepts strictly https:// URLs with a non-empty token file", () => {
+    const config = loadRescueRebootConfigFromEnv(
+      {
+        [RESCUE_REBOOT_URL_ENV]: "https://rescue.example.com/reboot",
+        [RESCUE_REBOOT_TOKEN_FILE_ENV]: "/fake/token",
+      },
+      () => "  secret-token-123 \n",
+    );
+    expect(config).toEqual({
+      url: "https://rescue.example.com/reboot",
+      token: "secret-token-123",
+    });
+  });
+
+  it("rejects http:// URLs, malformed URLs, missing files, and empty tokens", () => {
+    expect(
+      loadRescueRebootConfigFromEnv(
+        {
+          [RESCUE_REBOOT_URL_ENV]: "http://rescue.example.com/reboot",
+          [RESCUE_REBOOT_TOKEN_FILE_ENV]: "/fake/token",
+        },
+        () => "secret",
+      ),
+    ).toBeNull();
+
+    expect(
+      loadRescueRebootConfigFromEnv(
+        { [RESCUE_REBOOT_URL_ENV]: "not-a-url", [RESCUE_REBOOT_TOKEN_FILE_ENV]: "/fake/token" },
+        () => "secret",
+      ),
+    ).toBeNull();
+
+    expect(
+      loadRescueRebootConfigFromEnv(
+        {
+          [RESCUE_REBOOT_URL_ENV]: "https://rescue.example.com/reboot",
+          [RESCUE_REBOOT_TOKEN_FILE_ENV]: "/fake/token",
+        },
+        () => "   \n",
+      ),
+    ).toBeNull();
+
+    expect(
+      loadRescueRebootConfigFromEnv(
+        {
+          [RESCUE_REBOOT_URL_ENV]: "https://rescue.example.com/reboot",
+          [RESCUE_REBOOT_TOKEN_FILE_ENV]: "/missing/token",
+        },
+        () => {
+          throw new Error("ENOENT");
+        },
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("layered reboot transports and rescue handshake", () => {
+  it("uses hbots-rebootd first without touching D-Bus or busctl", async () => {
+    let daemonRebootCalls = 0;
+    let dbusCalls = 0;
+    const f = await fixture({
+      checkRebootDaemon: async () => ({ ok: true, status: 200, dryRun: false }),
+      requestRebootDaemon: async () => {
+        daemonRebootCalls += 1;
+        return { ok: true, status: 202, dryRun: false, rebootInMs: 1000 };
+      },
+      dbusCanReboot: async () => {
+        dbusCalls += 1;
+        return { ok: true, answer: "yes" };
+      },
+      dbusReboot: async () => {
+        dbusCalls += 1;
+        return { ok: true };
+      },
+      // Even if busctl is segfaulting, rebootd succeeds!
+      canReboot: { exitCode: 139, stdout: "", stderr: "Segmentation fault" },
+    });
+    const owner = await f.ownerBearer();
+    const status = await f.call("GET", bearer(owner.token));
+    expect(status.status).toBe(200);
+    expect(status.body.canReboot).toBe(true);
+    expect(status.body.transport).toBe("rebootd");
+    expect(dbusCalls).toBe(0);
+    expect(f.commands).toEqual([]);
+
+    const post = await f.call("POST", bearer(owner.token));
+    expect(post.status).toBe(202);
+    f.scheduled[0]!.task();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(daemonRebootCalls).toBe(1);
+    expect(dbusCalls).toBe(0);
+    expect(f.commands).toEqual([]);
+  });
+
+  it("falls back to direct D-Bus when hbots-rebootd is down, never spawning busctl", async () => {
+    let dbusReboots = 0;
+    const f = await fixture({
+      checkRebootDaemon: async () => ({
+        ok: false,
+        status: null,
+        dryRun: false,
+        error: "ENOENT",
+      }),
+      requestRebootDaemon: async () => ({
+        ok: false,
+        status: null,
+        dryRun: false,
+        error: "ENOENT",
+      }),
+      dbusCanReboot: async () => ({ ok: true, answer: "yes" }),
+      dbusReboot: async () => {
+        dbusReboots += 1;
+        return { ok: true };
+      },
+      // Simulate broken libsystemd-shared / segfaulting busctl
+      canReboot: { exitCode: 139, stdout: "", stderr: "Segmentation fault" },
+    });
+    const owner = await f.ownerBearer();
+    const status = await f.call("GET", bearer(owner.token));
+    expect(status.status).toBe(200);
+    expect(status.body.canReboot).toBe(true);
+    expect(status.body.transport).toBe("dbus");
+    expect(f.commands).toEqual([]);
+
+    const post = await f.call("POST", bearer(owner.token));
+    expect(post.status).toBe(202);
+    f.scheduled[0]!.task();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(dbusReboots).toBe(1);
+    expect(f.commands).toEqual([]);
+  });
+
+  it("falls back from hbots-rebootd to direct D-Bus during scheduled POST execution", async () => {
+    let dbusReboots = 0;
+    const f = await fixture({
+      checkRebootDaemon: async () => ({ ok: true, status: 200, dryRun: false }),
+      requestRebootDaemon: async () => ({
+        ok: false,
+        status: 500,
+        dryRun: false,
+        error: "daemon crashed",
+      }),
+      dbusReboot: async () => {
+        dbusReboots += 1;
+        return { ok: true };
+      },
+    });
+    const owner = await f.ownerBearer();
+    const post = await f.call("POST", bearer(owner.token));
+    expect(post.status).toBe(202);
+    f.scheduled[0]!.task();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(dbusReboots).toBe(1);
+    expect(f.logs.some((line) => line.includes("falling back to direct D-Bus"))).toBe(true);
+  });
+
+  it("returns rescue config ONLY to authenticated owners with environment:maintain", async () => {
+    const rescue: RescueRebootConfig = {
+      url: "https://rescue.example.com/reboot",
+      token: "rescue-secret-token",
+    };
+    const f = await fixture({
+      checkRebootDaemon: async () => ({ ok: true, status: 200, dryRun: false }),
+      rescueConfig: rescue,
+    });
+    const owner = await f.ownerBearer();
+    const ok = await f.call("GET", bearer(owner.token));
+    expect(ok.status).toBe(200);
+    expect(ok.body.rescue).toEqual(rescue);
+
+    // Unauthenticated gets 401 and no rescue config
+    const unauth = await f.call("GET");
+    expect(unauth.status).toBe(401);
+    expect(unauth.body.rescue).toBeUndefined();
+
+    // MCP client gets 401 and no rescue config
+    const mcpClient = await f.issue({
+      subject: "mcp-client",
+      method: "bearer-access-token",
+      scopes: [AuthOrchestrationReadScope, AuthEnvironmentMaintainScope],
+      ttl: Duration.hours(1),
+      client: { label: "Claude", deviceType: "bot" },
+    });
+    const mcp = await f.call("GET", bearer(mcpClient.token));
+    expect(mcp.status).toBe(401);
+    expect(mcp.body.rescue).toBeUndefined();
+
+    // Reader without environment:maintain gets 403 and no rescue config
+    const reader = await f.issue({
+      subject: "reader",
+      method: "bearer-access-token",
+      scopes: [AuthOrchestrationReadScope],
+      ttl: Duration.hours(1),
+    });
+    const forbidden = await f.call("GET", bearer(reader.token));
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body.rescue).toBeUndefined();
   });
 });
 

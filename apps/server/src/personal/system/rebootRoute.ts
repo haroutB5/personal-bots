@@ -1,10 +1,12 @@
-// @effect-diagnostics nodeBuiltinImport:off - the reboot runs busctl with a fixed argv through execFile (no shell), and the in-memory credential cache keys on a sha256 of the token.
+// @effect-diagnostics nodeBuiltinImport:off - reboot uses Unix sockets (hbots-rebootd + direct D-Bus), startup-cached rescue token read, sha256 credential cache, and busctl only as last-resort fallback.
 /**
  * `/api/personal/system/reboot`: the owner restarts the laptop from the phone.
  *
- * This is the way out when SQLite or the disk has failed (1.67.50: an
- * SQLITE_IOERR turned the drive read-only and no bot could be reached), so the
- * whole path stays free of DB and file writes:
+ * This is the way out when SQLite, the disk, or libsystemd-shared has failed
+ * (1.67.50: an SQLITE_IOERR turned the drive read-only; 23 Nov 2026: a RAM bit
+ * flip in libsystemd-shared page cache made busctl/systemctl/systemd-run
+ * segfault while Node stayed alive), so the whole path stays free of DB writes,
+ * per-request disk reads, and child processes:
  *
  * - Auth is the session store's own `verify`, which only reads the
  *   `auth_sessions` row. It does not go through `EnvironmentAuth`, because the
@@ -15,9 +17,16 @@
  *   internal reason (the database is broken), a remembered, unexpired
  *   credential still passes; an unknown one gets 503. A credential the store
  *   positively rejects (revoked, expired, bad signature) is forgotten. The phone
- *   GETs this path whenever Settings opens, which is what warms the memory.
- * - Logs go to stdout only (`console`), the rate limit and the last failure live
- *   in memory, and the reboot itself is `busctl` with a fixed argv.
+ *   GETs this path on WebSocket connect and when Settings opens, warming the
+ *   memory and caching the optional out-of-band rescue config.
+ * - Reboot execution is layered with zero `busctl` dependency on the primary
+ *   paths:
+ *     1. `hbots-rebootd` Unix socket (`/run/hbots-rebootd.sock`)
+ *     2. Direct pure-Node.js D-Bus over `/run/dbus/system_bus_socket`
+ *     3. `busctl` (`execFileRunner`) only if both socket paths fail
+ * - Optional out-of-band rescue config (`HBOTS_RESCUE_REBOOT_URL` +
+ *   `HBOTS_RESCUE_REBOOT_TOKEN_FILE`) is loaded ONCE at startup into RAM and
+ *   handed out on `GET` only to verified owner sessions.
  *
  * Only native owner credentials pass: `Bearer` or `DPoP` with
  * `environment:maintain`, the scope the phone's pairing grants and bots never
@@ -30,6 +39,9 @@
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
@@ -40,13 +52,26 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as SessionStore from "../../auth/SessionStore.ts";
 import { requestUrl } from "../../requestUrl.ts";
+import {
+  directDbusCanReboot,
+  directDbusReboot,
+  type DirectDbusCanRebootResult,
+  type DirectDbusRebootResult,
+} from "./directDbusReboot.ts";
+import {
+  checkRebootDaemonHealth,
+  requestDaemonReboot,
+  type RebootDaemonResult,
+} from "./rebootDaemonClient.ts";
 
 export const PERSONAL_SYSTEM_REBOOT_PATH = "/api/personal/system/reboot";
-/** The reply goes out first; logind is asked this long after. */
+/** The reply goes out first; reboot is asked this long after. */
 export const REBOOT_DELAY_MS = 1_000;
 /** One accepted restart per this window, in memory. */
 export const REBOOT_RATE_LIMIT_MS = 60_000;
 export const REBOOT_DRY_RUN_ENV = "HBOTS_REBOOT_DRY_RUN";
+export const RESCUE_REBOOT_URL_ENV = "HBOTS_RESCUE_REBOOT_URL";
+export const RESCUE_REBOOT_TOKEN_FILE_ENV = "HBOTS_RESCUE_REBOOT_TOKEN_FILE";
 const COMMAND_TIMEOUT_MS = 10_000;
 const MAX_REMEMBERED_CREDENTIALS = 32;
 const MAX_REMEMBERED_PROOFS = 512;
@@ -64,6 +89,13 @@ const LOGIND = [
 ] as const;
 export const CAN_REBOOT_ARGV: ReadonlyArray<string> = [...LOGIND, "CanReboot"];
 export const REBOOT_ARGV: ReadonlyArray<string> = [...LOGIND, "Reboot", "b", "false"];
+
+export type RebootTransport = "rebootd" | "dbus" | "busctl";
+
+export interface RescueRebootConfig {
+  readonly url: string;
+  readonly token: string;
+}
 
 export interface RebootCommandResult {
   readonly exitCode: number;
@@ -101,8 +133,56 @@ export const execFileRunner: RebootCommandRunner = (argv) =>
     );
   });
 
+/**
+ * Loads the optional out-of-band rescue reboot config ONCE at startup so
+ * requests never touch the disk (surviving read-only / failing storage).
+ * Strictly requires an `https://` URL and a non-empty token.
+ */
+export function loadRescueRebootConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  readFileSync: (filePath: string, encoding: BufferEncoding) => string = (p, enc) =>
+    NodeFS.readFileSync(p, enc),
+): RescueRebootConfig | null {
+  const rawUrl = env[RESCUE_REBOOT_URL_ENV]?.trim();
+  if (!rawUrl) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname.length === 0) {
+    return null;
+  }
+
+  const configuredTokenFile = env[RESCUE_REBOOT_TOKEN_FILE_ENV]?.trim();
+  const defaultBaseDir =
+    env["T3_STATE_DIR"]?.trim() ||
+    env["T3_HOME"]?.trim() ||
+    NodePath.join(NodeOS.homedir(), ".personal-bots", "dev");
+  const tokenFile =
+    configuredTokenFile && configuredTokenFile.length > 0
+      ? configuredTokenFile
+      : NodePath.join(defaultBaseDir, "userdata", "secrets", "reboot-rescue-token");
+
+  try {
+    const token = readFileSync(tokenFile, "utf8").trim();
+    if (token.length === 0) return null;
+    return { url: parsed.toString(), token };
+  } catch {
+    return null;
+  }
+}
+
 export interface RebootRouteDeps {
-  readonly run: RebootCommandRunner;
+  readonly checkRebootDaemon?: () => Promise<RebootDaemonResult>;
+  readonly requestRebootDaemon?: () => Promise<RebootDaemonResult>;
+  readonly dbusCanReboot?: () => Promise<DirectDbusCanRebootResult>;
+  readonly dbusReboot?: () => Promise<DirectDbusRebootResult>;
+  readonly run?: RebootCommandRunner;
+  /** Optional override for tests; when omitted, loaded once from env at layer creation. */
+  readonly rescueConfig?: RescueRebootConfig | null;
   readonly dryRun: () => boolean;
   readonly nowMs: () => number;
   readonly schedule: (task: () => void, delayMs: number) => void;
@@ -110,6 +190,10 @@ export interface RebootRouteDeps {
 }
 
 export const liveRebootRouteDeps: RebootRouteDeps = {
+  checkRebootDaemon: () => checkRebootDaemonHealth(),
+  requestRebootDaemon: () => requestDaemonReboot(),
+  dbusCanReboot: () => directDbusCanReboot(),
+  dbusReboot: () => directDbusReboot(),
   run: execFileRunner,
   dryRun: () => process.env[REBOOT_DRY_RUN_ENV] === "1",
   nowMs: () => Date.now(),
@@ -132,7 +216,7 @@ const commandFailureText = (result: RebootCommandResult): string => {
 };
 
 export type RebootPreflight =
-  | { readonly ok: true; readonly canReboot: string }
+  | { readonly ok: true; readonly canReboot: string; readonly transport: RebootTransport }
   | { readonly ok: false; readonly canReboot: string | null; readonly error: string };
 
 export async function rebootPreflight(run: RebootCommandRunner): Promise<RebootPreflight> {
@@ -155,7 +239,47 @@ export async function rebootPreflight(run: RebootCommandRunner): Promise<RebootP
       error: `logind refused: CanReboot is "${answer}", so this user cannot restart the laptop without a password.`,
     };
   }
-  return { ok: true, canReboot: answer };
+  return { ok: true, canReboot: answer, transport: "busctl" };
+}
+
+async function layeredPreflight(deps: RebootRouteDeps): Promise<RebootPreflight> {
+  let lastFailure: string | null = null;
+
+  // Tier 1: hbots-rebootd Unix socket (zero logind, zero busctl).
+  if (deps.checkRebootDaemon !== undefined) {
+    const health = await deps.checkRebootDaemon();
+    if (health.ok) {
+      return { ok: true, canReboot: "yes", transport: "rebootd" };
+    }
+    if (health.error) lastFailure = `hbots-rebootd unavailable: ${health.error}`;
+  }
+
+  // Tier 2: pure-Node direct D-Bus over /run/dbus/system_bus_socket (zero busctl).
+  if (deps.dbusCanReboot !== undefined) {
+    const dbus = await deps.dbusCanReboot();
+    if (dbus.ok) {
+      if (dbus.answer === "yes") {
+        return { ok: true, canReboot: "yes", transport: "dbus" };
+      }
+      return {
+        ok: false,
+        canReboot: dbus.answer,
+        error: `logind refused: CanReboot is "${dbus.answer}", so this user cannot restart the laptop without a password.`,
+      };
+    }
+    lastFailure = `D-Bus CanReboot failed: ${dbus.error}`;
+  }
+
+  // Tier 3: busctl fallback (only if both socket paths are absent or failed).
+  if (deps.run !== undefined) {
+    return rebootPreflight(deps.run);
+  }
+
+  return {
+    ok: false,
+    canReboot: null,
+    error: lastFailure ?? "No reboot transport is available on this laptop.",
+  };
 }
 
 const HEADERS = {
@@ -186,9 +310,14 @@ const tokenKey = (token: string) => NodeCrypto.createHash("sha256").update(token
 
 /**
  * The route factory. Its memory (credentials, DPoP proofs, rate limit, last
- * failure) belongs to the returned layer, so each test gets its own.
+ * failure, startup-cached rescue config) belongs to the returned layer, so each
+ * test gets its own.
  */
 export const makePersonalSystemRebootRouteLayer = (deps: RebootRouteDeps = liveRebootRouteDeps) => {
+  // Read rescue config ONCE at startup into RAM (never reading disk on request).
+  const rescueConfig: RescueRebootConfig | null =
+    deps.rescueConfig !== undefined ? deps.rescueConfig : loadRescueRebootConfigFromEnv();
+
   const credentials = new Map<string, RememberedCredential>();
   const seenProofs = new Map<string, number>();
   let lastAcceptedAtMs: number | null = null;
@@ -325,19 +454,82 @@ export const makePersonalSystemRebootRouteLayer = (deps: RebootRouteDeps = liveR
     return { ok: true, sessionId, remembered } as AuthOutcome;
   });
 
+  const executeLayeredReboot = async () => {
+    const errors: string[] = [];
+
+    // Tier 1: hbots-rebootd Unix socket
+    if (deps.requestRebootDaemon !== undefined) {
+      try {
+        const res = await deps.requestRebootDaemon();
+        if (res.ok) {
+          deps.log("hbots-rebootd accepted the reboot");
+          return;
+        }
+        const msg = `hbots-rebootd failed: ${res.error ?? `HTTP ${res.status ?? "error"}`}`;
+        errors.push(msg);
+        deps.log(`${msg}; falling back to direct D-Bus`);
+      } catch (cause) {
+        const msg = `hbots-rebootd failed: ${String(cause)}`;
+        errors.push(msg);
+        deps.log(`${msg}; falling back to direct D-Bus`);
+      }
+    }
+
+    // Tier 2: pure-Node direct D-Bus over /run/dbus/system_bus_socket
+    if (deps.dbusReboot !== undefined) {
+      try {
+        const res = await deps.dbusReboot();
+        if (res.ok) {
+          deps.log("logind accepted the reboot over D-Bus");
+          return;
+        }
+        const msg = `D-Bus Reboot failed: ${res.error}`;
+        errors.push(msg);
+        deps.log(msg);
+      } catch (cause) {
+        const msg = `D-Bus Reboot failed: ${String(cause)}`;
+        errors.push(msg);
+        deps.log(msg);
+      }
+    }
+
+    // Tier 3: busctl fallback
+    if (deps.run !== undefined) {
+      try {
+        const result = await deps.run(REBOOT_ARGV);
+        if (result.exitCode === 0) {
+          deps.log("logind accepted the reboot");
+          return;
+        }
+        const msg = `logind refused the reboot: ${commandFailureText(result)}`;
+        errors.push(msg);
+        deps.log(msg);
+      } catch (cause) {
+        const msg = `the reboot command failed: ${String(cause)}`;
+        errors.push(msg);
+        deps.log(msg);
+      }
+    }
+
+    lastError =
+      errors.length > 0 ? errors.join(" | ") : "No reboot transport succeeded on this laptop.";
+    deps.log(`all reboot transports failed: ${lastError}`);
+  };
+
   const status = HttpRouter.add(
     "GET",
     PERSONAL_SYSTEM_REBOOT_PATH,
     Effect.gen(function* () {
       const auth = yield* authenticate();
       if (!auth.ok) return yield* refuse(auth.status, auth.error);
-      const preflight = yield* Effect.promise(() => rebootPreflight(deps.run));
+      const preflight = yield* Effect.promise(() => layeredPreflight(deps));
       return yield* json(200, {
         ok: true,
         canReboot: preflight.ok,
-        ...(preflight.ok ? {} : { error: preflight.error }),
+        ...(preflight.ok ? { transport: preflight.transport } : { error: preflight.error }),
         dryRun: deps.dryRun(),
         lastError,
+        ...(rescueConfig !== null ? { rescue: rescueConfig } : {}),
       });
     }),
   );
@@ -356,7 +548,7 @@ export const makePersonalSystemRebootRouteLayer = (deps: RebootRouteDeps = liveR
           `A restart was already asked for. Try again in ${waitSeconds} s if the laptop did not restart.`,
         );
       }
-      const preflight = yield* Effect.promise(() => rebootPreflight(deps.run));
+      const preflight = yield* Effect.promise(() => layeredPreflight(deps));
       if (!preflight.ok) {
         lastError = preflight.error;
         deps.log(`preflight refused: ${preflight.error}`);
@@ -366,27 +558,14 @@ export const makePersonalSystemRebootRouteLayer = (deps: RebootRouteDeps = liveR
       lastError = null;
       const dryRun = deps.dryRun();
       deps.log(
-        `accepted from session ${auth.sessionId}${auth.remembered ? " (remembered credential)" : ""}; ${dryRun ? "dry run" : "rebooting"} in ${REBOOT_DELAY_MS} ms`,
+        `accepted from session ${auth.sessionId}${auth.remembered ? " (remembered credential)" : ""} via ${preflight.transport}; ${dryRun ? "dry run" : "rebooting"} in ${REBOOT_DELAY_MS} ms`,
       );
       deps.schedule(() => {
         if (deps.dryRun()) {
-          deps.log(`would reboot: ${REBOOT_ARGV.join(" ")}`);
+          deps.log(`would reboot (${preflight.transport})`);
           return;
         }
-        void deps.run(REBOOT_ARGV).then(
-          (result) => {
-            if (result.exitCode === 0) {
-              deps.log("logind accepted the reboot");
-              return;
-            }
-            lastError = `logind refused the reboot: ${commandFailureText(result)}`;
-            deps.log(lastError);
-          },
-          (cause: unknown) => {
-            lastError = `the reboot command failed: ${String(cause)}`;
-            deps.log(lastError);
-          },
-        );
+        void executeLayeredReboot();
       }, REBOOT_DELAY_MS);
       return yield* json(202, {
         ok: true,
