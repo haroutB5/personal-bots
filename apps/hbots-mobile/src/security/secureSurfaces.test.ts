@@ -17,6 +17,18 @@ describe("FLAG_SECURE surfaces", () => {
     expect(app).toMatch(/<AppLockGate\b[\s\S]*?>\s*<AppShell/);
   });
 
+  it("the Computer tab locks only for a password field or a sensitive-site pause", () => {
+    const screen = source("../computer/ComputerScreen.tsx");
+    expect(screen, "ComputerScreen must not lock FLAG_SECURE unconditionally").not.toContain(
+      "useSecureScreen(true)",
+    );
+    expect(screen).toMatch(
+      /useSecureScreen\(\s*computerScreenSecure\(\{[\s\S]*?passwordFieldOpen: passwordFields > 0,[\s\S]*?sensitivePauseShown: pause !== null,/,
+    );
+    const live = source("../computer/ComputerLiveView.tsx");
+    expect(live).toContain("liveViewPasswordOpen({ keyboardOpen, field })");
+  });
+
   it("settings screens do not unconditionally block screenshots with useSecureScreen(true)", () => {
     for (const file of [
       "../settings/SettingsScreen.tsx",

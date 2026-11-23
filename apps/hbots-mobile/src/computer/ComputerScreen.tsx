@@ -66,6 +66,7 @@ import {
   computerActions,
   computerDotTone,
   computerHeader,
+  computerScreenSecure,
   desktopQueue,
   desktopEvents,
   liveViewMode,
@@ -90,7 +91,6 @@ export function ComputerScreen({
 }) {
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
-  useSecureScreen(true);
   const environmentId = native.environmentId as EnvironmentId;
   const feed = native.computer.useComputerFeed(environmentId);
   const desktopStatus = native.computer.useDesktopStatus(environmentId);
@@ -136,6 +136,10 @@ export function ComputerScreen({
   const [pausedDriver, setPausedDriver] = useState<ReturnType<typeof browserDriver> | null>(null);
   const [address, setAddress] = useState("");
   const liveRef = useRef<ComputerLiveViewHandle>(null);
+  // Live views with their hidden field open for a password (inline and full screen can both mount).
+  const [passwordFields, setPasswordFields] = useState(0);
+  const passwordField = (open: boolean) =>
+    setPasswordFields((count) => Math.max(0, count + (open ? 1 : -1)));
   const [appActive, setAppActive] = useState(AppState.currentState === "active");
 
   useEffect(() => {
@@ -205,6 +209,13 @@ export function ComputerScreen({
   const help = status?.helpRequest ?? null;
   const pause = activeEgressPause(status);
   const helpOpen = help !== null || pause !== null;
+  useSecureScreen(
+    computerScreenSecure({
+      focused,
+      passwordFieldOpen: passwordFields > 0,
+      sensitivePauseShown: pause !== null,
+    }),
+  );
   const desktopAvailable = desktopStatus?.available !== false;
 
   const progress = takeProgress({ take, shown, youBrowser });
@@ -522,6 +533,7 @@ export function ComputerScreen({
                 mode="browser"
                 url={urls?.browser ?? null}
                 interactive={youBrowser}
+                onPasswordField={passwordField}
                 fullScreen={false}
                 paused={!liveActive}
                 attemptKey={urlEpoch}
@@ -747,6 +759,7 @@ export function ComputerScreen({
               mode="browser"
               url={urls?.browser ?? null}
               interactive={youBrowser}
+              onPasswordField={passwordField}
               fullScreen
               paused={!appActive}
               attemptKey={urlEpoch}

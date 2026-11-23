@@ -18,10 +18,12 @@ import {
   computerActions,
   computerDotTone,
   computerHeader,
+  computerScreenSecure,
   desktopEvents,
   desktopQueue,
   formatFileRow,
   liveKeyboardStep,
+  liveViewPasswordOpen,
   liveViewMode,
   pageAddressLabel,
   takeControlView,
@@ -940,5 +942,36 @@ describe("takeStep", () => {
     ],
   ] as const)("%s", (_name, state, event, expected) => {
     expect(takeStep(state, event)).toEqual(expected);
+  });
+});
+
+describe("computerScreenSecure", () => {
+  const base = { focused: true, passwordFieldOpen: false, sensitivePauseShown: false };
+
+  it("leaves the Computer tab open to normal screenshots", () => {
+    expect(computerScreenSecure(base)).toBe(false);
+  });
+
+  it("locks while the live-view password field is open", () => {
+    expect(computerScreenSecure({ ...base, passwordFieldOpen: true })).toBe(true);
+  });
+
+  it("locks while a sensitive-site pause is shown", () => {
+    expect(computerScreenSecure({ ...base, sensitivePauseShown: true })).toBe(true);
+  });
+
+  it("does not lock other tabs while the Computer tab is in the background", () => {
+    expect(
+      computerScreenSecure({ focused: false, passwordFieldOpen: true, sensitivePauseShown: true }),
+    ).toBe(false);
+  });
+});
+
+describe("liveViewPasswordOpen", () => {
+  it("is open only while the keyboard is up for a password field", () => {
+    expect(liveViewPasswordOpen({ keyboardOpen: true, field: "password" })).toBe(true);
+    expect(liveViewPasswordOpen({ keyboardOpen: false, field: "password" })).toBe(false);
+    expect(liveViewPasswordOpen({ keyboardOpen: true, field: "text" })).toBe(false);
+    expect(liveViewPasswordOpen({ keyboardOpen: true, field: "email" })).toBe(false);
   });
 });

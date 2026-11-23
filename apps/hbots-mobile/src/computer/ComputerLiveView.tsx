@@ -17,7 +17,11 @@ import {
 
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
 import { tokens } from "../shell/tokens";
-import { liveKeyboardStep, type LiveKeyboardEvent } from "./computerScreenModel";
+import {
+  liveKeyboardStep,
+  liveViewPasswordOpen,
+  type LiveKeyboardEvent,
+} from "./computerScreenModel";
 import {
   browserInput,
   desktopInput,
@@ -50,6 +54,7 @@ export function ComputerLiveView({
   onClosed,
   onFrameSize,
   onNeedsURL,
+  onPasswordField,
 }: {
   readonly ref?: Ref<ComputerLiveViewHandle>;
   readonly mode: LiveViewMode;
@@ -64,6 +69,8 @@ export function ComputerLiveView({
   /** The last frame's size, for the picture-in-picture window's shape. */
   readonly onFrameSize?: (size: { readonly width: number; readonly height: number }) => void;
   readonly onNeedsURL: () => void;
+  /** True while the hidden field is open for a password, false when it closes or unmounts. */
+  readonly onPasswordField?: (open: boolean) => void;
 }) {
   const liveRef = useRef<LiveViewHandle>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
@@ -222,6 +229,16 @@ export function ComputerLiveView({
     return () => subscription.remove();
     // eslint-disable-next-line react/exhaustive-effect-dependencies -- stepKeyboard reads only refs
   }, []);
+
+  const passwordOpen = interactive && liveViewPasswordOpen({ keyboardOpen, field });
+  const onPasswordFieldRef = useRef(onPasswordField);
+  // eslint-disable-next-line react/refs -- latest-value ref read by the effect cleanup
+  onPasswordFieldRef.current = onPasswordField;
+  useEffect(() => {
+    if (!passwordOpen) return;
+    onPasswordFieldRef.current?.(true);
+    return () => onPasswordFieldRef.current?.(false);
+  }, [passwordOpen]);
 
   const focusChanged = (event: NativeSyntheticEvent<FocusChangedEvent>) => {
     const next = event.nativeEvent;

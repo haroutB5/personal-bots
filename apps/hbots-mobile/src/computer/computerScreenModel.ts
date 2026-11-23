@@ -256,6 +256,27 @@ export function takeControlView(input: {
   }
 }
 
+/**
+ * FLAG_SECURE for the Computer tab: only while a password is being typed into
+ * the live view or a sensitive-site pause is on screen. The rest of the tab
+ * takes normal phone screenshots and recordings.
+ */
+export function computerScreenSecure(input: {
+  readonly focused: boolean;
+  readonly passwordFieldOpen: boolean;
+  readonly sensitivePauseShown: boolean;
+}): boolean {
+  return input.focused && (input.passwordFieldOpen || input.sensitivePauseShown);
+}
+
+/** Whether the live view's hidden field is open for a password. */
+export function liveViewPasswordOpen(input: {
+  readonly keyboardOpen: boolean;
+  readonly field: string;
+}): boolean {
+  return input.keyboardOpen && input.field === "password";
+}
+
 /** A sensitive-site pause, unless another thread's help card is the active one. */
 export function activeEgressPause(status: PersonalBrowserStatus | null) {
   const pause = egressPause(status);
