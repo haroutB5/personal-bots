@@ -29,10 +29,12 @@ Harout, 23 Nov 2026: "Ship email, skip drain mode". Bots read and draft Harout's
 
 ## Verification
 
-- Server, mobile and tool tests: the whole gate suite on the tested commit (blocking, untiered because of the migration).
-- The review findings, re-checked on the merged code: `dev-team/qa/hbots-16754/FINDINGS.md`.
-- Live probe against a real Thunderbird 153 ESR and Commonpost 0.26.1 in a throwaway HOME (send, delete and forward refused, a draft saved, nothing sent): `dev-team/qa/hbots-16754/probe/`.
-- Emulator QA of the x86 build, including the Integrations and Email screens: `dev-team/qa/hbots-16754/`.
+- **Whole gate suite (untiered because of migration 161, `dev-team/qa/hbots-16754/gates.log`):** PASS on `fdbd73c95a40`, 813 s wall including the background arm64 build, at CPU budget 5 with the arm64 build started only after e2e passed. server-tests 754 s (407 files, 12 jobs), release-tools 530 s, e2e 297 s (12 journeys), web-tests 108 s, hbots-mobile 90 s, personal-client 54 s, server-tsc 45 s, web-tsc 22 s, parity 13 s; hbots-mobile-kotlin skipped by scope. Earlier runs at the default budget failed only e2e: two journeys ran over their 30 s limit at peak load 21. On the same commits run alone, e2e passed 12/12 at normal speed, so the failures were load, not code. A third run was cut by a laptop power loss at 12:44Z; this run is a fresh re-stage after the reboot.
+- **arm64 release APK (background, after e2e passed):** 141 s; `native fingerprint unchanged (b56145544c4c)`, prebuild skipped. The signer check passed; sha256 `d8aaa9bad7f55eac01d7e39607d5e0d86382471d243bfe2a7e1829aadbe7f6f0`.
+- **x86 QA APK:** 68 s; it parked the arm64 tree instead of wiping it.
+- **Review findings 1-6 and 8, re-checked on the merged code:** `dev-team/qa/hbots-16754/FINDINGS.md`. All fixed except 6c (a raw add-on reason on the unsupported view, Low, left open).
+- **Live probe** against a real Thunderbird 153 ESR and Commonpost 0.26.1 in a throwaway HOME (9 tools offered; send, delete and forward refused; a draft saved; nothing sent): `dev-team/qa/hbots-16754/probe/`.
+- **Emulator QA (`dev-team/qa/hbots-16754/emulator/`):** x86 QA APK of `fdbd73c95a40`, 13/13 flows PASS, including the new flow 13 (Settings, Integrations, Email on a laptop without the mail bridge: the repair state, no Found or Use these accounts, Back to Integrations) in dark mode at 1080x2355, 480 dpi (360x785 at DPR 3). Flow 13 ran as an uncommitted patch to `drive.py` and was restored afterwards. A first attempt stopped at flow 9 because the Cloudflare tunnel dropped (setup failure, not an app verdict). Boot 6 s from the snapshot; `.env` was parked and restored. No emulator was left running.
 
 ## Migration
 
@@ -41,3 +43,41 @@ Harout, 23 Nov 2026: "Ship email, skip drain mode". Bots read and draft Harout's
 ## Rollback
 
 Binary rollback to 1.67.53 (`c1ef49f837d9`). The 1.67.53 migrator ignores the newer id 161 and starts. Until Harout taps Use these accounts, no `gmail` or `outlook` row exists and the rollback is clean. After that, 1.67.53 cannot read those rows, and its connection list fails. Either restore the pre-migration backup, or delete the `gmail` and `outlook` rows from `personal_connections` with the server stopped. The Thunderbird laptop setup has its own undo script.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=fdbd73c95a40abdb9f063af80eb2b03d075e37e0 release=fdbd73c95a40 json-sha256=fe3c9bd18f612e1e5debcfd74ca34495495ee0ae2ec10070346ed855d18dde17 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/src/mcp/toolkits/connections/handlers.test.ts, apps/server/src/mcp/toolkits/connections/handlers.ts, apps/server/src/mcp/toolkits/connections/tools.ts, apps/server/src/persistence/Migrations.ts, ...; selected 407 test files
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, selected: e2e inputs changed: apps/server/src/mcp/toolkits/connections/handlers.test.ts, apps/server/src/mcp/toolkits/connections/handlers.ts, apps/server/src/mcp/toolkits/connections/tools.ts, apps/server/src/persistence/Migrations.ts, ...; selected 12 journeys
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/dev-team-tools/linux-ports.test.mjs, scripts/personal/linux/hbots-mail/install-thunderbird.ts; selected 16 test files
+- not run by any gate: packages/contracts/src/personalConnections.test.ts
+
+<!-- gate-evidence:end -->
+
+<!-- gate-timing:begin -->
+
+```
+gate timing: 807 s wall, 1920 s if serial; budget 5 of 12 cores, server lanes 4; min MemAvailable 17503 MB, swap growth 0 MB, peak load 12.7
+  preflight            guards   start    0 s      7 s   1 job  PASS  |#
+  server-tests         selected start    7 s    754 s  12 jobs PASS  | ########################################################
+  server-tsc           whole    start  530 s     45 s   1 job  PASS  |                                       ###
+  web-tests            whole    start  699 s    108 s   1 job  PASS  |                                                    ########
+  web-tsc              whole    start  629 s     22 s   1 job  PASS  |                                               ##
+  e2e                  selected start   97 s    297 s   1 job  PASS  |       ######################
+  personal-client      whole    start  575 s     54 s   1 job  PASS  |                                           ####
+  hbots-mobile         whole    start    7 s     90 s   1 job  PASS  | #######
+  hbots-mobile-kotlin  skip     start    0 s      0 s   0 jobs SKIP  |
+  parity               whole    start  652 s     13 s   1 job  PASS  |                                                #
+  release-tools        selected start    0 s    530 s   1 job  PASS  |#######################################
+  arm64 build (bg)     android  start  394 s    141 s   1 job  PASS  |                             ##########
+```
+
+<!-- gate-timing:end -->
