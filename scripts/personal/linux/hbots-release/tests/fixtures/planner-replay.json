@@ -1944,7 +1944,8 @@
         "apps/server/src/orchestration-v2/Adapters/ClaudeAgentSdkQueryRunner.test.ts",
         "scripts/personal/testing/fake-claude/cli.test.mjs"
       ],
-      "expect": "hit"
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test"
     },
     {
       "id": "c170",
@@ -2902,11 +2903,11 @@
       "note": "fake provider used by e2e and server tests; own test cli.test.mjs",
       "changedPaths": ["scripts/personal/testing/fake-claude/cli.js"],
       "mustRun": ["scripts/personal/testing/fake-claude/cli.test.mjs"],
-      "expect": "hit",
+      "expect": "miss",
+      "missClass": "no-gate-runs-the-test",
       "plan": {
         "server-tests": "selected",
-        "e2e": "selected",
-        "release-tools": "selected"
+        "e2e": "selected"
       }
     },
     {
