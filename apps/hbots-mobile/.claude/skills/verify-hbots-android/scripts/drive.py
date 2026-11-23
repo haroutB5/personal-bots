@@ -1057,7 +1057,7 @@ class Run:
         """Secret request card (1.67.53): Save with no address shows the problem above the buttons, drawn on screen; typing the address clears it and Save stores the key.
         The pending card sets FLAG_SECURE, so the screenshots are black: the checks read the UI dump."""
         self.open_bot("Developer")
-        self.say("Developer", 'MCPTOOL request_secret {"name":"QA_FLOW12_KEY","label":"QA flow 12 key","purpose":"verify flow 12"}')
+        self.say("Developer", 'MCPONCE request_secret {"name":"QA_FLOW12_KEY","label":"QA flow 12 key","purpose":"verify flow 12"}')
         s, ok = self.d.wait(lambda s: self.secret_card(s), 30)
         if not ok:
             return "FAIL", "no secret card (Developer needs a secret) appeared"
