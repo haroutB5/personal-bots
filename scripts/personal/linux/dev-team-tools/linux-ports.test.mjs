@@ -25,10 +25,10 @@ test('profile reset refuses without approval; writes and cancels only fixture re
 });
 test('browser policy screens nested batch and all launch overrides',()=>{
  const source=`import importlib.util\ns=importlib.util.spec_from_file_location('ab',${JSON.stringify(path.join(dir,'ab.py'))})\nm=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nbad=[['connect','9222'],['open','about:blank','--profile=/tmp/x'],['batch','state save /tmp/x'],['batch','\\\\state save /tmp/x'],['close','--all'],['open','about:blank','--session','other'],['snapshot','--engine','firefox']]\nfor t in bad:\n try:m.screen(t)\n except m.Refused:pass\n else:raise AssertionError(t)\nm.screen(['snapshot','-i'])\n`;
- const r=spawnSync('python3',['-c',source],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);
+ const r=spawnSync('python3',['-c',source],{encoding:'utf8',env:{...process.env,PYTHONDONTWRITEBYTECODE:'1'}});assert.equal(r.status,0,r.stderr);
 });
 test('skill installer rejects BOM and verifies all installed files',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'astra-skills-'));try{
- const master=path.join(root,'master'),base=path.join(root,'plugins'),dest=path.join(base,'bot/.claude/skills/agent-browser');fs.mkdirSync(master);fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(master,'SKILL.md'),'---\nname: test\n---\n');const go=(expected,...args)=>{const r=spawnSync('python3',[path.join(dir,'install-skill.py'),'--master',master,'--base',base,...args],{encoding:'utf8'});assert.equal(r.status,expected,r.stderr);};go(0);go(0,'--check');fs.writeFileSync(path.join(dest,'SKILL.md'),'drift');go(1,'--check');fs.writeFileSync(path.join(master,'SKILL.md'),'\ufeff---\n');go(1);
+ const master=path.join(root,'master'),base=path.join(root,'plugins'),dest=path.join(base,'bot/.claude/skills/agent-browser');fs.mkdirSync(master);fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(master,'SKILL.md'),'---\nname: test\n---\n');const go=(expected,...args)=>{const r=spawnSync('python3',[path.join(dir,'install-skill.py'),'--master',master,'--base',base,...args],{encoding:'utf8',env:{...process.env,PYTHONDONTWRITEBYTECODE:'1'}});assert.equal(r.status,expected,r.stderr);};go(0);go(0,'--check');fs.writeFileSync(path.join(dest,'SKILL.md'),'drift');go(1,'--check');fs.writeFileSync(path.join(master,'SKILL.md'),'\ufeff---\n');go(1);
  }finally{fs.rmSync(root,{recursive:true});}
 });
