@@ -21,7 +21,11 @@ hbots_android_prepare() {
     echo "build-android: native fingerprint unchanged (${want:0:12}); prebuild skipped, version set"
     return 0
   fi
-  echo "build-android: native fingerprint ${have:+changed (${have:0:12} -> ${want:0:12})}${have:-new (${want:0:12})}; running expo prebuild --clean"
+  if [[ -n $have ]]; then
+    echo "build-android: native fingerprint changed (${have:0:12} -> ${want:0:12}); running expo prebuild --clean"
+  else
+    echo "build-android: native fingerprint new (${want:0:12}); running expo prebuild --clean"
+  fi
   rm -f "$stamp"
   EXPO_NO_GIT_STATUS=1 npx expo prebuild --clean --platform android
   printf '%s\n' "$want" >"$stamp"

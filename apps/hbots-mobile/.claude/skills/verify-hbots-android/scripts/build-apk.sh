@@ -4,6 +4,9 @@
 set -euo pipefail
 # The new laptop has no android.conf, so a bare shell has no SDK path (Gradle: "SDK location not found"). Same fallback as env.sh.
 export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}
+# Java: the shell's JAVA_HOME when it runs, else the fixed mise Temurin 21 the release finisher uses.
+[[ -n ${JAVA_HOME:-} && -x ${JAVA_HOME:-}/bin/java ]] || export JAVA_HOME=$HOME/.local/share/mise/installs/java/temurin-21
+export PATH=$JAVA_HOME/bin:$PATH
 out=${1:?usage: build-apk.sh <out.apk>}
 root=$(git rev-parse --show-toplevel)
 app=$root/apps/hbots-mobile

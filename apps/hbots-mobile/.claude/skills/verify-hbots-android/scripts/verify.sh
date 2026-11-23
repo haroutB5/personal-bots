@@ -10,9 +10,44 @@
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 VERIFY_WHY=""; RESULT_DONE=0; T_START=$(date +%s)
+ENV_HOLD=""
+# The doctor refuses a checkout with a .env (the throwaway QA server must not read live secrets),
+# but a release slot keeps one for the gates. The outer run parks every .env* file the doctor
+# looks for in a private folder beside the checkout and puts it back on exit: on success, on a
+# failure and on TERM or INT. A hold left by a killed run is restored first; if the checkout has
+# a .env again as well, the run refuses rather than overwrite either copy.
+env_files() { find "$1" -maxdepth 1 -name ".env*" ! -name "*.example" ! -name "*.sample" ! -name "*.template" 2>/dev/null; }
+env_restore() {
+  [[ -n "$ENV_HOLD" && -d "$ENV_HOLD" ]] || return 0
+  local f ok=1
+  for f in "$ENV_HOLD"/.env*; do
+    [[ -e "$f" ]] || continue
+    if [[ -e "$ENV_ROOT/$(basename "$f")" ]]; then ok=0; echo "verify: NOT restoring $(basename "$f"): the checkout has one again; the parked copy stays in $ENV_HOLD" >&2
+    else mv -n "$f" "$ENV_ROOT/" || ok=0; fi
+  done
+  [[ $ok -eq 1 ]] && rmdir "$ENV_HOLD" 2>/dev/null && echo "verify: .env restored to the checkout" >&2
+  ENV_HOLD=""
+}
 if [[ -z "${VERIFY_INNER:-}" ]]; then
   # A refusal (env.sh exit 2), a usage error or any early stop still ends with a RESULT line.
-  trap 'rc=$?; [[ $RESULT_DONE -eq 1 ]] || echo "RESULT SETUP-FAIL (${VERIFY_WHY:-the script stopped early, exit $rc, see the lines above}) in $(( $(date +%s) - T_START ))s total"' EXIT
+  trap 'rc=$?; env_restore; [[ $RESULT_DONE -eq 1 ]] || echo "RESULT SETUP-FAIL (${VERIFY_WHY:-the script stopped early, exit $rc, see the lines above}) in $(( $(date +%s) - T_START ))s total"' EXIT
+  trap 'exit 143' TERM; trap 'exit 130' INT
+  ENV_ROOT=$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null) || ENV_ROOT=""
+  if [[ -n "$ENV_ROOT" ]]; then
+    hold="$(dirname "$ENV_ROOT")/.$(basename "$ENV_ROOT").verify-env-hold"
+    if [[ -d "$hold" ]]; then
+      [[ -z "$(env_files "$ENV_ROOT")" ]] || { VERIFY_WHY="both the checkout and $hold have a .env; restore one by hand"; echo "verify: $VERIFY_WHY"; exit 2; }
+      ENV_HOLD=$hold; env_restore
+      [[ -d "$hold" ]] && { VERIFY_WHY="could not restore the .env left in $hold"; echo "verify: $VERIFY_WHY"; exit 2; }
+    fi
+    moved=$(env_files "$ENV_ROOT")
+    if [[ -n "$moved" ]]; then
+      mkdir -m 700 "$hold" || { VERIFY_WHY="cannot make $hold"; echo "verify: $VERIFY_WHY"; exit 2; }
+      ENV_HOLD=$hold
+      while IFS= read -r f; do mv -n "$f" "$hold/" || { VERIFY_WHY="cannot park $f"; echo "verify: $VERIFY_WHY"; exit 2; }; done <<< "$moved"
+      echo "verify: parked $(wc -l <<< "$moved") .env file(s) beside the checkout for the run; they are put back on exit" >&2
+    fi
+  fi
 fi
 # shellcheck disable=SC1091
 . "$HERE/env.sh"
@@ -31,7 +66,7 @@ if [[ -z "${VERIFY_INNER:-}" ]]; then
   child=$!
   trap 'kill -TERM "$child" 2>/dev/null' TERM INT
   wait "$child"; rc=$?
-  trap - TERM INT
+  trap 'exit 143' TERM; trap 'exit 130' INT
   [[ $rc -gt 128 ]] && wait "$child" 2>/dev/null
   inner=$(grep -E '^PID=' "$INFO.info" 2>/dev/null | cut -d= -f2-); slot=$(grep -E '^SLOT=' "$INFO.info" 2>/dev/null | cut -d= -f2-); ev=$(grep -E '^EV=' "$INFO.info" 2>/dev/null | cut -d= -f2-)
   mine=(); other=()

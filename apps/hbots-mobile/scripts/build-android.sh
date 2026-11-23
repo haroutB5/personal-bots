@@ -3,6 +3,11 @@
 # heavy-job.sh. The password is read from the properties file into the
 # environment; it is never an argument and never written to the project.
 set -euo pipefail
+# The same toolchain defaults as the verify skill's build-apk.sh: a bare shell (systemd, a bot
+# shell without mise) has no SDK path (Gradle: "SDK location not found") and may have no Java.
+export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}
+[[ -n ${JAVA_HOME:-} && -x ${JAVA_HOME:-}/bin/java ]] || export JAVA_HOME=$HOME/.local/share/mise/installs/java/temurin-21
+export PATH=$JAVA_HOME/bin:$PATH
 
 app_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 keystore=${HBOTS_KEYSTORE_PATH:-$HOME/.config/hbots-android/hbots-release.jks}
@@ -51,7 +56,7 @@ map=$app_dir/android/app/build/generated/sourcemaps/react/release/index.android.
 [[ -f $map ]] || fail "no bundle source map at $map"
 node "$app_dir/scripts/check-bundle-duplicates.ts" "$map"
 
-sdk=${ANDROID_HOME:-$HOME/Android/Sdk}
+sdk=$ANDROID_HOME
 apksigner=$(find "$sdk/build-tools" -mindepth 2 -maxdepth 2 -name apksigner -type f | sort -V | tail -n 1)
 [[ -x $apksigner ]] || fail "apksigner not found under $sdk/build-tools"
 
