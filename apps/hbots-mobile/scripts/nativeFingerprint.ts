@@ -61,7 +61,21 @@ export function fingerprintParts({ appDir, repoRoot, env }: FingerprintInput): s
       NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(path)).digest("hex"),
     ]);
   };
-  for (const name of APP_FILES) file(`app:${name}`, NodePath.join(appDir, name));
+  for (const name of APP_FILES) {
+    if (name === "package.json") packageJson(`app:${name}`, NodePath.join(appDir, name));
+    else file(`app:${name}`, NodePath.join(appDir, name));
+  }
+  // The app package.json without its "version": every release bumps it, and the native
+  // version comes from app-version.txt (applyVersion), so hashing it raw made every release's
+  // first build a clean prebuild (1.67.53).
+  function packageJson(label: string, path: string) {
+    if (!NodeFS.existsSync(path)) return parts.push([label, "absent"]);
+    const { version: _version, ...rest } = JSON.parse(NodeFS.readFileSync(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    parts.push([label, NodeCrypto.createHash("sha256").update(JSON.stringify(rest)).digest("hex")]);
+  }
   for (const dir of APP_DIRS)
     for (const rel of walk(NodePath.join(appDir, dir)).sort())
       file(`app:${dir}/${rel}`, NodePath.join(appDir, dir, rel));

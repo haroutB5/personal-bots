@@ -51,6 +51,25 @@ describe("nativeFingerprint", () => {
     expect(t.fingerprint()).toBe(before);
   });
 
+  it("ignores the app package.json version bump but not its dependencies", () => {
+    const t = tree();
+    t.write(
+      "apps/hbots-mobile/package.json",
+      '{"name":"@hbots/mobile","version":"1.67.52","dependencies":{"expo":"1.0.0"}}\n',
+    );
+    const before = t.fingerprint();
+    t.write(
+      "apps/hbots-mobile/package.json",
+      '{"name":"@hbots/mobile","version":"1.67.53","dependencies":{"expo":"1.0.0"}}\n',
+    );
+    expect(t.fingerprint()).toBe(before);
+    t.write(
+      "apps/hbots-mobile/package.json",
+      '{"name":"@hbots/mobile","version":"1.67.53","dependencies":{"expo":"1.0.1"}}\n',
+    );
+    expect(t.fingerprint()).not.toBe(before);
+  });
+
   it.each([
     ["the app config", "apps/hbots-mobile/app.config.ts"],
     ["a config plugin", "apps/hbots-mobile/plugins/withThing.cjs"],
