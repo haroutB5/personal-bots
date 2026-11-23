@@ -242,18 +242,34 @@ export function deriveDelegationCard(input: {
   readonly labelOf: (entry: WorkLogEntry) => string;
   /** "Waiting for Researcher" when the child is itself waiting on a bot. */
   readonly waitingFor?: string | null;
+  /** The child's chat has a turn running now: a re-invoked task is plain "Working" again. */
+  readonly turnLive?: boolean;
 }): DelegationCardModel {
   const { task } = input;
   const canCancel = !isTerminal(task);
   switch (task.status) {
     case "running": {
+      // The turn ended and a background job will wake the bot: nothing is
+      // current, the last turn's steps are all done.
+      const background = isTaskWaitingOnBackground(task) && input.turnLive !== true;
       const recent = currentTurnEntries(input.entries).slice(-MAX_STEPS);
       const steps = recent.map((entry, index): DelegationStep => ({
         id: entry.id,
         label: input.labelOf(entry),
-        state: entry.tone === "error" ? "failed" : index === recent.length - 1 ? "current" : "done",
+        state:
+          entry.tone === "error"
+            ? "failed"
+            : index === recent.length - 1 && !background
+              ? "current"
+              : "done",
       }));
-      return { tone: "live", status: "Working", steps, detail: null, canCancel };
+      return {
+        tone: "live",
+        status: background ? WORKING_IN_BACKGROUND_LABEL : "Working",
+        steps,
+        detail: null,
+        canCancel,
+      };
     }
     case "queued":
       return { tone: "neutral", status: "Queued", steps: [], detail: null, canCancel };
@@ -328,6 +344,29 @@ export function threadIdsWithEndedTasks(tasks: ReadonlyArray<PersonalTask>): Rea
   }
   for (const threadId of open) ended.delete(threadId);
   return ended;
+}
+
+/** The words the Bots row, the task card and the task's chat header share for {@link isTaskWaitingOnBackground}. */
+export const WORKING_IN_BACKGROUND_LABEL = "Working in background";
+
+/**
+ * The bot replied and its turn ended, but the task is still `running`: a
+ * background job (gates, a build, an emulator) will invoke it again. The
+ * server marks this with `waitingOnBackgroundSince` (taskSettling).
+ */
+export function isTaskWaitingOnBackground(task: Pick<PersonalTask, "status" | "result">): boolean {
+  return task.status === "running" && task.result?.waitingOnBackgroundSince !== undefined;
+}
+
+/** Chats of running tasks that wait on background work (see {@link isTaskWaitingOnBackground}). */
+export function threadIdsWaitingOnBackground(
+  tasks: ReadonlyArray<PersonalTask>,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const task of tasks) {
+    if (task.threadId !== null && isTaskWaitingOnBackground(task)) ids.add(task.threadId);
+  }
+  return ids;
 }
 
 /** Task statuses that keep a bot busy while its own turn is not running. */

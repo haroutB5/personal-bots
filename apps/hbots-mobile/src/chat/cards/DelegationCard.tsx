@@ -57,6 +57,11 @@ export function DelegationCard({
     entries,
     labelOf: (entry) => entry.label,
     waitingFor: context.waitingLabelFor(task.threadId),
+    turnLive:
+      childThread !== null &&
+      (childThread.latestTurn?.state === "running" ||
+        childThread.session?.status === "running" ||
+        childThread.session?.status === "starting"),
   });
   const card = hidden
     ? {

@@ -387,6 +387,7 @@ export function ChatScreen({
     contextUsage,
     nowMs: now,
     fallbackBotName: cachedBot?.name ?? null,
+    workingInBackground: cards.workingInBackground,
   });
   const chips = useMemo(
     () =>
@@ -894,7 +895,12 @@ export function ChatScreen({
           accessibilityHint="Shows what is in the context"
           style={styles.statusLine}
         >
-          <View style={[styles.stateDot, stateDotStyle(header.state)]} />
+          <View
+            style={[
+              styles.stateDot,
+              stateDotStyle(header.workingInBackground ? "working" : header.state),
+            ]}
+          />
           <Text style={styles.statusText} numberOfLines={2} maxFontSizeMultiplier={1.3}>
             <Text style={styles.statusState}>{header.stateLabel}</Text>
             {header.modelLabel === null ? null : ` · ${header.modelLabel}`}
