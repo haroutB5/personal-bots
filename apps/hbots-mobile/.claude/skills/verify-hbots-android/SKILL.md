@@ -1,6 +1,6 @@
 ---
 name: verify-hbots-android
-description: "Installs an x86_64 hbots APK on a throwaway Android emulator, pairs it with a throwaway server and a fake Claude bot, and drives nine daily-use flows the way a thumb does: chat send and reply, swipe-to-quote, long-press then Reply, one camera entry, three photos at once, work card for unread questions only, in-app versus push, open and back with a clean logcat. Run it before every phone release and before committing changes to the chat screen, composer, attachments, Work view, presence or push code. Does not cover a real arm64 phone, FCM, voice, Settings, Team, Files content or light mode."
+description: "Installs an x86_64 hbots APK on a throwaway Android emulator, pairs it with a throwaway server and a fake Claude bot, and drives fourteen daily-use flows (a phone release runs the core plus the touched flows before release and the rest after live) the way a thumb does: chat send and reply, swipe-to-quote, long-press then Reply, one camera entry, three photos at once, work card for unread questions only, in-app versus push, open and back with a clean logcat. Run it before every phone release and before committing changes to the chat screen, composer, attachments, Work view, presence or push code. Does not cover a real arm64 phone, FCM, voice, most of Settings, Team, Files content or light mode."
 ---
 
 # Verify hbots Android
@@ -8,8 +8,18 @@ description: "Installs an x86_64 hbots APK on a throwaway Android emulator, pair
 Surface: the hbots Android app (`apps/hbots-mobile`). One command installs an APK on a throwaway emulator, pairs it to a throwaway server, drives the flows in `features/`, and prints PASS or FAIL per flow with screenshots and logs.
 
 ```bash
-env -u NODE_ENV bash apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/verify.sh <x86_64.apk> [label] [--only 1,2]
+env -u NODE_ENV bash apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/verify.sh <x86_64.apk> [label] [--only 1,2 | --tier blocking|async --base <live release sha>]
 ```
+
+### Before the release and after live (1.67.56)
+
+A phone release runs `--tier blocking --base <live release>` before it arms. `select-flows.mjs` reads the release's diff (`git diff <base>..HEAD`) and picks:
+
+- **The core, always before the release:** setup (install the release APK, launch, pair over the tunnel, version shown), flow 1 (chat send and reply) and flow 8 (open and back through every tab, app alive, logcat FATAL and JS errors 0). Together they prove the app starts, pairs, talks to the new server and does not crash.
+- **The touched flows:** each flow whose screens, cards, client model or server code the diff changes (the rules are in `select-flows.mjs`, `RULES`). When flow 10 runs, flows 11 and 13 run too, because they fit inside its 2-minute wait for free.
+- **Every flow** when the change is shared or unsure: a migration, `nav/`, `App.tsx`, the app shell, contracts, client-runtime, a native module, the build, the lockfile, the skill's own scripts (`drive.py` is read per method), the fake Claude CLI or the release tools. An app source file with no rule is a test failure (`select-flows.test.mjs`), so a new folder must get a rule.
+
+The other flows run after the release went live, in the async tier: `tools/hbots-release-finish.sh --emulator-apk <x86_64 apk>` passes the APK to `tools/hbots-async-gates.mjs`, which runs `verify.sh --tier async` against the live release before the APK is published. A failed flow runs once more on its own. Only a flow that fails twice is a real failure, and it rolls the server back under the same guard as the async gates (live release is the tested one, no newer release armed or running, a tiered release, no migration). A setup or link failure (exit 2) never rolls back. Either way a failure publishes no APK and pushes nothing. `node select-flows.mjs --repo . --base <sha> --head HEAD` prints the split and why.
 
 Exit 0 is every flow PASS. Exit 1 is a failed flow. Exit 2 is a setup, device, doctor or link failure: a refusal, a usage error, a rig that is not free, or the link to the throwaway server dropping mid-run (below). The last line is always a RESULT line, also after a refusal: `RESULT PASS|FAIL|SETUP-FAIL (<why, for SETUP-FAIL>) in <total>s total, <queue>s waiting for a heavy-job slot, <work>s of work`. Judge speed by the work number.
 
@@ -67,7 +77,9 @@ Fake bot triggers: `LONGMSG` (1009 character report), `CHOICES` (a choices quest
 
 Before every flow the driver resets to a known screen: it closes a message menu or plus sheet (Back), cancels an open reply bar, removes leftover photos from the tray, clears leftover draft text, and shows the Chats tab. It prints `reset: closed ...` when it had to clean something. Opening a chat also empties its composer (tray photos and draft text), because a draft is saved per chat and survives leaving it. Every flow then checks that the prompt the bot received equals the text the flow sent, exactly (the reply quote and attached-photo notes taken off, outer whitespace trimmed); a prompt that only contains it, such as a stray draft glued in front, is a FAIL. Every chat flow opens its own chat, so a failing flow (flow 9 with its reply bar open) cannot turn the next one red, and `--only 2` works alone.
 
-`ui.py` reads a `uiautomator dump` in one adb round trip (about 2 s on the laptop). Handles that never move are cached. Waiting for the bot to receive a message polls the fake Claude log, and waiting for the in-app or push path polls the server log. Every other wait polls `uiautomator dump` (a sleep of 0.35 s plus the dump, so about 2.4 s per poll).
+`ui.py` reads the screen through one persistent dumper (`scripts/uidump/Dumper.java`, built with javac and d8 from the SDK on first use and cached in `~/.cache/hbots-verify-uidump`). It runs uiautomator.jar's own dump code in one `app_process` that stays connected, so a dump costs about 0.02-0.1 s instead of the 2.1 s of `uiautomator dump`, which starts a new process and waits a fixed second for idle each time (measured on 1.67.55: 190 dumps took 402 s, 60% of the flow time). It waits for the screen to be idle for 300 ms (`VERIFY_DUMP_IDLE_MS`), at most 3 s (`VERIFY_DUMP_GLOBAL_MS`). On an error it falls back to `uiautomator dump` for that read and restarts the dumper (at most 3 times). `VERIFY_FAST_DUMP=0` turns it off. Handles that never move are cached. Waiting for the bot to receive a message polls the fake Claude log, and waiting for the in-app or push path polls the server log. Every other wait polls the screen (a sleep of 0.35 s plus the dump).
+
+Flow 10's last leg waits for the server's real 2-minute auto-decline. The driver sends that card, runs flows 11 and 13 (Settings only: no Developer chat, no push, no Work tab) during the wait, then reopens the Developer chat, checks the card is still waiting, and watches the decline land (at least 110 s after the card, or it is a FAIL). `VERIFY_F10_OVERLAP=0` runs flow 10 straight through. `drive.json` and the `timing fN` lines split each flow into reset, link check and flow, and each of those into dumps, adb calls, sleeps and host time.
 
 ## Evidence
 

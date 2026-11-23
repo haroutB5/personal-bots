@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One command: install an x86_64 APK on a throwaway emulator, pair it with a throwaway server, drive the daily-use flows, keep evidence.
-# Usage: bash verify.sh <x86_64.apk> [label] [--only 1,2]    Exit 0 = every flow PASS, 1 = a flow FAILED, 2 = setup, device, link or doctor failed.
+# Usage: bash verify.sh <x86_64.apk> [label] [--only 1,2 | --tier blocking|async --base <live release sha>]    Exit 0 = every flow PASS, 1 = a flow FAILED, 2 = setup, device, link or doctor failed.
 # The last line is ALWAYS a RESULT line (PASS, FAIL or SETUP-FAIL), also after a refusal or a usage error.
 # Laptop route (default): the whole run holds ONE heavy-job slot. The wait for that slot is reported apart from work.
 # Rig route (HBOTS_VERIFY_DEVICE=rig): no heavy-job slot, because the emulator runs on the gaming PC. A rig that is not free is exit 2.
@@ -52,16 +52,39 @@ fi
 # shellcheck disable=SC1091
 . "$HERE/env.sh"
 APK=${1:-}
-[[ -n "$APK" ]] || { VERIFY_WHY="usage: verify.sh <x86_64.apk> [label] [--only 1,2]"; echo "$VERIFY_WHY"; exit 2; }
-LABEL=${2:-run}; ONLY=""
-[[ "${3:-}" == --only ]] && ONLY=${4:-}
+[[ -n "$APK" ]] || { VERIFY_WHY="usage: verify.sh <x86_64.apk> [label] [--only 1,2 | --tier blocking|async --base <live release sha>]"; echo "$VERIFY_WHY"; exit 2; }
+LABEL=${2:-run}; ONLY=""; TIER=""; BASE=""
+shift $(( $# < 2 ? $# : 2 ))
+while (( $# )); do
+  case "$1" in
+    --only) ONLY=${2:-}; shift 2 || shift ;;
+    --tier) TIER=${2:-}; shift 2 || shift ;;
+    --base) BASE=${2:-}; shift 2 || shift ;;
+    *) VERIFY_WHY="unknown argument '$1' (usage: verify.sh <apk> [label] [--only 1,2 | --tier blocking|async --base <live release sha>])"; echo "verify: $VERIFY_WHY"; exit 2 ;;
+  esac
+done
 APK=$(realpath -m "$APK")
 ROUTE=${HBOTS_VERIFY_DEVICE:-laptop}
 case "$ROUTE" in laptop|rig) ;; *) VERIFY_WHY="HBOTS_VERIFY_DEVICE must be laptop (default) or rig, got '$ROUTE'"; echo "verify: $VERIFY_WHY"; exit 2 ;; esac
 if [[ -z "${VERIFY_INNER:-}" ]]; then
   T0=$(date +%s); RUN_ID="r$(date -u +%Y%m%dT%H%M%S)-$$"; INFO="$S/run-$RUN_ID"
+  # --tier: the flows this release's diff (live release..HEAD) puts before the release (blocking)
+  # or after live (async), from select-flows.mjs. Every flow runs in one tier or the other.
+  if [[ -n "$TIER" ]]; then
+    [[ -z "$ONLY" ]] || { VERIFY_WHY="--tier and --only exclude each other"; echo "verify: $VERIFY_WHY"; exit 2; }
+    [[ "$TIER" == blocking || "$TIER" == async ]] || { VERIFY_WHY="--tier must be blocking or async, got '$TIER'"; echo "verify: $VERIFY_WHY"; exit 2; }
+    [[ -n "$BASE" ]] || { VERIFY_WHY="--tier needs --base <live release sha>"; echo "verify: $VERIFY_WHY"; exit 2; }
+    sel=$(node "$HERE/select-flows.mjs" --repo "$ROOT" --base "$BASE" --head HEAD) || { VERIFY_WHY="select-flows.mjs failed for base $BASE"; echo "verify: $VERIFY_WHY"; exit 2; }
+    ONLY=$(node "$HERE/select-flows.mjs" --repo "$ROOT" --base "$BASE" --head HEAD --list "$TIER") || { VERIFY_WHY="select-flows.mjs failed for base $BASE"; echo "verify: $VERIFY_WHY"; exit 2; }
+    echo "$sel"
+    export VERIFY_SELECTION="tier $TIER, base ${BASE:0:12}: flows ${ONLY:-none}"
+    if [[ -z "$ONLY" ]]; then
+      RESULT_DONE=1; echo "RESULT PASS (no flows in the $TIER tier) in $(( $(date +%s) - T0 ))s total, 0s waiting for a heavy-job slot, 0s of work"; exit 0
+    fi
+  fi
   runner=()
-  [[ "$ROUTE" == laptop ]] && runner=(env -u NODE_ENV bash "$HEAVY" --label "hbots verify android" --work-dir "$ROOT" --wait-seconds 10800 --)
+  # Gradle and the emulator share the one exclusive Android lane (Harout's guard 4).
+  [[ "$ROUTE" == laptop ]] && runner=(env -u NODE_ENV bash "$HEAVY" --lane android --label "hbots verify android" --work-dir "$ROOT" --wait-seconds 10800 --)
   "${runner[@]}" env VERIFY_INNER=1 VERIFY_T0="$T0" VERIFY_RUN_ID="$RUN_ID" bash "$HERE/verify.sh" "$APK" "$LABEL" ${ONLY:+--only "$ONLY"} &
   child=$!
   trap 'kill -TERM "$child" 2>/dev/null' TERM INT
@@ -114,6 +137,7 @@ fail() {
 }
 {
   echo "verify-hbots-android $(git -C "$ROOT" rev-parse --short=12 HEAD) $(date -u +%FT%TZ) label $LABEL, run $VERIFY_RUN_ID, queue wait ${QUEUE}s"
+  [[ -n "${VERIFY_SELECTION:-}" ]] && echo "selection: $VERIFY_SELECTION"
   bash "$HERE/doctor.sh" --pre "$APK"
 } 2>&1 | tee "$EV/run.log"
 [[ ${PIPESTATUS[0]} -eq 0 ]] || fail 2 "doctor: $(grep -m1 '^doctor: FAIL' "$EV/run.log" | sed 's/^doctor: FAIL //' | cut -c1-160)"
