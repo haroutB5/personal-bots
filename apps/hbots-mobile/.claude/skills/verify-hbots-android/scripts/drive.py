@@ -1103,9 +1103,144 @@ class Run:
             return "FAIL", f"the card did not settle as saved; on screen: {shown}"
         return "PASS", f"Save with no address showed the address problem on screen just above the buttons (text {p.box}); a valid address cleared it; Save settled the card as saved"
 
+    def f13_find(self, s, pat):
+        """A drawn node whose text or content-desc matches pat (a Row may merge its texts into content-desc)."""
+        return s.first(text=pat) or s.first(desc=pat)
+
+    def f13_scroll_to(self, pat, tries=8, up_first=False):
+        if up_first:
+            for _ in range(3):
+                self.d.swipe(540, 700, 540, 1800, 300)
+                time.sleep(0.4)
+        for _ in range(tries):
+            s = self.d.dump()
+            n = self.f13_find(s, pat)
+            if n:
+                return s, n
+            self.d.swipe(540, 1700, 540, 900, 350)
+            time.sleep(0.6)
+        return s, None
+
+    def f13(self):
+        """Email (1.67.54): Settings > Integrations > Email on a laptop with no Thunderbird bridge (the QA server's throwaway HOME has
+        none), so the page must show the repair state, never a Found row, Use these accounts or a raw error; Back returns to Integrations."""
+        night = self.d.sh("cmd uimode night").strip() if hasattr(self.d, "sh") else "?"
+        size = self.d.sh("wm size").strip() + "; " + self.d.sh("wm density").strip()
+        self.to_chats()
+        s = self.d.dump()
+        gear = next((n for n in s.find(desc="Settings") if n.clickable), None)
+        if not gear:
+            return "FAIL", "no Settings button on Chats"
+        self.d.tap(gear)
+        time.sleep(1.2)
+        s, row = self.f13_scroll_to(r"(?s)Integrations.*", up_first=True)
+        self.shot("f13-settings-integrations-row")
+        if not row:
+            return "FAIL", "Settings has no Integrations row"
+        hint = bool(self.f13_find(s, r"(?s).*Email, GitHub, WhatsApp and other accounts bots can use.*"))
+        self.d.tap(row)
+        s, ok = self.d.wait(lambda s: self.f13_find(s, r"(?s)Email.*") and self.f13_find(s, r"(?s).*Gmail and Outlook, read through Thunderbird on the laptop.*"), 10)
+        self.shot("f13-integrations")
+        if not ok:
+            return "FAIL", f"Integrations did not show the Email row; on screen: {s.texts()[:8]}"
+        title = bool(self.f13_find(s, r"Integrations"))
+        self.d.tap(self.f13_find(s, r"(?s).*Gmail and Outlook, read through Thunderbird on the laptop.*") or self.f13_find(s, r"(?s)Email.*"))
+        t0 = time.time()
+        s, ok = self.d.wait(lambda s: self.f13_find(s, r"(?s).*Ask a bot to repair email\..*"), 25)
+        settle = time.time() - t0
+        self.shot("f13-email-no-thunderbird")
+        if not ok:
+            return "FAIL", f"the Email page did not settle on the repair state in 25 s; on screen: {s.texts()[:10]}"
+        line = bool(self.f13_find(s, r"(?s).*The Commonpost mail bridge is not installed on the laptop\..*"))
+        state = bool(self.f13_find(s, r"(?s).*Needs attention.*"))
+        tb_row = bool(self.f13_find(s, r"(?s).*Thunderbird on the laptop.*"))
+        bad = [p for p in (r"(?s).*Use these accounts.*", r"(?s)Found.*", r"(?s).*Connected.*", r"(?s).*Not reachable.*") if self.f13_find(s, p)]
+        if not (line and tb_row) or bad:
+            return "FAIL", f"repair state wrong: bridge line {line}, Thunderbird row {tb_row}, Needs attention {state}, unexpected {bad}; on screen: {s.texts()[:10]}"
+        for _ in range(3):
+            time.sleep(2)
+            s2 = self.d.dump()
+            if self.f13_find(s2, r"(?s)Found.*") or not self.f13_find(s2, r"(?s).*Ask a bot to repair email\..*"):
+                self.shot("f13-email-flapped")
+                return "FAIL", "the repair state did not hold for 6 s"
+        self.d.key(4)
+        s, ok = self.d.wait(lambda s: self.f13_find(s, r"(?s).*Gmail and Outlook, read through Thunderbird on the laptop.*"), 6)
+        self.shot("f13-back-integrations")
+        if not ok:
+            return "FAIL", "Back from Email did not return to Integrations"
+        self.d.key(4)
+        time.sleep(1)
+        return "PASS", (f"Settings row Integrations (hint {'shown' if hint else 'NOT shown'}), Integrations title {'shown' if title else 'not found'} with the Email row; "
+                        f"Email settled in {settle:.1f} s on the repair state: Thunderbird on the laptop {'Needs attention' if state else '(state text not found)'}, "
+                        f"'The Commonpost mail bridge is not installed on the laptop.', 'Ask a bot to repair email.'; no Found, Connected or Use these accounts; held 6 s; Back returned to Integrations; device {night}; {size}")
+
+    def f14(self):
+        """Working in background (1.67.55): Assistant delegates a task to Planner whose turn starts a background command (fake BGSTART) and
+        ends with it still running, so the task stays running with waitingOnBackgroundSince. The task card in Assistant's chat, Planner's
+        row on the Bots list and the header of Planner's task chat must all say "Working in background" (the row never "Ready", the
+        header never "Idle"). Interrupting the task from the card clears the row's label."""
+        label = r"(?s).*Working in background.*"
+        night = self.d.sh("cmd uimode night").strip()
+        size = self.d.sh("wm size").strip() + "; " + self.d.sh("wm density").strip()
+        self.open_bot("Assistant")
+        self.say("Assistant", 'MCPTOOL delegate_task {"targetBot":"Planner","title":"QA background build","objective":"BGSTART"}')
+        # The card: the child's turn ends with the command live, then the server marks the task (taskSettling publishWaitingPreview).
+        find = lambda s, pat: s.first(text=pat) or s.first(desc=pat)
+        s, card = self.d.wait(lambda s: find(s, label) and find(s, r"(?s).*Planner.*"), 45)
+        self.shot("f14-card-working-in-background")
+        if not card:
+            shown = [t for t in s.texts() if re.search(r"Working|Queued|Done|Planner", t)]
+            return "FAIL", f"the task card never said 'Working in background' in 45 s; on screen: {shown[:8]}"
+        # The header of the task's own chat, opened from the card.
+        opener = next((n for n in s.find(desc=r"Open Planner's chat for this task") if n.clickable), None)
+        if not opener:
+            return "FAIL", "the task card has no way into Planner's chat"
+        self.d.tap(opener)
+        s, head = self.d.wait(lambda s: find(s, label) and s.first(desc=r"Message Planner.*"), 12)
+        self.shot("f14-header-working-in-background")
+        if not head:
+            return "FAIL", f"Planner's task chat header did not say 'Working in background'; on screen: {s.texts()[:10]}"
+        idle = bool(s.first(text=r"Idle") or s.first(desc=r"Idle(, .*)?"))
+        self.leave_chat()
+        self.leave_chat()
+        # The row on the Bots list: status in the drawn row, never Ready, sorted with the working bots (above the idle seeded bots).
+        self.to_chats()
+        s, row = self.d.wait(lambda s: next((n for n in s.find(desc=r"Planner, .*Working in background.*") if n.clickable), None), 12)
+        self.shot("f14-row-working-in-background")
+        if not row:
+            pl = next((n.desc for n in s.find(desc=r"Planner, .*") if n.clickable), "no Planner row")
+            return "FAIL", f"Planner's row did not say 'Working in background': {pl[:120]!r}"
+        # The status as drawn text inside the row, when the row exposes its texts (the screenshot shows it either way).
+        status_drawn = any(s.drawn(n) and re.fullmatch(label, n.text or "") and row.box[1] <= n.box[1] <= row.box[3] for n in s.nodes)
+        ready = bool(re.search(r", Ready,", row.desc))
+        rows = [n for n in s.nodes if n.clickable and re.match(r"(Assistant|Researcher|Developer|Planner), ", n.desc or "") and s.drawn(n)]
+        order = [r.desc.split(",")[0] for r in sorted(rows, key=lambda n: n.box[1])]
+        idle_rows = [order.index(b) for b in ("Researcher", "Developer") if b in order]
+        above_idle = "Planner" in order and bool(idle_rows) and order.index("Planner") < max(idle_rows)
+        if idle or ready:
+            return "FAIL", f"row and header disagree: header Idle {idle}, row Ready {ready}"
+        # Clearing: interrupt the task from the card, then the row must stop saying it.
+        self.open_bot("Assistant")
+        s, stop = self.d.wait(lambda s: next((n for n in s.find(text=r"Interrupt") if s.drawn(n)), None), 8)
+        if not stop:
+            return "FAIL", "the running task card has no Interrupt button"
+        self.d.tap(stop)
+        s, gone = self.d.wait(lambda s: not find(s, label), 20)
+        self.shot("f14-card-after-interrupt")
+        self.leave_chat()
+        self.to_chats()
+        s, cleared = self.d.wait(lambda s: next((n for n in s.find(desc=r"Planner, .*") if n.clickable and "Working in background" not in n.desc), None), 20)
+        self.shot("f14-row-after-interrupt")
+        if not (gone and cleared):
+            return "FAIL", f"after Interrupt: card cleared {bool(gone)}, row cleared {bool(cleared)}"
+        return "PASS", (f"card, header and row all said 'Working in background' (header not Idle, row not Ready, row status as its own text node: {status_drawn}); "
+                        f"Bots order {order} (Planner above an idle bot: {above_idle}); Interrupt cleared card and row "
+                        f"(row now {cleared.desc.split(', ')[2] if cleared.desc.count(', ') >= 2 else cleared.desc[:40]!r}); device {night}; {size}")
+
     def flows(self):
         order = [(1, "chat-send-reply", self.f1), (7, "swipe-quote", self.f7), (9, "long-press-reply", self.f9), (3, "camera-entry-once", self.f3), (2, "pick-three-photos", self.f2),
-                 ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8), (10, "tool-approval-card", self.f10), (11, "restart-laptop-dry-run", self.f11), (12, "secret-card-problem", self.f12)]
+                 ("4s", None, self.f4_seed), (5, "in-app-on-tasks-tab", self.f5), (4, "work-card-unread-only", self.f4), (6, "background-goes-push", self.f6), (8, "open-and-back-logcat-clean", self.f8), (10, "tool-approval-card", self.f10), (11, "restart-laptop-dry-run", self.f11), (12, "secret-card-problem", self.f12),
+                 (13, "email-integrations", self.f13), (14, "working-in-background", self.f14)]
         only = set(self.a.only.split(",")) if self.a.only else None
         seed_secs = 0
         self.order = order
