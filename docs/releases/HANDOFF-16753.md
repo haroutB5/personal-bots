@@ -26,7 +26,10 @@ Based on 1.67.52 (trunk `63863b53eb`). Branch `release/hbots-1.67.53`, built in 
 
 - Secret card: `SecretRequestCard.test.ts` and `secretRequestCardModel.test.ts` (10 tests), mobile typecheck; emulator QA of the x86 build.
 - Tools: `node --test tools.test.mjs` async gates 8/8 (the four new ones fail against the pre-fix tool) and the finisher lease test; `android-prepare.test.ts` 4 tests.
-- Gates, timings and the emulator run: `dev-team/qa/hbots-16753/`.
+- **Blocking gate tier (`GATE_TIER=blocking`, `dev-team/qa/hbots-16753/gates.log`):** PASS on `c1ef49f837d9`. hbots-mobile 60 s; release-tools 453 s (16 test files selected because this release changes the release tools); parity deferred to the async tier after live; everything else skipped by scope. 454 s wall including the background arm64 build. Two earlier runs failed on test isolation and were fixed before this one: `GATE_*` leaking into fixture collectors (`1b4b207a17`) and the gate scope's `HEAVY_JOB_*` caps leaking into the heavy-job default-cap tests (`c1ef49f837`).
+- **arm64 release APK (background, after hbots-mobile passed):** built after the x86 QA build of the same commit. `android-prepare.sh` moved the parked arm64 tree back and skipped prebuild (`native fingerprint unchanged (b56145544c4c)`). 117 s, against 207 s on 1.67.52. The signer check passed; sha256 `a9644722fd49e383ec494f9f29b822e9fced8bd2c9bd12dbde6b6ed8c10dc92b`.
+- **x86 QA APK:** 112 s; it parked the arm64 tree instead of wiping it.
+- **Emulator QA (`dev-team/qa/hbots-16753/emulator/`):** x86 QA APK of `c1ef49f837`, 12/12 flows PASS. Flow 12 (secret card problem) also fails on the 1.67.52 APK. Boot 8 s from the snapshot; `.env` was parked and restored. No emulator was left running.
 
 ## Migration
 
@@ -35,3 +38,39 @@ None. Schema unchanged.
 ## Rollback
 
 Binary rollback to 1.67.52 (`9bcc378ea7ec`). No data change.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=c1ef49f837d90cd52924316949dc4ce624001aeb release=c1ef49f837d9 json-sha256=88bc5fc2703db084495462a845f6caf9f7a2128367e7f87a6f5b05ff727af4f6 result=PASS -->
+
+- server-tests: SKIPPED, skip: no changed path is an input of server-tests: apps/server, packages, scripts/personal/adblock, scripts/personal/dsh-runtime, scripts/personal/updates, scripts/personal/sync, scripts/personal/testing (not packages/personal-client/, packages/client-runtime/)
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: SKIPPED, skip: no changed path is an input of e2e: apps/server, apps/web, packages, scripts/personal/e2e, scripts/personal/node/e2e-smoke.mjs, scripts/personal/testing
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: DEFERRED, deferred: runs after the release (async tier): parity inputs changed: apps/hbots-mobile/.claude/skills/verify-hbots-android/scripts/drive.py, apps/hbots-mobile/scripts/android-prepare.sh, apps/hbots-mobile/scripts/android-prepare.test.ts, apps/hbots-mobile/scripts/native-fingerprint.test.ts, ...
+- release-tools: PASS, selected: release-tools inputs changed: scripts/personal/linux/dev-team-tools/gate-evidence.mjs, scripts/personal/linux/dev-team-tools/hbots-async-gates.mjs, scripts/personal/linux/dev-team-tools/hbots-release-finish.sh, scripts/personal/linux/dev-team-tools/tools.test.mjs; selected 16 test files
+
+<!-- gate-evidence:end -->
+
+<!-- gate-timing:begin -->
+
+```
+gate timing: 453 s wall, 512 s if serial; budget 7 of 12 cores, server lanes 4; min MemAvailable 20822 MB, swap growth 0 MB, peak load 10.1
+  server-tests         skip     start    0 s      0 s   0 jobs SKIP  |
+  server-tsc           skip     start    0 s      0 s   0 jobs SKIP  |
+  web-tests            skip     start    0 s      0 s   0 jobs SKIP  |
+  web-tsc              skip     start    0 s      0 s   0 jobs SKIP  |
+  e2e                  skip     start    0 s      0 s   0 jobs SKIP  |
+  personal-client      skip     start    0 s      0 s   0 jobs SKIP  |
+  hbots-mobile         whole    start    0 s     60 s   1 job  PASS  |########
+  hbots-mobile-kotlin  skip     start    0 s      0 s   0 jobs SKIP  |
+  parity               deferred start    0 s      0 s   0 jobs DEFR  |
+  release-tools        selected start    0 s    453 s   1 job  PASS  |############################################################
+  arm64 build (bg)     android  start   60 s    117 s   1 job  PASS  |        ################
+```
+
+<!-- gate-timing:end -->
