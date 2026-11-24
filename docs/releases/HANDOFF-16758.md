@@ -24,7 +24,9 @@ Redesigned and de-cluttered Computer tab with stage-first layout, visual CPU/Mem
 
 ## Verification
 
-- Pending gate evidence, signed arm64 APK build, and 14-flow Android emulator verification.
+- **Stage:** staged release `b8353057ddab` built in 20 s (`rc=0`, `/home/harout/.personal-bots/releases/b8353057ddab`).
+- **Gates:** full (untiered) gates PASS in 210 s on release `b8353057ddab` (block below; `parity` 11 s, `hbots-mobile` 71 s). The arm64 release APK was built inside them in 139 s (`48M`, `50030851` bytes, sha256 `75df12cf0656e5f1bf9f9e066674f6f33dab7bf583fe4e7de61ee9f0df7ca7eb`). It passes `unzip -tq` and `apksigner verify` (`CN=hbots, OU=Android, O=haroutB5, C=GB`, sha256 `bf2aaabe597d0d35538d995c784d31c029cb1adfcf38d3f958593429273af76f`).
+- **Emulator QA:** x86_64 QA APK built in 118 s (`49M`, sha256 `05a5933df508fd02`); all 14 flows (no `--tier`) ran against staged release `b8353057ddab`: **14/14 PASS, 0 FAIL**, 221 s of flows, 255 s total (`dev-team/qa/hbots-16758/emulator/hbots-16758-release-qa-20261124T082538Z`), including `flow 8 open-and-back-logcat-clean PASS (10 s)` (`FATAL 0`, `JS errors 0`, stage-first Computer tab verified visually in `shots/f8-computer.png`).
 
 ## Migration
 
@@ -33,3 +35,39 @@ None. Schema stays at 161.
 ## Rollback
 
 Binary rollback to 1.67.57 (`fcc9a900a4ac`). No schema change, so the rollback is clean.
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=b8353057ddab4e445c101c7c6b5ce48e7c9344b9 release=b8353057ddab json-sha256=446c52eb3c9667d1be0a871c6c7ad745a7228c7d35e4169c2793b1cc909b45b2 result=PASS -->
+
+- server-tests: SKIPPED, skip: no changed path is an input of server-tests: apps/server, packages, scripts/personal/adblock, scripts/personal/dsh-runtime, scripts/personal/updates, scripts/personal/sync, scripts/personal/testing (not packages/personal-client/, packages/client-runtime/)
+- server-tsc: SKIPPED, skip: no changed path is an input of server-tsc: apps/server, packages (not packages/personal-client/, packages/client-runtime/)
+- web-tests: SKIPPED, skip: no changed path is an input of web-tests: apps/web, packages
+- web-tsc: SKIPPED, skip: no changed path is an input of web-tsc: apps/web, packages
+- e2e: SKIPPED, skip: no changed path is an input of e2e: apps/server, apps/web, packages, scripts/personal/e2e, scripts/personal/node/e2e-smoke.mjs, scripts/personal/testing
+- personal-client: SKIPPED, skip: no changed path is an input of personal-client: packages/personal-client, packages/client-runtime, packages/contracts, packages/shared
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+
+<!-- gate-evidence:end -->
+
+<!-- gate-timing:begin -->
+
+```
+gate timing: 210 s wall, 82 s if serial; budget 5 of 12 cores, server lanes 4; min MemAvailable 20176 MB, swap growth 0 MB, peak load 6.1
+  server-tests         skip     start    0 s      0 s   0 jobs SKIP  |
+  server-tsc           skip     start    0 s      0 s   0 jobs SKIP  |
+  web-tests            skip     start    0 s      0 s   0 jobs SKIP  |
+  web-tsc              skip     start    0 s      0 s   0 jobs SKIP  |
+  e2e                  skip     start    0 s      0 s   0 jobs SKIP  |
+  personal-client      skip     start    0 s      0 s   0 jobs SKIP  |
+  hbots-mobile         whole    start    0 s     71 s   1 job  PASS  |####################
+  hbots-mobile-kotlin  skip     start    0 s      0 s   0 jobs SKIP  |
+  parity               whole    start    0 s     11 s   1 job  PASS  |###
+  release-tools        skip     start    0 s      0 s   0 jobs SKIP  |
+  arm64 build (bg)     android  start   71 s    139 s   1 job  PASS  |                    ########################################
+```
+
+<!-- gate-timing:end -->
