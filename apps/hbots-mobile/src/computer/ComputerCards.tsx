@@ -73,6 +73,7 @@ export function DriverCard({
   state,
   bot,
   queue,
+  footer,
   onOpenChat,
   onPress,
   style,
@@ -82,6 +83,7 @@ export function DriverCard({
   readonly state: DriverState;
   readonly bot?: DriverBotAvatar | undefined;
   readonly queue?: DriverQueue | undefined;
+  readonly footer?: ReactNode | undefined;
   readonly onOpenChat?: (() => void) | undefined;
   readonly onPress?: (() => void) | undefined;
   readonly style?: object;
@@ -152,17 +154,35 @@ export function DriverCard({
           {body}
         </Pressable>
       )}
+      {footer === undefined || footer === null ? null : (
+        <View style={styles.driverFooter}>{footer}</View>
+      )}
       {queued && queue !== undefined ? <UpNext queue={queue} /> : null}
     </Card>
   );
 }
 
-function UpNext({ queue }: { readonly queue: DriverQueue }) {
+export function QueueCard({ queue }: { readonly queue: DriverQueue }) {
+  if (queue.paused === null && queue.next.length === 0) return null;
+  return (
+    <Card>
+      <UpNext queue={queue} flush />
+    </Card>
+  );
+}
+
+function UpNext({
+  queue,
+  flush = false,
+}: {
+  readonly queue: DriverQueue;
+  readonly flush?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? queue.next : queue.next.slice(0, 3);
   const hidden = queue.next.length - shown.length;
   return (
-    <View style={styles.upNext}>
+    <View style={[styles.upNext, flush ? styles.upNextFlush : null]}>
       {queue.paused === null ? null : (
         <>
           <Text style={styles.sectionLabel}>PAUSED</Text>
@@ -664,11 +684,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  driverFooter: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
   upNext: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: tokens.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
+  },
+  upNextFlush: {
+    borderTopWidth: 0,
   },
   sectionLabel: { color: tokens.sectionLabel, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   upNextGap: { marginTop: 6 },

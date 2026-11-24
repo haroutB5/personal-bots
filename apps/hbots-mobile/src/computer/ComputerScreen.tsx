@@ -1,8 +1,5 @@
 import type { EnvironmentId, PersonalBot } from "@t3tools/contracts";
-import {
-  closeBrowserConfirmMessage,
-  formatActivityTime,
-} from "@hbots/personal-client/computer/computerModel";
+import { closeBrowserConfirmMessage } from "@hbots/personal-client/computer/computerModel";
 import type { ComputerSource } from "@hbots/personal-client/computer/computerContract";
 import { latestBotAction, mergeActivity } from "@hbots/personal-client/computer/computerActivity";
 import {
@@ -63,6 +60,7 @@ import {
   DriverCard,
   HelpCard,
   PageDialogCard,
+  QueueCard,
   SensitiveCard,
   type DriverBotAvatar,
 } from "./ComputerCards";
@@ -583,18 +581,14 @@ export function ComputerScreen({
 
   const idleStage =
     shown === "browser" && stage.kind === "idle" && desktopDriverNow.state !== "using";
-  const lastAgent = status?.lastAgent ?? null;
-  const lastUsedName =
-    lastAgent === null
-      ? null
-      : (events.find(
-          (event) =>
-            event.source === "browser" &&
-            event.threadId === lastAgent.threadId &&
-            event.botName !== null,
-        )?.botName ?? lastAgent.botId);
-  const lastUsedAt = status?.lastStop ?? null;
   const nothingOnScreen = !reachable || idleStage;
+  const promptOwnsTake =
+    shown === "browser" && !youBrowser && (pause !== null || help !== null || dialog !== null);
+  const showDriverCard =
+    !nothingOnScreen &&
+    !youShown &&
+    !promptOwnsTake &&
+    (shownDriver.state === "using" || shownDriver.state === "idle");
 
   const modalSource: ComputerSource = fullScreenSource ?? "browser";
   const modalHeader = fullScreenHeader({
@@ -639,8 +633,6 @@ export function ComputerScreen({
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]}
         keyboardShouldPersistTaps="handled"
       >
-        <MachineStatsCard native={native} />
-
         <View style={styles.sourceBar}>
           <View style={styles.segmentTrack} accessibilityRole="tablist">
             {(["browser", "desktop"] as const).map((source) => {
@@ -663,13 +655,15 @@ export function ComputerScreen({
                     unavailable || !reachable ? styles.disabled : null,
                   ]}
                 >
-                  <Icon size={16} color={selected ? tokens.text : tokens.textSecondary} />
+                  {sourceBot !== undefined ? (
+                    <BotAvatar shape={sourceBot.shape} color={sourceBot.color} size={17} label="" />
+                  ) : (
+                    <Icon size={16} color={selected ? tokens.text : tokens.textSecondary} />
+                  )}
                   <Text style={[styles.segmentText, selected ? styles.segmentTextActive : null]}>
                     {source === "browser" ? "Browser" : "Desktop"}
                   </Text>
-                  {sourceBot !== undefined ? (
-                    <BotAvatar shape={sourceBot.shape} color={sourceBot.color} size={18} label="" />
-                  ) : sourceDriver.state === "using" ? (
+                  {sourceDriver.state === "using" && sourceBot === undefined ? (
                     <View style={styles.segmentLiveDot} />
                   ) : null}
                 </Pressable>
@@ -723,7 +717,7 @@ export function ComputerScreen({
             dialog={dialog}
             inControl={youBrowser}
             onAnswer={answerDialog}
-            onTakeControl={() => void takeControl()}
+            onTakeControl={help === null && pause === null ? () => void takeControl() : undefined}
           />
         ) : null}
 
@@ -756,10 +750,8 @@ export function ComputerScreen({
             ) : (
               <StagePlaceholder
                 stage={stage}
-                desktopAvailable={desktopAvailable && reachable}
                 canClose={toolbar.canClose}
                 onTakeControl={status !== null ? () => void takeControl() : undefined}
-                onViewDesktop={() => selectSource("desktop")}
                 onCloseBrowser={() => void stop()}
               />
             )
@@ -836,15 +828,16 @@ export function ComputerScreen({
                 </Text>
               )}
             </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Reload"
-              disabled={!toolbar.canReload}
-              onPress={sendReload}
-              style={[styles.toolButton, !toolbar.canReload ? styles.disabled : null]}
-            >
-              <IconRefresh size={18} color={tokens.text} />
-            </Pressable>
+            {toolbar.canReload ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reload"
+                onPress={sendReload}
+                style={styles.toolButton}
+              >
+                <IconRefresh size={18} color={tokens.text} />
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Open browser full screen"
@@ -865,89 +858,93 @@ export function ComputerScreen({
           </View>
         ) : null}
 
-        {nothingOnScreen ? (
-          lastAgent === null ? null : (
-            <DriverCard
-              title={`Last used by ${lastUsedName ?? "a bot"}`}
-              line={
-                lastUsedAt === null
-                  ? "Brave · closed"
-                  : `Brave · closed at ${formatActivityTime(lastUsedAt)}`
-              }
-              state="idle"
-              bot={avatarFor(lastAgent.botId)}
-              onOpenChat={() => openChat(lastAgent.botId, lastAgent.threadId)}
-            />
-          )
-        ) : (
+        {showDriverCard ? (
+          <DriverCard
+            title={driverTitle(shownDriver, shown === "desktop" ? "Desktop" : "Brave")}
+            line={driverLine({
+              driver: shownDriver,
+              events: shown === "desktop" ? desktopEventList : browserEventList,
+              now,
+            })}
+            state={shownDriver.state}
+            bot={avatarFor(shownDriver.botId)}
+            queue={queue}
+            onOpenChat={
+              shownDriver.threadId !== null && shownDriver.botId !== null
+                ? () => openChat(shownDriver.botId, shownDriver.threadId)
+                : undefined
+            }
+            footer={
+              shown === "browser" ? (
+                <ComputerActions
+                  inControl={false}
+                  canTake
+                  takeDisabled={actions.takeDisabled}
+                  takeLabel={otherDevice ? "Take it here" : "Take control"}
+                  handBackLabel="Hand back"
+                  onTake={() => void takeControl()}
+                  onHandBack={() => void handBack()}
+                  stopLabel={null}
+                  onStop={() => void stop()}
+                  busy={stopBusy}
+                />
+              ) : actions.stopLabel === null ? null : (
+                <ComputerActions
+                  inControl={false}
+                  canTake={false}
+                  takeDisabled
+                  handBackLabel="Hand back"
+                  onTake={() => undefined}
+                  onHandBack={() => undefined}
+                  stopLabel={actions.stopLabel}
+                  onStop={() => void stop()}
+                  busy={stopBusy}
+                />
+              )
+            }
+          />
+        ) : !nothingOnScreen && youBrowser ? (
           <>
-            <DriverCard
-              title={driverTitle(shownDriver, shown === "desktop" ? "Desktop" : "Brave")}
-              line={driverLine({
-                driver: shownDriver,
-                events: shown === "desktop" ? desktopEventList : browserEventList,
-                now,
-              })}
-              state={shownDriver.state}
-              bot={avatarFor(shownDriver.botId)}
-              queue={queue}
-              onOpenChat={
-                shownDriver.threadId !== null && shownDriver.botId !== null
-                  ? () => openChat(shownDriver.botId, shownDriver.threadId)
-                  : undefined
+            <ComputerActions
+              inControl
+              canTake
+              takeDisabled={actions.takeDisabled}
+              handBackLabel={
+                queue.paused !== null && queue.paused.botName.length <= 14
+                  ? `Hand back to ${queue.paused.botName}`
+                  : "Hand back"
               }
+              onTake={() => void takeControl()}
+              onHandBack={() => void handBack()}
+              stopLabel={null}
+              onStop={() => void stop()}
+              busy={stopBusy}
             />
-            {otherDriver.state === "using" ? (
-              <DriverCard
-                title={otherDriver.botName ?? "A bot"}
-                line={`${driverLine({
-                  driver: otherDriver,
-                  events: otherSource === "desktop" ? desktopEventList : browserEventList,
-                  now,
-                })} · in the background`}
-                state="using"
-                bot={avatarFor(otherDriver.botId)}
-                onPress={() => selectSource(otherSource)}
-              />
-            ) : null}
-            {shown === "browser" ? (
-              <ComputerActions
-                inControl={youBrowser}
-                canTake
-                takeDisabled={actions.takeDisabled}
-                takeLabel={otherDevice ? "Take it here" : "Take control"}
-                handBackLabel={
-                  queue.paused !== null && queue.paused.botName.length <= 14
-                    ? `Hand back to ${queue.paused.botName}`
-                    : "Hand back"
-                }
-                onTake={() => void takeControl()}
-                onHandBack={() => void handBack()}
-                stopLabel={actions.stopLabel}
-                onStop={() => void stop()}
-                busy={stopBusy}
-              />
-            ) : actions.stopLabel === null ? null : (
-              <ComputerActions
-                inControl={false}
-                canTake={false}
-                takeDisabled
-                handBackLabel="Hand back"
-                onTake={() => undefined}
-                onHandBack={() => undefined}
-                stopLabel={actions.stopLabel}
-                onStop={() => void stop()}
-                busy={stopBusy}
-              />
-            )}
+            <QueueCard queue={queue} />
           </>
-        )}
+        ) : null}
+
+        {!nothingOnScreen && otherDriver.state === "using" ? (
+          <DriverCard
+            title={otherDriver.botName ?? "A bot"}
+            line={`${driverLine({
+              driver: otherDriver,
+              events: otherSource === "desktop" ? desktopEventList : browserEventList,
+              now,
+            })} · in the background`}
+            state="using"
+            bot={avatarFor(otherDriver.botId)}
+            onPress={() => selectSource(otherSource)}
+          />
+        ) : null}
 
         {takeError !== null || actionError !== null || urlError !== null ? (
           <Text style={styles.error} maxFontSizeMultiplier={1.4}>
             {takeError ?? actionError ?? urlError}
           </Text>
         ) : null}
+
+        <MachineStatsCard native={native} />
 
         <ActivityCard events={events} limit={5} onSeeAll={() => setActivityOpen(true)} />
       </ScrollView>
@@ -983,6 +980,10 @@ export function ComputerScreen({
                 <Text style={styles.controlSubtitle} numberOfLines={1}>
                   {help.botName}: {help.reason}
                 </Text>
+              ) : modalSource === "browser" && !youBrowser && control.kind === "live" ? (
+                <Text style={styles.controlSubtle} numberOfLines={1}>
+                  {pageAddressLabel(status)}
+                </Text>
               ) : null}
             </View>
             {modalHeader.action === "handBack" ? (
@@ -1011,7 +1012,7 @@ export function ComputerScreen({
             ) : null}
           </View>
 
-          {modalSource === "browser" && control.kind === "live" ? (
+          {modalSource === "browser" && control.kind === "live" && youBrowser ? (
             <View style={styles.fullScreenToolbar}>
               <View style={styles.fullScreenAddressBox}>
                 {toolbar.secure ? (
@@ -1019,24 +1020,18 @@ export function ComputerScreen({
                 ) : (
                   <IconWorld size={14} color={tokens.textSecondary} />
                 )}
-                {toolbar.editable ? (
-                  <TextInput
-                    style={styles.addressInput}
-                    value={address}
-                    onChangeText={setAddress}
-                    onSubmitEditing={submitAddress}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                    returnKeyType="go"
-                    placeholder="Type a URL"
-                    placeholderTextColor={tokens.textTertiary}
-                  />
-                ) : (
-                  <Text style={styles.addressText} numberOfLines={1}>
-                    {pageAddressLabel(status)}
-                  </Text>
-                )}
+                <TextInput
+                  style={styles.addressInput}
+                  value={address}
+                  onChangeText={setAddress}
+                  onSubmitEditing={submitAddress}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  returnKeyType="go"
+                  placeholder="Type a URL"
+                  placeholderTextColor={tokens.textTertiary}
+                />
               </View>
               <Pressable
                 accessibilityRole="button"
@@ -1150,15 +1145,6 @@ export function ComputerScreen({
         onClose={() => setOptionsOpen(false)}
       >
         <SheetAction
-          label="Reload"
-          detail="Reload the page"
-          disabled={!toolbar.canReload}
-          onPress={() => {
-            sendReload();
-            setOptionsOpen(false);
-          }}
-        />
-        <SheetAction
           label="Page forward"
           detail="Go to the next page in history"
           disabled={!toolbar.canForward}
@@ -1200,17 +1186,13 @@ export function ComputerScreen({
 
 function StagePlaceholder({
   stage,
-  desktopAvailable,
   canClose,
   onTakeControl,
-  onViewDesktop,
   onCloseBrowser,
 }: {
   readonly stage: BrowserStage;
-  readonly desktopAvailable: boolean;
   readonly canClose: boolean;
   readonly onTakeControl?: (() => void) | undefined;
-  readonly onViewDesktop: () => void;
   readonly onCloseBrowser: () => void;
 }) {
   if (stage.kind === "live") return null;
@@ -1249,15 +1231,6 @@ function StagePlaceholder({
           >
             <Text style={styles.primaryButtonText}>Take control</Text>
           </Pressable>
-          {desktopAvailable ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={onViewDesktop}
-              style={styles.secondaryButton}
-            >
-              <Text style={styles.secondaryButtonText}>View desktop</Text>
-            </Pressable>
-          ) : null}
         </View>
       ) : null}
       {isError ? (
