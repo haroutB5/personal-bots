@@ -5,6 +5,7 @@
  */
 
 export { default as IconAlarm } from "@tabler/icons-react-native/IconAlarm";
+export { default as IconAlertTriangle } from "@tabler/icons-react-native/IconAlertTriangle";
 export { default as IconArchive } from "@tabler/icons-react-native/IconArchive";
 export { default as IconArchiveOff } from "@tabler/icons-react-native/IconArchiveOff";
 export { default as IconArrowDown } from "@tabler/icons-react-native/IconArrowDown";
@@ -37,10 +38,12 @@ export { default as IconFileFilled } from "@tabler/icons-react-native/IconFileFi
 export { default as IconFileText } from "@tabler/icons-react-native/IconFileText";
 export { default as IconFileTypePdf } from "@tabler/icons-react-native/IconFileTypePdf";
 export { default as IconFlag } from "@tabler/icons-react-native/IconFlag";
+export { default as IconFocus2 } from "@tabler/icons-react-native/IconFocus2";
 export { default as IconHandStop } from "@tabler/icons-react-native/IconHandStop";
 export { default as IconHierarchy } from "@tabler/icons-react-native/IconHierarchy";
 export { default as IconKeyboard } from "@tabler/icons-react-native/IconKeyboard";
 export { default as IconLoader2 } from "@tabler/icons-react-native/IconLoader2";
+export { default as IconLock } from "@tabler/icons-react-native/IconLock";
 export { default as IconMail } from "@tabler/icons-react-native/IconMail";
 export { default as IconMaximize } from "@tabler/icons-react-native/IconMaximize";
 export { default as IconMessageCircle } from "@tabler/icons-react-native/IconMessageCircle";
@@ -63,6 +66,7 @@ export { default as IconPlus } from "@tabler/icons-react-native/IconPlus";
 export { default as IconPointer } from "@tabler/icons-react-native/IconPointer";
 export { default as IconRefresh } from "@tabler/icons-react-native/IconRefresh";
 export { default as IconSearch } from "@tabler/icons-react-native/IconSearch";
+export { default as IconServer } from "@tabler/icons-react-native/IconServer";
 export { default as IconSettings } from "@tabler/icons-react-native/IconSettings";
 export { default as IconShield } from "@tabler/icons-react-native/IconShield";
 export { default as IconSquare } from "@tabler/icons-react-native/IconSquare";

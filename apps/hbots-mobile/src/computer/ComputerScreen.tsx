@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, PersonalBot } from "@t3tools/contracts";
 import {
   closeBrowserConfirmMessage,
   formatActivityTime,
@@ -18,12 +18,23 @@ import {
 } from "@hbots/personal-client/computer/computerContract";
 import { commandFailureMessage } from "@hbots/personal-client/bots/commandFeedback";
 import {
+  followedToast,
   loadSourcePrefs,
   resolveSource,
   saveSourcePrefs,
   type SourcePrefs,
 } from "@hbots/personal-client/computer/computerSource";
-import { IconDeviceLaptop, IconMaximize, IconRefresh, IconWorld } from "../ui/icons";
+import {
+  IconAlertTriangle,
+  IconDeviceLaptop,
+  IconDots,
+  IconFocus2,
+  IconLock,
+  IconMaximize,
+  IconRefresh,
+  IconWifiOff,
+  IconWorld,
+} from "../ui/icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -43,7 +54,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NativePersonal } from "../personal/nativePersonalClient";
 import { useSecureScreen } from "../platform/secureScreen";
 import { SheetAction, SheetShell } from "../sheets/SheetShell";
-import { ScreenHeader } from "../shell/ScreenHeader";
+import { BotAvatar } from "../shell/BotAvatar";
 import { tokens } from "../shell/tokens";
 import { ComputerActivitySheet } from "./ComputerActivitySheet";
 import {
@@ -51,7 +62,9 @@ import {
   ComputerActions,
   DriverCard,
   HelpCard,
+  PageDialogCard,
   SensitiveCard,
+  type DriverBotAvatar,
 } from "./ComputerCards";
 import { ComputerLiveView, type ComputerLiveViewHandle } from "./ComputerLiveView";
 import { MachineStatsCard } from "./MachineStatsCard";
@@ -67,10 +80,15 @@ import {
   computerDotTone,
   computerHeader,
   computerScreenSecure,
-  desktopQueue,
   desktopEvents,
+  desktopQueue,
+  fullScreenHeader,
+  isTicketFresh,
   liveViewMode,
+  needsClockTick,
+  needsLiveViewTicket,
   pageAddressLabel,
+  showBrowserToolbar,
   takeControlView,
   takeProgress,
   takeStep,
@@ -81,6 +99,13 @@ import type { LiveViewURLs } from "./liveViewAccess";
 
 const NOW_TICK_MS = 5000;
 const AUTO_TAP_GRACE_MS = 3000;
+const FOLLOW_TOAST_MS = 2400;
+
+interface StreamAccess {
+  readonly urls: LiveViewURLs;
+  readonly epoch: number;
+  readonly fetchedAt: number;
+}
 
 export function ComputerScreen({
   native,
@@ -95,6 +120,7 @@ export function ComputerScreen({
   const feed = native.computer.useComputerFeed(environmentId);
   const desktopStatus = native.computer.useDesktopStatus(environmentId);
   const desktopActivity = native.computer.useDesktopActivity(environmentId);
+  const botsList = native.bots.usePersonalBotsList(environmentId);
   const status = feed.feed.status;
   const reachable = environmentId !== null && feed.error === null;
 
@@ -121,7 +147,7 @@ export function ComputerScreen({
   const [shown, setShown] = useState<ComputerSource>(() => (prefs.auto ? "browser" : prefs.pinned));
   const [tapAt, setTapAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [fullScreen, setFullScreen] = useState(false);
+  const [fullScreenSource, setFullScreenSource] = useState<ComputerSource | null>(null);
   const [take, setTake] = useState<TakeState>({ kind: "idle" });
   const [takeError, setTakeError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -130,17 +156,38 @@ export function ComputerScreen({
   const [stopBusy, setStopBusy] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
-  const [urls, setUrls] = useState<LiveViewURLs | null>(null);
+  const [streamAccess, setStreamAccess] = useState<StreamAccess | null>(null);
   const [urlError, setUrlError] = useState<string | null>(null);
-  const [urlEpoch, setUrlEpoch] = useState(0);
+  const [ticketRefreshNonce, setTicketRefreshNonce] = useState(0);
   const [pausedDriver, setPausedDriver] = useState<ReturnType<typeof browserDriver> | null>(null);
   const [address, setAddress] = useState("");
+  const [followNotice, setFollowNotice] = useState<string | null>(null);
   const liveRef = useRef<ComputerLiveViewHandle>(null);
+  const fullScreenLiveRef = useRef<ComputerLiveViewHandle>(null);
+  const autoGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hadBrowserControlRef = useRef(false);
+  const ticketInFlightRef = useRef(false);
+  const handledRefreshNonceRef = useRef(0);
   // Live views with their hidden field open for a password (inline and full screen can both mount).
   const [passwordFields, setPasswordFields] = useState(0);
-  const passwordField = (open: boolean) =>
-    setPasswordFields((count) => Math.max(0, count + (open ? 1 : -1)));
+  const passwordField = useCallback(
+    (open: boolean) => setPasswordFields((count) => Math.max(0, count + (open ? 1 : -1))),
+    [],
+  );
   const [appActive, setAppActive] = useState(AppState.currentState === "active");
+
+  const botAvatars = useMemo(() => {
+    const map = new Map<string, DriverBotAvatar>();
+    const items: ReadonlyArray<PersonalBot> = botsList.data?.bots ?? [];
+    for (const bot of items) {
+      map.set(bot.botId, { shape: bot.avatarShape, color: bot.avatarColor });
+    }
+    return map;
+  }, [botsList.data]);
+
+  const avatarFor = (botId: string | null): DriverBotAvatar | undefined =>
+    botId === null ? undefined : botAvatars.get(botId);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) =>
@@ -150,8 +197,10 @@ export function ComputerScreen({
   }, []);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), NOW_TICK_MS);
-    return () => clearInterval(timer);
+    return () => {
+      if (autoGraceTimerRef.current !== null) clearTimeout(autoGraceTimerRef.current);
+      if (followToastTimerRef.current !== null) clearTimeout(followToastTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -159,35 +208,17 @@ export function ComputerScreen({
   }, [native.client.ports.kv, prefs]);
 
   const refreshURLs = useCallback(() => {
-    setUrlEpoch((epoch) => epoch + 1);
+    setTicketRefreshNonce((nonce) => nonce + 1);
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react/set-state-in-effect -- a new attempt clears the old error
-    setUrlError(null);
-    native
-      .liveViews()
-      .then((next) => {
-        if (!cancelled) setUrls(next);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setUrls(null);
-          setUrlError("Couldn't open the live view.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react/exhaustive-effect-dependencies -- urlEpoch retries the live-view fetch
-  }, [native, urlEpoch]);
 
   const events = useMemo(
     () =>
       mergeActivity(feed.feed.events.map(readBrowserEvent), desktopActivity.map(readDesktopEvent)),
     [feed.feed.events, desktopActivity],
   );
+  const browserEventList = useMemo(() => browserEvents(events), [events]);
+  const desktopEventList = useMemo(() => desktopEvents(events), [events]);
+
   const lastAction = useMemo(() => {
     let best: { source: ComputerSource; at: number; botName: string | null } | null = null;
     for (const event of events) {
@@ -204,9 +235,13 @@ export function ComputerScreen({
   const controller = status?.controller;
   const youBrowser = controller?._tag === "Human" && controller.self;
   const otherDevice = controller?._tag === "Human" && !controller.self;
-  const browserDriverNow = browserDriver(status, browserEvents(events), youBrowser);
-  const desktopDriverNow = desktopDriver(desktopStatus, false);
+  const browserDriverNow = useMemo(
+    () => browserDriver(status, browserEventList, youBrowser),
+    [status, browserEventList, youBrowser],
+  );
+  const desktopDriverNow = useMemo(() => desktopDriver(desktopStatus, false), [desktopStatus]);
   const help = status?.helpRequest ?? null;
+  const dialog = status?.dialog ?? null;
   const pause = activeEgressPause(status);
   const helpOpen = help !== null || pause !== null;
   useSecureScreen(
@@ -217,6 +252,19 @@ export function ComputerScreen({
     }),
   );
   const desktopAvailable = desktopStatus?.available !== false;
+
+  // Reset settled take state if the server externally revokes human control (timeout or other device).
+  useEffect(() => {
+    if (youBrowser) {
+      hadBrowserControlRef.current = true;
+      return;
+    }
+    if (hadBrowserControlRef.current) {
+      hadBrowserControlRef.current = false;
+      setTake((current) => takeStep(current, { kind: "externalRelease" }));
+      setPausedDriver(null);
+    }
+  }, [youBrowser]);
 
   const progress = takeProgress({ take, shown, youBrowser });
   const resolved = resolveSource({
@@ -229,10 +277,39 @@ export function ComputerScreen({
     now,
     desktopAvailable,
   });
+
   useEffect(() => {
-    // eslint-disable-next-line react/set-state-in-effect -- the grace timer resolves the source after render
-    if (resolved !== shown) setShown(resolved);
-  }, [resolved, shown]);
+    if (resolved === shown) return;
+    if (prefs.auto) {
+      const toast = followedToast(shown, resolved, lastAction?.botName ?? null);
+      if (toast !== null) {
+        // eslint-disable-next-line react/set-state-in-effect -- surface auto-switch toast when resolved source moves
+        setFollowNotice(toast);
+        if (followToastTimerRef.current !== null) clearTimeout(followToastTimerRef.current);
+        followToastTimerRef.current = setTimeout(() => {
+          followToastTimerRef.current = null;
+          setFollowNotice(null);
+        }, FOLLOW_TOAST_MS);
+      }
+    }
+    setShown(resolved);
+  }, [resolved, shown, prefs.auto, lastAction?.botName]);
+
+  const clockNeeded = needsClockTick({
+    focused,
+    appActive,
+    helpOpen,
+    browserDriver: browserDriverNow,
+    desktopDriver: desktopDriverNow,
+    tapAt,
+    now,
+  });
+
+  useEffect(() => {
+    if (!clockNeeded) return;
+    const timer = setInterval(() => setNow(Date.now()), NOW_TICK_MS);
+    return () => clearInterval(timer);
+  }, [clockNeeded]);
 
   useEffect(() => {
     if (takeError === null) return;
@@ -266,6 +343,8 @@ export function ComputerScreen({
     loading: feed.loading,
   });
   const stage = browserStage({ status, reachable, loading: feed.loading });
+  const urls = streamAccess?.urls ?? null;
+  const urlEpoch = streamAccess?.epoch ?? 0;
   const toolbar = browserToolbar({
     status,
     ready: urls !== null,
@@ -285,19 +364,74 @@ export function ComputerScreen({
   const isLive = liveViewMode({ status, reachable }) === "live";
   const control = takeControlView({ stage, takeError, urlError });
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const streaming = fullScreen
-    ? control.kind === "live"
+  const handleFrameSize = useCallback((next: FrameSize) => {
+    setFrameSize((prev) =>
+      prev !== null && prev.width === next.width && prev.height === next.height ? prev : next,
+    );
+  }, []);
+  const isFullScreen = fullScreenSource !== null;
+  const streaming = isFullScreen
+    ? fullScreenSource === "desktop"
+      ? desktopAvailable
+      : control.kind === "live"
     : shown === "browser"
       ? reachable && stage.kind !== "idle" && isLive
       : desktopAvailable;
   const inPip = useInPip();
   usePipRequest(pipEnabled({ streaming, focused, appActive, inPip }), frameSize);
-  const liveActive = !inlinePaused({ focused, appActive, fullScreen, inPip });
+  const liveActive = !inlinePaused({ focused, appActive, fullScreen: isFullScreen, inPip });
+
+  // Lazy, expiry-aware WebSocket ticket minting with atomic { urls, epoch } updates.
+  const needTicket = needsLiveViewTicket({
+    reachable,
+    focused,
+    appActive,
+    inPip,
+    fullScreen: isFullScreen,
+    shown,
+    isLive,
+    desktopAvailable,
+  });
+
+  useEffect(() => {
+    if (!needTicket) return;
+    const explicitRefresh = ticketRefreshNonce !== handledRefreshNonceRef.current;
+    const fresh = isTicketFresh(streamAccess?.fetchedAt ?? null, Date.now());
+    if (!explicitRefresh && fresh) return;
+    if (ticketInFlightRef.current && !explicitRefresh) return;
+
+    handledRefreshNonceRef.current = ticketRefreshNonce;
+    ticketInFlightRef.current = true;
+    let cancelled = false;
+    setUrlError(null);
+    native
+      .liveViews()
+      .then((next) => {
+        if (cancelled) return;
+        setStreamAccess((prev) => ({
+          urls: next,
+          epoch: (prev?.epoch ?? 0) + 1,
+          fetchedAt: Date.now(),
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUrlError("Couldn't open the live view.");
+      })
+      .finally(() => {
+        ticketInFlightRef.current = false;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [native, needTicket, ticketRefreshNonce, streamAccess?.fetchedAt]);
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- the toolbar address follows the embedded view
     setAddress(toolbar.address);
   }, [toolbar.address]);
+
+  const activeLiveHandle = () => (isFullScreen ? fullScreenLiveRef.current : liveRef.current);
 
   const selectSource = (source: ComputerSource) => {
     setPrefs({ auto: false, pinned: source });
@@ -305,10 +439,15 @@ export function ComputerScreen({
     // eslint-disable-next-line react/purity -- the tap time is captured by the handler, not render
     setTapAt(Date.now());
   };
+
   const toggleAuto = () => {
     setPrefs((current) => ({ auto: !current.auto, pinned: shown }));
     setTapAt(Date.now());
-    setTimeout(() => setNow(Date.now()), AUTO_TAP_GRACE_MS + 100);
+    if (autoGraceTimerRef.current !== null) clearTimeout(autoGraceTimerRef.current);
+    autoGraceTimerRef.current = setTimeout(() => {
+      autoGraceTimerRef.current = null;
+      setNow(Date.now());
+    }, AUTO_TAP_GRACE_MS + 100);
   };
 
   const takeControl = async () => {
@@ -316,7 +455,7 @@ export function ComputerScreen({
     setActionError(null);
     setPausedDriver(browserDriverNow.state === "using" ? browserDriverNow : null);
     setTake((current) => takeStep(current, { kind: "requested", source: "browser" }));
-    setFullScreen(true);
+    setFullScreenSource("browser");
     const result = await takeBrowser({ environmentId, input: {} });
     const failure = commandFailureMessage(result, "Could not take the browser.");
     if (failure !== null) {
@@ -336,9 +475,10 @@ export function ComputerScreen({
       setTakeError(failure);
       return;
     }
+    hadBrowserControlRef.current = false;
     setTake((current) => takeStep(current, { kind: "handedBack" }));
     setPausedDriver(null);
-    setFullScreen(false);
+    setFullScreenSource(null);
   };
 
   const stop = async () => {
@@ -419,22 +559,24 @@ export function ComputerScreen({
   };
 
   const sendReload = () => {
-    liveRef.current?.sendInput({ _tag: "Reload" });
+    activeLiveHandle()?.sendInput({ _tag: "Reload" });
   };
 
   const submitAddress = () => {
     if (address.trim().length === 0) return;
-    liveRef.current?.sendInput({ _tag: "Navigate", url: address.trim() });
+    activeLiveHandle()?.sendInput({ _tag: "Navigate", url: address.trim() });
+  };
+
+  const answerDialog = (accept: boolean, promptText?: string) => {
+    activeLiveHandle()?.sendInput({
+      _tag: "AnswerDialog",
+      accept,
+      ...(promptText !== undefined ? { promptText } : {}),
+    });
   };
 
   const idleStage =
     shown === "browser" && stage.kind === "idle" && desktopDriverNow.state !== "using";
-  const browserPlaceholder = !reachable
-    ? "The laptop is offline. The browser keeps running there and reappears when it reconnects."
-    : stage.kind === "idle"
-      ? stage.message
-      : null;
-
   const lastAgent = status?.lastAgent ?? null;
   const lastUsedName =
     lastAgent === null
@@ -448,48 +590,94 @@ export function ComputerScreen({
   const lastUsedAt = status?.lastStop ?? null;
   const nothingOnScreen = !reachable || idleStage;
 
+  const modalSource: ComputerSource = fullScreenSource ?? "browser";
+  const modalHeader = fullScreenHeader({
+    source: modalSource,
+    youBrowser,
+    taking: take.kind === "pending" && take.source === "browser" && !youBrowser,
+    control,
+    browserDriver: browserDriverNow,
+    desktopDriver: desktopDriverNow,
+  });
+  const statusPillLabel = headerPillLabel(header.tone, dotTone);
+  const statusPillColor = toneColor(header.tone !== "idle" ? header.tone : dotTone);
+  const browserToolbarVisible = shown === "browser" && showBrowserToolbar(stage);
+  const pipSource: ComputerSource = fullScreenSource ?? shown;
+
   return (
     <View style={styles.screen}>
-      <ScreenHeader
-        title="Computer"
-        subtitle={header.text}
-        right={<View style={[styles.dot, { backgroundColor: toneColor(dotTone) }]} />}
-      />
+      <View style={styles.header}>
+        <View style={styles.headerTopRow}>
+          <Text style={styles.title} maxFontSizeMultiplier={1.3}>
+            Computer
+          </Text>
+          <View style={styles.statusPill}>
+            <View style={[styles.statusDot, { backgroundColor: statusPillColor }]} />
+            <Text style={styles.statusPillText} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+              {statusPillLabel}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.subtitle} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+          {header.text}
+        </Text>
+      </View>
+
       <ScrollView
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]}
         keyboardShouldPersistTaps="handled"
       >
         <MachineStatsCard native={native} />
-        <View style={styles.sourceRow} accessibilityRole="tablist">
-          {(["browser", "desktop"] as const).map((source) => {
-            const selected = shown === source;
-            const unavailable = source === "desktop" && !desktopAvailable;
-            const Icon = source === "browser" ? IconWorld : IconDeviceLaptop;
-            return (
-              <Pressable
-                key={source}
-                accessibilityRole="tab"
-                accessibilityState={{ selected, disabled: unavailable }}
-                disabled={unavailable || !reachable}
-                onPress={() => selectSource(source)}
-                style={[styles.sourceTab, selected ? styles.sourceTabActive : null]}
-              >
-                <Icon size={18} color={selected ? tokens.text : tokens.textSecondary} />
-                <Text style={[styles.sourceText, selected ? styles.sourceTextActive : null]}>
-                  {source === "browser" ? "Browser" : "Desktop"}
-                </Text>
-              </Pressable>
-            );
-          })}
+
+        <View style={styles.sourceBar}>
+          <View style={styles.segmentTrack} accessibilityRole="tablist">
+            {(["browser", "desktop"] as const).map((source) => {
+              const selected = shown === source;
+              const unavailable = source === "desktop" && !desktopAvailable;
+              const Icon = source === "browser" ? IconWorld : IconDeviceLaptop;
+              const sourceDriver = source === "browser" ? browserDriverNow : desktopDriverNow;
+              const sourceBot =
+                sourceDriver.state === "using" ? avatarFor(sourceDriver.botId) : undefined;
+              return (
+                <Pressable
+                  key={source}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected, disabled: unavailable }}
+                  disabled={unavailable || !reachable}
+                  onPress={() => selectSource(source)}
+                  style={[styles.segmentTab, selected ? styles.segmentTabActive : null]}
+                >
+                  <Icon size={16} color={selected ? tokens.text : tokens.textSecondary} />
+                  <Text style={[styles.segmentText, selected ? styles.segmentTextActive : null]}>
+                    {source === "browser" ? "Browser" : "Desktop"}
+                  </Text>
+                  {sourceBot !== undefined ? (
+                    <BotAvatar shape={sourceBot.shape} color={sourceBot.color} size={18} label="" />
+                  ) : sourceDriver.state === "using" ? (
+                    <View style={styles.segmentLiveDot} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ selected: prefs.auto }}
             onPress={toggleAuto}
             style={[styles.autoButton, prefs.auto ? styles.autoButtonOn : null]}
           >
+            <View style={[styles.autoDot, prefs.auto ? styles.autoDotOn : null]} />
             <Text style={[styles.autoText, prefs.auto ? styles.autoTextOn : null]}>Auto</Text>
           </Pressable>
         </View>
+
+        {followNotice !== null ? (
+          <View style={styles.followToast}>
+            <Text style={styles.followToastText} numberOfLines={1}>
+              {followNotice}
+            </Text>
+          </View>
+        ) : null}
 
         {pause !== null ? (
           <SensitiveCard
@@ -508,26 +696,24 @@ export function ComputerScreen({
             botName={help.botName}
             body={helpBody(helpKind(status), helpOrigin(status), help.botName, help.reason)}
             timeText={askedText(help.requestedAt, now)}
+            takeDisabled={actions.takeDisabled}
+            onTakeControl={() => void takeControl()}
             onOpenChat={() => openChat(help.botId, help.threadId)}
+          />
+        ) : null}
+
+        {dialog !== null && shown === "browser" ? (
+          <PageDialogCard
+            dialog={dialog}
+            inControl={youBrowser}
+            onAnswer={answerDialog}
+            onTakeControl={() => void takeControl()}
           />
         ) : null}
 
         <View style={styles.stage}>
           {shown === "browser" ? (
-            browserPlaceholder !== null ? (
-              <View style={styles.placeholder}>
-                <Text style={styles.placeholderText}>{browserPlaceholder}</Text>
-                {stage.kind === "idle" && status !== null ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => void takeControl()}
-                    style={styles.primaryButton}
-                  >
-                    <Text style={styles.primaryButtonText}>Take control</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ) : isLive ? (
+            isLive ? (
               <ComputerLiveView
                 ref={liveRef}
                 mode="browser"
@@ -538,41 +724,58 @@ export function ComputerScreen({
                 paused={!liveActive}
                 attemptKey={urlEpoch}
                 syncViewport={false}
-                onFrameSize={setFrameSize}
+                onFrameSize={handleFrameSize}
                 onNeedsURL={refreshURLs}
               />
             ) : (
-              <View style={styles.placeholder}>
-                <Text style={styles.placeholderText}>{placeholderFor(stage)}</Text>
-              </View>
+              <StagePlaceholder
+                stage={stage}
+                desktopAvailable={desktopAvailable && reachable}
+                canClose={toolbar.canClose}
+                onTakeControl={status !== null ? () => void takeControl() : undefined}
+                onViewDesktop={() => selectSource("desktop")}
+                onCloseBrowser={() => void stop()}
+              />
             )
           ) : desktopAvailable ? (
             <View>
-              <ComputerLiveView
-                mode="desktop"
-                url={urls?.desktop ?? null}
-                interactive={false}
-                fullScreen={false}
-                paused={!liveActive}
-                attemptKey={urlEpoch}
-                syncViewport={false}
-                onFrameSize={setFrameSize}
-                onNeedsURL={refreshURLs}
-              />
-              <View style={styles.desktopCaption}>
-                <Text style={styles.desktopCaptionText}>
-                  Watch only on the phone. Use the laptop to control it.
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open desktop full screen"
+                onPress={() => setFullScreenSource("desktop")}
+              >
+                <ComputerLiveView
+                  mode="desktop"
+                  url={urls?.desktop ?? null}
+                  interactive={false}
+                  fullScreen={false}
+                  paused={!liveActive}
+                  attemptKey={urlEpoch}
+                  syncViewport={false}
+                  onFrameSize={handleFrameSize}
+                  onNeedsURL={refreshURLs}
+                />
+              </Pressable>
+              <View style={styles.desktopBar}>
+                <IconFocus2 size={15} color={tokens.textSecondary} />
+                <Text style={styles.desktopBarText} numberOfLines={1}>
+                  {desktopStatus?.focusedWindow?.title ?? "Desktop · watch only on phone"}
                 </Text>
-                {desktopStatus?.focusedWindow === null ||
-                desktopStatus?.focusedWindow === undefined ? null : (
-                  <Text style={styles.desktopCaptionText} numberOfLines={1}>
-                    {desktopStatus.focusedWindow.title}
-                  </Text>
-                )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open desktop full screen"
+                  onPress={() => setFullScreenSource("desktop")}
+                  style={styles.desktopExpandButton}
+                >
+                  <IconMaximize size={16} color={tokens.text} />
+                </Pressable>
               </View>
             </View>
           ) : (
             <View style={styles.placeholder}>
+              <View style={styles.placeholderBadge}>
+                <IconDeviceLaptop size={22} color={tokens.textSecondary} />
+              </View>
               <Text style={styles.placeholderText}>
                 The live view needs the bots server on Windows or Omarchy.
               </Text>
@@ -580,10 +783,14 @@ export function ComputerScreen({
           )}
         </View>
 
-        {shown === "browser" ? (
+        {browserToolbarVisible ? (
           <View style={styles.toolbar}>
             <View style={styles.addressBox}>
-              <Text style={styles.lock}>{toolbar.secure ? "https" : "web"}</Text>
+              {toolbar.secure ? (
+                <IconLock size={14} color={tokens.working} />
+              ) : (
+                <IconWorld size={14} color={tokens.textSecondary} />
+              )}
               {toolbar.editable ? (
                 <TextInput
                   style={styles.addressInput}
@@ -616,7 +823,7 @@ export function ComputerScreen({
               accessibilityRole="button"
               accessibilityLabel="Open browser full screen"
               disabled={!isLive}
-              onPress={() => setFullScreen(true)}
+              onPress={() => setFullScreenSource("browser")}
               style={[styles.toolButton, !isLive ? styles.disabled : null]}
             >
               <IconMaximize size={18} color={tokens.text} />
@@ -627,7 +834,7 @@ export function ComputerScreen({
               onPress={() => setOptionsOpen(true)}
               style={styles.toolButton}
             >
-              <Text style={styles.moreText}>•••</Text>
+              <IconDots size={18} color={tokens.textSecondary} />
             </Pressable>
           </View>
         ) : null}
@@ -642,8 +849,8 @@ export function ComputerScreen({
                   : `Brave · closed at ${formatActivityTime(lastUsedAt)}`
               }
               state="idle"
+              bot={avatarFor(lastAgent.botId)}
               onOpenChat={() => openChat(lastAgent.botId, lastAgent.threadId)}
-              style={styles.cardGap}
             />
           )
         ) : (
@@ -652,10 +859,11 @@ export function ComputerScreen({
               title={driverTitle(shownDriver, shown === "desktop" ? "Desktop" : "Brave")}
               line={driverLine({
                 driver: shownDriver,
-                events: shown === "desktop" ? desktopEvents(events) : browserEvents(events),
+                events: shown === "desktop" ? desktopEventList : browserEventList,
                 now,
               })}
               state={shownDriver.state}
+              bot={avatarFor(shownDriver.botId)}
               queue={queue}
               onOpenChat={
                 shownDriver.threadId !== null && shownDriver.botId !== null
@@ -668,16 +876,18 @@ export function ComputerScreen({
                 title={otherDriver.botName ?? "A bot"}
                 line={`${driverLine({
                   driver: otherDriver,
-                  events: otherSource === "desktop" ? desktopEvents(events) : browserEvents(events),
+                  events: otherSource === "desktop" ? desktopEventList : browserEventList,
                   now,
                 })} · in the background`}
                 state="using"
+                bot={avatarFor(otherDriver.botId)}
                 onPress={() => selectSource(otherSource)}
               />
             ) : null}
             {shown === "browser" ? (
               <ComputerActions
                 inControl={youBrowser}
+                canTake
                 takeDisabled={actions.takeDisabled}
                 handBackLabel={
                   queue.paused !== null && queue.paused.botName.length <= 14
@@ -693,6 +903,7 @@ export function ComputerScreen({
             ) : actions.stopLabel === null ? null : (
               <ComputerActions
                 inControl={false}
+                canTake={false}
                 takeDisabled
                 handBackLabel="Hand back"
                 onTake={() => undefined}
@@ -715,47 +926,129 @@ export function ComputerScreen({
       </ScrollView>
 
       <Modal
-        visible={fullScreenVisible({ fullScreen, inPip })}
+        visible={fullScreenVisible({ fullScreen: isFullScreen, inPip })}
         animationType="fade"
         statusBarTranslucent
         navigationBarTranslucent
-        onRequestClose={() => setFullScreen(false)}
+        onRequestClose={() => setFullScreenSource(null)}
       >
-        <View style={[styles.fullScreen, { paddingTop: insets.top }]}>
+        <View style={[styles.fullScreen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.controlBar}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Exit full screen"
-              onPress={() => setFullScreen(false)}
+              onPress={() => setFullScreenSource(null)}
               style={styles.controlButton}
             >
               <Text style={styles.controlButtonText}>Exit</Text>
             </Pressable>
             <View style={styles.controlTitle}>
               <Text style={styles.controlTitleText} numberOfLines={1}>
-                {control.kind === "error"
-                  ? "Browser didn't start"
-                  : youBrowser
-                    ? "You're in control"
-                    : "Taking control…"}
+                {modalHeader.title}
               </Text>
-              {help === null ? null : (
+              {modalSource === "desktop" &&
+              desktopStatus?.focusedWindow !== null &&
+              desktopStatus?.focusedWindow !== undefined ? (
+                <Text style={styles.controlSubtle} numberOfLines={1}>
+                  {desktopStatus.focusedWindow.title}
+                </Text>
+              ) : modalSource === "browser" && help !== null ? (
                 <Text style={styles.controlSubtitle} numberOfLines={1}>
                   {help.botName}: {help.reason}
                 </Text>
-              )}
+              ) : null}
             </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Hand back"
-              onPress={() => void handBack()}
-              style={styles.handBack}
-            >
-              <Text style={styles.primaryButtonText}>Hand back</Text>
-            </Pressable>
+            {modalHeader.action === "handBack" ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Hand back"
+                onPress={() => void handBack()}
+                style={styles.handBack}
+              >
+                <Text style={styles.primaryButtonText}>Hand back</Text>
+              </Pressable>
+            ) : modalHeader.action === "takeControl" ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Take control"
+                disabled={actions.takeDisabled}
+                onPress={() => void takeControl()}
+                style={[styles.handBack, actions.takeDisabled ? styles.disabled : null]}
+              >
+                <Text style={styles.primaryButtonText}>Take control</Text>
+              </Pressable>
+            ) : modalHeader.badgeLabel !== null ? (
+              <View style={styles.modalBadge}>
+                <Text style={styles.modalBadgeText}>{modalHeader.badgeLabel}</Text>
+              </View>
+            ) : null}
           </View>
-          {control.kind === "live" ? (
+
+          {modalSource === "browser" && control.kind === "live" ? (
+            <View style={styles.fullScreenToolbar}>
+              <View style={styles.fullScreenAddressBox}>
+                {toolbar.secure ? (
+                  <IconLock size={14} color={tokens.working} />
+                ) : (
+                  <IconWorld size={14} color={tokens.textSecondary} />
+                )}
+                {toolbar.editable ? (
+                  <TextInput
+                    style={styles.addressInput}
+                    value={address}
+                    onChangeText={setAddress}
+                    onSubmitEditing={submitAddress}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    returnKeyType="go"
+                    placeholder="Type a URL"
+                    placeholderTextColor={tokens.textTertiary}
+                  />
+                ) : (
+                  <Text style={styles.addressText} numberOfLines={1}>
+                    {pageAddressLabel(status)}
+                  </Text>
+                )}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reload"
+                disabled={!toolbar.canReload}
+                onPress={sendReload}
+                style={[styles.fullScreenToolButton, !toolbar.canReload ? styles.disabled : null]}
+              >
+                <IconRefresh size={16} color={tokens.text} />
+              </Pressable>
+            </View>
+          ) : null}
+
+          {modalSource === "browser" && dialog !== null ? (
+            <PageDialogCard
+              dialog={dialog}
+              inControl={youBrowser}
+              compact
+              onAnswer={answerDialog}
+              onTakeControl={() => void takeControl()}
+            />
+          ) : null}
+
+          {modalSource === "desktop" ? (
             <ComputerLiveView
+              ref={fullScreenLiveRef}
+              mode="desktop"
+              url={urls?.desktop ?? null}
+              interactive={false}
+              fullScreen
+              paused={!appActive}
+              attemptKey={urlEpoch}
+              syncViewport={false}
+              onFrameSize={handleFrameSize}
+              onNeedsURL={refreshURLs}
+            />
+          ) : control.kind === "live" ? (
+            <ComputerLiveView
+              ref={fullScreenLiveRef}
               mode="browser"
               url={urls?.browser ?? null}
               interactive={youBrowser}
@@ -764,7 +1057,7 @@ export function ComputerScreen({
               paused={!appActive}
               attemptKey={urlEpoch}
               syncViewport={youBrowser}
-              onFrameSize={setFrameSize}
+              onFrameSize={handleFrameSize}
               onNeedsURL={refreshURLs}
             />
           ) : (
@@ -805,8 +1098,8 @@ export function ComputerScreen({
       >
         <View style={styles.pipWindow}>
           <ComputerLiveView
-            mode={fullScreen || shown === "browser" ? "browser" : "desktop"}
-            url={(fullScreen || shown === "browser" ? urls?.browser : urls?.desktop) ?? null}
+            mode={pipSource}
+            url={(pipSource === "browser" ? urls?.browser : urls?.desktop) ?? null}
             interactive={false}
             fullScreen
             paused={false}
@@ -843,7 +1136,16 @@ export function ComputerScreen({
           detail="Go to the next page in history"
           disabled={!toolbar.canForward}
           onPress={() => {
-            liveRef.current?.sendInput({ _tag: "Forward" });
+            activeLiveHandle()?.sendInput({ _tag: "Forward" });
+            setOptionsOpen(false);
+          }}
+        />
+        <SheetAction
+          label="Escape"
+          detail="Close a menu or dialog on the page"
+          disabled={!toolbar.canEscape}
+          onPress={() => {
+            activeLiveHandle()?.sendInput({ _tag: "Key", key: "Escape" });
             setOptionsOpen(false);
           }}
         />
@@ -869,6 +1171,114 @@ export function ComputerScreen({
   }
 }
 
+function StagePlaceholder({
+  stage,
+  desktopAvailable,
+  canClose,
+  onTakeControl,
+  onViewDesktop,
+  onCloseBrowser,
+}: {
+  readonly stage: BrowserStage;
+  readonly desktopAvailable: boolean;
+  readonly canClose: boolean;
+  readonly onTakeControl?: (() => void) | undefined;
+  readonly onViewDesktop: () => void;
+  readonly onCloseBrowser: () => void;
+}) {
+  if (stage.kind === "live") return null;
+
+  const isLoading = stage.kind === "starting" || stage.kind === "connecting";
+  const isError = stage.kind === "crashed" || stage.kind === "locked";
+  const isOffline = stage.kind === "offline";
+  const isIdle = stage.kind === "idle";
+
+  return (
+    <View style={styles.placeholder}>
+      <View
+        style={[
+          styles.placeholderBadge,
+          isError ? styles.placeholderBadgeError : null,
+          isOffline ? styles.placeholderBadgeMuted : null,
+        ]}
+      >
+        {isLoading ? (
+          <ActivityIndicator color={tokens.textSecondary} />
+        ) : isError ? (
+          <IconAlertTriangle size={22} color={tokens.reviewText} />
+        ) : isOffline ? (
+          <IconWifiOff size={22} color={tokens.textTertiary} />
+        ) : (
+          <IconWorld size={22} color={tokens.textSecondary} />
+        )}
+      </View>
+      <Text style={styles.placeholderText}>{stage.message}</Text>
+      {isIdle && onTakeControl !== undefined ? (
+        <View style={styles.placeholderActions}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onTakeControl}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>Take control</Text>
+          </Pressable>
+          {desktopAvailable ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onViewDesktop}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>View desktop</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {isError ? (
+        <View style={styles.placeholderActions}>
+          {onTakeControl !== undefined ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onTakeControl}
+              style={styles.primaryButton}
+            >
+              <Text style={styles.primaryButtonText}>Retry</Text>
+            </Pressable>
+          ) : null}
+          {canClose ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onCloseBrowser}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Close browser</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function headerPillLabel(headerTone: string, dotTone: string): string {
+  switch (headerTone) {
+    case "control":
+      return "In control";
+    case "review":
+      return "Needs you";
+    case "live":
+      return "Live";
+    case "pending":
+      return "Starting";
+    case "problem":
+      return "Issue";
+    default:
+      if (dotTone === "live") return "Ready";
+      if (dotTone === "pending") return "Connecting";
+      if (dotTone === "problem") return "Issue";
+      return "Idle";
+  }
+}
+
 function toneColor(tone: string): string {
   switch (tone) {
     case "live":
@@ -882,20 +1292,6 @@ function toneColor(tone: string): string {
       return tokens.primary;
     default:
       return tokens.textTertiary;
-  }
-}
-
-function placeholderFor(stage: BrowserStage): string {
-  switch (stage.kind) {
-    case "offline":
-    case "connecting":
-    case "starting":
-    case "locked":
-    case "crashed":
-    case "idle":
-      return stage.message;
-    case "live":
-      return "";
   }
 }
 
@@ -930,64 +1326,166 @@ function helpBody(
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: tokens.bg },
-  body: { paddingHorizontal: 16, paddingTop: 12, gap: 12 },
-  dot: { width: 8, height: 8, borderRadius: 4, marginRight: 12 },
-  sourceRow: { flexDirection: "row", gap: 8, alignItems: "center" },
-  sourceTab: {
-    flex: 1,
-    height: 44,
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 8,
+    gap: 2,
+    backgroundColor: tokens.bg,
+  },
+  headerTopRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderRadius: 10,
-    backgroundColor: tokens.fillMuted,
+    justifyContent: "space-between",
+    gap: 10,
   },
-  sourceTabActive: {
+  title: { color: tokens.text, fontSize: 28, fontWeight: "700", letterSpacing: -0.4 },
+  subtitle: { color: tokens.textSecondary, fontSize: 13, lineHeight: 18 },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
     backgroundColor: tokens.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: tokens.border,
   },
-  sourceText: { color: tokens.textSecondary, fontSize: 14 },
-  sourceTextActive: { color: tokens.text, fontWeight: "600" },
-  autoButton: {
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  statusPillText: { color: tokens.text, fontSize: 12, fontWeight: "600" },
+  body: { paddingHorizontal: 16, paddingTop: 6, gap: 12 },
+  sourceBar: { flexDirection: "row", gap: 8, alignItems: "center" },
+  segmentTrack: {
+    flex: 1,
+    flexDirection: "row",
     height: 44,
-    minWidth: 64,
+    borderRadius: 12,
+    backgroundColor: tokens.fillMuted,
+    padding: 3,
+    gap: 3,
+  },
+  segmentTab: {
+    flex: 1,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 10,
+    gap: 6,
+    borderRadius: 9,
+  },
+  segmentTabActive: {
+    backgroundColor: tokens.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: tokens.border,
   },
-  autoButtonOn: { borderColor: tokens.borderStrong, backgroundColor: tokens.surface },
-  autoText: { color: tokens.textSecondary, fontSize: 14 },
-  autoTextOn: { color: tokens.text, fontWeight: "600" },
-  stage: {
+  segmentText: { color: tokens.textSecondary, fontSize: 14, fontWeight: "500" },
+  segmentTextActive: { color: tokens.text, fontWeight: "600" },
+  segmentLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: tokens.working },
+  autoButton: {
+    height: 44,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
     borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
+    backgroundColor: tokens.bg,
+  },
+  autoButtonOn: { borderColor: tokens.borderStrong, backgroundColor: tokens.surface },
+  autoDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: tokens.textTertiary },
+  autoDotOn: { backgroundColor: tokens.working },
+  autoText: { color: tokens.textSecondary, fontSize: 13, fontWeight: "500" },
+  autoTextOn: { color: tokens.text, fontWeight: "600" },
+  followToast: {
+    alignSelf: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: tokens.raised,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
+  },
+  followToastText: { color: tokens.textSecondary, fontSize: 12, fontWeight: "500" },
+  stage: {
+    borderRadius: 14,
     overflow: "hidden",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: tokens.border,
     backgroundColor: tokens.surface,
   },
-  placeholder: { alignItems: "center", justifyContent: "center", padding: 24, gap: 14 },
+  placeholder: { alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
+  placeholderBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: tokens.fillMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeholderBadgeError: {
+    backgroundColor: tokens.reviewBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.reviewBorder,
+  },
+  placeholderBadgeMuted: {
+    backgroundColor: tokens.raised,
+  },
   placeholderText: {
     color: tokens.textSecondary,
     fontSize: 14,
     lineHeight: 20,
     textAlign: "center",
   },
+  placeholderActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 4,
+  },
   primaryButton: {
-    minHeight: 44,
-    paddingHorizontal: 18,
+    minHeight: 42,
+    paddingHorizontal: 16,
     borderRadius: 10,
     backgroundColor: tokens.primary,
     alignItems: "center",
     justifyContent: "center",
   },
-  primaryButtonText: { color: tokens.primaryText, fontSize: 15, fontWeight: "700" },
-  desktopCaption: { paddingHorizontal: 12, paddingVertical: 8, gap: 2 },
-  desktopCaptionText: { color: tokens.textSecondary, fontSize: 12, lineHeight: 17 },
-  toolbar: { flexDirection: "row", alignItems: "center", gap: 8 },
+  primaryButtonText: { color: tokens.primaryText, fontSize: 14, fontWeight: "700" },
+  secondaryButton: {
+    minHeight: 42,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.borderStrong,
+    backgroundColor: tokens.raised,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonText: { color: tokens.text, fontSize: 14, fontWeight: "600" },
+  desktopBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingLeft: 12,
+    paddingRight: 6,
+    paddingVertical: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: tokens.border,
+    backgroundColor: tokens.surface,
+  },
+  desktopBarText: { flex: 1, color: tokens.textSecondary, fontSize: 12 },
+  desktopExpandButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: tokens.fillMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toolbar: { flexDirection: "row", alignItems: "center", gap: 6 },
   addressBox: {
     flex: 1,
     height: 42,
@@ -998,20 +1496,17 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.fillMuted,
     paddingHorizontal: 12,
   },
-  lock: { color: tokens.textSecondary, fontSize: 11, fontWeight: "600" },
   addressText: { flex: 1, color: tokens.text, fontSize: 14 },
-  addressInput: { flex: 1, color: tokens.text, fontSize: 15, padding: 0 },
+  addressInput: { flex: 1, color: tokens.text, fontSize: 14, padding: 0 },
   toolButton: {
-    width: 44,
-    height: 44,
+    width: 42,
+    height: 42,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
     backgroundColor: tokens.fillMuted,
   },
-  moreText: { color: tokens.textSecondary, fontSize: 16, fontWeight: "700" },
   disabled: { opacity: 0.4 },
-  cardGap: { marginTop: 4 },
   error: { color: tokens.danger, fontSize: 13 },
   fullScreen: { flex: 1, backgroundColor: tokens.bg },
   pipWindow: { flex: 1, backgroundColor: "#000000" },
@@ -1026,10 +1521,49 @@ const styles = StyleSheet.create({
     borderBottomColor: tokens.border,
   },
   controlButton: { minWidth: 52, height: 44, alignItems: "center", justifyContent: "center" },
-  controlButtonText: { color: tokens.text, fontSize: 15 },
+  controlButtonText: { color: tokens.text, fontSize: 15, fontWeight: "500" },
   controlTitle: { flex: 1, gap: 1 },
   controlTitleText: { color: tokens.text, fontSize: 16, fontWeight: "600" },
   controlSubtitle: { color: tokens.reviewText, fontSize: 12 },
+  controlSubtle: { color: tokens.textSecondary, fontSize: 12 },
+  modalBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: tokens.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
+    marginRight: 4,
+  },
+  modalBadgeText: { color: tokens.textSecondary, fontSize: 12, fontWeight: "600" },
+  fullScreenToolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: tokens.bg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: tokens.border,
+  },
+  fullScreenAddressBox: {
+    flex: 1,
+    height: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 9,
+    backgroundColor: tokens.fillMuted,
+    paddingHorizontal: 10,
+  },
+  fullScreenToolButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    backgroundColor: tokens.fillMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   controlMessage: {
     flex: 1,
     alignItems: "center",
@@ -1045,7 +1579,7 @@ const styles = StyleSheet.create({
   },
   controlErrorText: { color: tokens.danger },
   handBack: {
-    minHeight: 40,
+    minHeight: 38,
     paddingHorizontal: 14,
     borderRadius: 10,
     backgroundColor: tokens.primary,

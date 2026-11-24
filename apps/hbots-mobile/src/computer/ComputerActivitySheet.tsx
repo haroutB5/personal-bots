@@ -2,7 +2,7 @@ import type { PersonalBrowserFile } from "@t3tools/contracts";
 import { groupActivity } from "@hbots/personal-client/computer/computerActivity";
 import type { ComputerActivityEvent } from "@hbots/personal-client/computer/computerContract";
 import { formatActivityTime } from "@hbots/personal-client/computer/computerModel";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -23,7 +23,7 @@ export function ComputerActivitySheet({
   readonly onClose: () => void;
 }) {
   const [tab, setTab] = useState<"activity" | "files">("activity");
-  const groups = groupActivity(events.slice(0, 30));
+  const groups = useMemo(() => (open ? groupActivity(events.slice(0, 30)) : []), [open, events]);
   return (
     <SheetShell visible={open} title="Recent activity" onClose={onClose}>
       <Text style={styles.subtitle}>Browser and desktop, newest first</Text>
@@ -43,7 +43,9 @@ export function ComputerActivitySheet({
         ))}
       </View>
       {tab === "files" ? (
-        <FilesList native={native} />
+        open ? (
+          <FilesList native={native} />
+        ) : null
       ) : groups.length === 0 ? (
         <Text style={styles.empty}>
           No activity yet. Each step a bot takes on the computer shows here, newest first.

@@ -21,11 +21,21 @@ import {
   computerScreenSecure,
   desktopEvents,
   desktopQueue,
+  dialogButtons,
+  dialogTitle,
   formatFileRow,
+  fullScreenHeader,
+  isTicketFresh,
+  LIVE_VIEW_TICKET_TTL_MS,
   liveKeyboardStep,
-  liveViewPasswordOpen,
   liveViewMode,
+  liveViewPasswordOpen,
+  mapFramePoint,
+  needsClockTick,
+  needsLiveViewTicket,
   pageAddressLabel,
+  shouldApplyFocusReport,
+  showBrowserToolbar,
   takeControlView,
   takeProgress,
   takeStep,
@@ -973,5 +983,173 @@ describe("liveViewPasswordOpen", () => {
     expect(liveViewPasswordOpen({ keyboardOpen: false, field: "password" })).toBe(false);
     expect(liveViewPasswordOpen({ keyboardOpen: true, field: "text" })).toBe(false);
     expect(liveViewPasswordOpen({ keyboardOpen: true, field: "email" })).toBe(false);
+  });
+});
+
+describe("takeStep externalRelease", () => {
+  it("resets a settled take back to idle while leaving pending untouched", () => {
+    expect(takeStep({ kind: "settled", source: "browser" }, { kind: "externalRelease" })).toEqual({
+      kind: "idle",
+    });
+    expect(takeStep({ kind: "pending", source: "browser" }, { kind: "externalRelease" })).toEqual({
+      kind: "pending",
+      source: "browser",
+    });
+    expect(takeStep({ kind: "idle" }, { kind: "externalRelease" })).toEqual({ kind: "idle" });
+  });
+});
+
+describe("mapFramePoint", () => {
+  it("maps coordinates using the fitted box and clamps out-of-bounds edges", () => {
+    expect(
+      mapFramePoint({
+        x: 100,
+        y: 200,
+        box: { width: 200, height: 400 },
+        frame: { width: 400, height: 800 },
+      }),
+    ).toEqual({ x: 200, y: 400, scaleX: 2, scaleY: 2 });
+
+    expect(
+      mapFramePoint({
+        x: -25,
+        y: 500,
+        box: { width: 200, height: 400 },
+        frame: { width: 400, height: 800 },
+      }),
+    ).toEqual({ x: 0, y: 800, scaleX: 2, scaleY: 2 });
+  });
+
+  it("returns null when either box or frame has zero dimensions", () => {
+    expect(
+      mapFramePoint({
+        x: 10,
+        y: 10,
+        box: { width: 0, height: 400 },
+        frame: { width: 400, height: 800 },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldApplyFocusReport", () => {
+  it("ignores stale focus reports and accepts current or unsequenced ones", () => {
+    expect(shouldApplyFocusReport(undefined, 5)).toBe(true);
+    expect(shouldApplyFocusReport(5, 5)).toBe(true);
+    expect(shouldApplyFocusReport(6, 5)).toBe(true);
+    expect(shouldApplyFocusReport(4, 5)).toBe(false);
+  });
+});
+
+describe("fullScreenHeader", () => {
+  const base = {
+    source: "browser" as const,
+    youBrowser: false,
+    taking: false,
+    control: { kind: "live" } as const,
+    browserDriver: nobody,
+    desktopDriver: driver("desktop", "none"),
+  };
+
+  it("never shows Taking control or Hand back when watching browser passively", () => {
+    expect(fullScreenHeader({ ...base, browserDriver: adaUsingBrowser })).toEqual({
+      title: "Ada is browsing",
+      badgeLabel: "Live",
+      tone: "live",
+      action: "takeControl",
+    });
+    expect(fullScreenHeader(base)).toEqual({
+      title: "Watching Brave",
+      badgeLabel: "Watch only",
+      tone: "watch",
+      action: "takeControl",
+    });
+  });
+
+  it("shows Taking control without Hand back while take is pending, then Hand back in control", () => {
+    expect(fullScreenHeader({ ...base, taking: true })).toEqual({
+      title: "Taking control…",
+      badgeLabel: null,
+      tone: "waiting",
+      action: null,
+    });
+    expect(fullScreenHeader({ ...base, youBrowser: true })).toEqual({
+      title: "You're in control",
+      badgeLabel: "Control",
+      tone: "control",
+      action: "handBack",
+    });
+  });
+
+  it("renders watch-only header for Desktop full screen with no Hand back action", () => {
+    expect(
+      fullScreenHeader({
+        ...base,
+        source: "desktop",
+        desktopDriver: driver("desktop", "using", { botName: "Ada" }),
+      }),
+    ).toEqual({
+      title: "Ada · Desktop",
+      badgeLabel: "Watch only",
+      tone: "live",
+      action: null,
+    });
+  });
+});
+
+describe("lazy live-view tickets and conditional clock", () => {
+  it("mints tickets only when a stream will mount and respects 4-minute TTL", () => {
+    const idle = {
+      reachable: true,
+      focused: true,
+      appActive: true,
+      inPip: false,
+      fullScreen: false,
+      shown: "browser" as const,
+      isLive: false,
+      desktopAvailable: true,
+    };
+    expect(needsLiveViewTicket(idle)).toBe(false);
+    expect(needsLiveViewTicket({ ...idle, isLive: true })).toBe(true);
+    expect(needsLiveViewTicket({ ...idle, fullScreen: true })).toBe(true);
+    expect(needsLiveViewTicket({ ...idle, shown: "desktop" })).toBe(true);
+    expect(needsLiveViewTicket({ ...idle, isLive: true, focused: false })).toBe(false);
+    expect(needsLiveViewTicket({ ...idle, isLive: true, focused: false, inPip: true })).toBe(true);
+
+    expect(isTicketFresh(null, 1_000)).toBe(false);
+    expect(isTicketFresh(1_000, 1_000 + LIVE_VIEW_TICKET_TTL_MS - 1)).toBe(true);
+    expect(isTicketFresh(1_000, 1_000 + LIVE_VIEW_TICKET_TTL_MS)).toBe(false);
+  });
+
+  it("only runs the 5s clock while focused, active, and showing ticking state", () => {
+    const base = {
+      focused: true,
+      appActive: true,
+      helpOpen: false,
+      browserDriver: nobody,
+      desktopDriver: driver("desktop", "none"),
+      tapAt: null as number | null,
+      now: 10_000,
+    };
+    expect(needsClockTick(base)).toBe(false);
+    expect(needsClockTick({ ...base, helpOpen: true })).toBe(true);
+    expect(needsClockTick({ ...base, browserDriver: adaUsingBrowser })).toBe(true);
+    expect(needsClockTick({ ...base, tapAt: 9_000 })).toBe(true);
+    expect(needsClockTick({ ...base, tapAt: 1_000 })).toBe(false);
+    expect(needsClockTick({ ...base, helpOpen: true, focused: false })).toBe(false);
+  });
+
+  it("hides the browser toolbar unless the stage is live", () => {
+    expect(showBrowserToolbar({ kind: "live" })).toBe(true);
+    expect(showBrowserToolbar({ kind: "idle", message: "", canOpen: true })).toBe(false);
+    expect(showBrowserToolbar({ kind: "offline", message: "" })).toBe(false);
+    expect(showBrowserToolbar({ kind: "starting", message: "" })).toBe(false);
+  });
+
+  it("formats browser dialog titles and buttons", () => {
+    expect(dialogTitle("alert")).toBe("Page message");
+    expect(dialogButtons("alert")).toEqual({ confirm: "OK", cancel: null });
+    expect(dialogTitle("beforeunload")).toBe("Leave page?");
+    expect(dialogButtons("beforeunload")).toEqual({ confirm: "Leave", cancel: "Stay" });
   });
 });

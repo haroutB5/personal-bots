@@ -1,4 +1,5 @@
 import type {
+  PersonalBrowserDialog,
   PersonalBrowserFile,
   PersonalBrowserStatus,
   PersonalDesktopStatus,
@@ -329,7 +330,8 @@ export type TakeEvent =
   | { readonly kind: "requested"; readonly source: ComputerSource }
   | { readonly kind: "succeeded" }
   | { readonly kind: "failed" }
-  | { readonly kind: "handedBack" };
+  | { readonly kind: "handedBack" }
+  | { readonly kind: "externalRelease" };
 
 export function takeStep(state: TakeState, event: TakeEvent): TakeState {
   switch (event.kind) {
@@ -341,6 +343,8 @@ export function takeStep(state: TakeState, event: TakeEvent): TakeState {
       return state.kind === "pending" ? { kind: "idle" } : state;
     case "handedBack":
       return { kind: "idle" };
+    case "externalRelease":
+      return state.kind === "settled" ? { kind: "idle" } : state;
   }
 }
 
@@ -414,5 +418,192 @@ export function liveKeyboardStep(
       return state.open
         ? { command: "blur", pinned: false, field }
         : { command: null, pinned: state.pinned, field };
+  }
+}
+
+/**
+ * Refresh live-view WebSocket tickets before the server's 5-minute TTL expires.
+ */
+export const LIVE_VIEW_TICKET_TTL_MS = 4 * 60 * 1000;
+
+export function isTicketFresh(
+  fetchedAt: number | null,
+  now: number,
+  ttlMs: number = LIVE_VIEW_TICKET_TTL_MS,
+): boolean {
+  return fetchedAt !== null && now - fetchedAt < ttlMs;
+}
+
+/**
+ * Mint a live-view ticket only when a live stream is actually going to mount.
+ * Keeps idle/unfocused screens from making needless DPoP/HTTP ticket requests.
+ */
+export function needsLiveViewTicket(input: {
+  readonly reachable: boolean;
+  readonly focused: boolean;
+  readonly appActive: boolean;
+  readonly inPip: boolean;
+  readonly fullScreen: boolean;
+  readonly shown: ComputerSource;
+  readonly isLive: boolean;
+  readonly desktopAvailable: boolean;
+}): boolean {
+  if (!input.reachable) return false;
+  if (!(input.focused || input.inPip)) return false;
+  if (!(input.appActive || input.inPip)) return false;
+  if (input.fullScreen) return true;
+  return input.shown === "browser" ? input.isLive : input.desktopAvailable;
+}
+
+/**
+ * Only tick the 5-second clock while focused, active, and displaying a ticking
+ * elapsed timer, idle countdown, help timestamp, or Auto-tap grace period.
+ */
+export function needsClockTick(input: {
+  readonly focused: boolean;
+  readonly appActive: boolean;
+  readonly helpOpen: boolean;
+  readonly browserDriver: SourceDriver;
+  readonly desktopDriver: SourceDriver;
+  readonly tapAt: number | null;
+  readonly now: number;
+  readonly graceMs?: number;
+}): boolean {
+  if (!input.focused || !input.appActive) return false;
+  if (input.helpOpen) return true;
+  if (input.browserDriver.state === "using" || input.browserDriver.state === "idle") return true;
+  if (input.desktopDriver.state === "using") return true;
+  if (input.tapAt !== null && input.now - input.tapAt < (input.graceMs ?? 3500)) return true;
+  return false;
+}
+
+/** Hide the browser toolbar while the browser is idle, offline, starting, or failed. */
+export function showBrowserToolbar(stage: BrowserStage): boolean {
+  return stage.kind === "live";
+}
+
+export interface MappedFramePoint {
+  readonly x: number;
+  readonly y: number;
+  readonly scaleX: number;
+  readonly scaleY: number;
+}
+
+/**
+ * Maps a touch point inside the rendered frame box into remote viewport CSS
+ * pixels, clamping coordinates to the frame bounds so edge gestures stay valid.
+ */
+export function mapFramePoint(input: {
+  readonly x: number;
+  readonly y: number;
+  readonly box: { readonly width: number; readonly height: number };
+  readonly frame: { readonly width: number; readonly height: number };
+}): MappedFramePoint | null {
+  const { box, frame } = input;
+  if (box.width <= 0 || box.height <= 0 || frame.width <= 0 || frame.height <= 0) return null;
+  const clampedX = Math.min(box.width, Math.max(0, input.x));
+  const clampedY = Math.min(box.height, Math.max(0, input.y));
+  const scaleX = frame.width / box.width;
+  const scaleY = frame.height / box.height;
+  return {
+    x: clampedX * scaleX,
+    y: clampedY * scaleY,
+    scaleX,
+    scaleY,
+  };
+}
+
+/** Ignore stale FocusChanged replies whose sequence predates the latest focus-moving input. */
+export function shouldApplyFocusReport(reportSeq: number | undefined, latestSeq: number): boolean {
+  return reportSeq === undefined || reportSeq >= latestSeq;
+}
+
+export interface FullScreenHeaderState {
+  readonly title: string;
+  readonly badgeLabel: string | null;
+  readonly tone: "control" | "live" | "watch" | "waiting" | "error";
+  readonly action: "handBack" | "takeControl" | null;
+}
+
+/**
+ * Full-screen modal header state for both Browser (watch-only, taking, in-control,
+ * error) and Desktop (watch-only). Never shows "Taking control…" or "Hand back"
+ * when watching passively.
+ */
+export function fullScreenHeader(input: {
+  readonly source: ComputerSource;
+  readonly youBrowser: boolean;
+  readonly taking: boolean;
+  readonly control: ControlView;
+  readonly browserDriver: SourceDriver;
+  readonly desktopDriver: SourceDriver;
+}): FullScreenHeaderState {
+  if (input.source === "desktop") {
+    const using = input.desktopDriver.state === "using";
+    return {
+      title: using ? `${input.desktopDriver.botName ?? "A bot"} · Desktop` : "Desktop",
+      badgeLabel: "Watch only",
+      tone: using ? "live" : "watch",
+      action: null,
+    };
+  }
+  if (input.control.kind === "error") {
+    return {
+      title: "Browser didn't start",
+      badgeLabel: null,
+      tone: "error",
+      action: null,
+    };
+  }
+  if (input.youBrowser) {
+    return {
+      title: "You're in control",
+      badgeLabel: "Control",
+      tone: "control",
+      action: "handBack",
+    };
+  }
+  if (input.taking) {
+    return {
+      title: "Taking control…",
+      badgeLabel: null,
+      tone: "waiting",
+      action: null,
+    };
+  }
+  const using = input.browserDriver.state === "using";
+  return {
+    title: using ? `${input.browserDriver.botName ?? "A bot"} is browsing` : "Watching Brave",
+    badgeLabel: using ? "Live" : "Watch only",
+    tone: using ? "live" : "watch",
+    action: "takeControl",
+  };
+}
+
+export function dialogTitle(type: PersonalBrowserDialog["type"]): string {
+  switch (type) {
+    case "alert":
+      return "Page message";
+    case "confirm":
+      return "Confirm action";
+    case "prompt":
+      return "Page prompt";
+    case "beforeunload":
+      return "Leave page?";
+  }
+}
+
+export function dialogButtons(type: PersonalBrowserDialog["type"]): {
+  readonly confirm: string;
+  readonly cancel: string | null;
+} {
+  switch (type) {
+    case "alert":
+      return { confirm: "OK", cancel: null };
+    case "confirm":
+    case "prompt":
+      return { confirm: "OK", cancel: "Cancel" };
+    case "beforeunload":
+      return { confirm: "Leave", cancel: "Stay" };
   }
 }

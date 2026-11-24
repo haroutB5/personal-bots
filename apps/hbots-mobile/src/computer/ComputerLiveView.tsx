@@ -20,6 +20,8 @@ import { tokens } from "../shell/tokens";
 import {
   liveKeyboardStep,
   liveViewPasswordOpen,
+  mapFramePoint,
+  shouldApplyFocusReport,
   type LiveKeyboardEvent,
 } from "./computerScreenModel";
 import {
@@ -30,6 +32,7 @@ import {
   type LiveViewHandle,
   type LiveViewMode,
 } from "./liveView";
+import { createWheelBatcher, type WheelBatcher } from "./wheelBatcher";
 
 const DEFAULT_ASPECT = 390 / 560;
 const SCROLL_SLOP_PX = 8;
@@ -79,6 +82,7 @@ export function ComputerLiveView({
   boxRef.current = box;
   const [aspect, setAspect] = useState(DEFAULT_ASPECT);
   const [notice, setNotice] = useState<string | null>(null);
+  const noticeRef = useRef<string | null>(null);
   const [gaveUp, setGaveUp] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [field, setField] = useState<string>("text");
@@ -88,9 +92,14 @@ export function ComputerLiveView({
   const keyboardPinned = useRef(false);
   const fieldKind = useRef("text");
   const focusWhenBuilt = useRef(false);
+  const focusSeqRef = useRef(0);
   const failures = useRef(0);
   const scrollEndWanted = useRef(false);
   const metaRef = useRef<{ width: number; height: number } | null>(null);
+  const lastFrameSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const onFrameSizeRef = useRef(onFrameSize);
+  // eslint-disable-next-line react/refs -- latest-value ref read by native callbacks
+  onFrameSizeRef.current = onFrameSize;
   const interactiveRef = useRef(interactive);
   // eslint-disable-next-line react/refs -- latest-value ref read by native callbacks
   interactiveRef.current = interactive;
@@ -98,8 +107,46 @@ export function ComputerLiveView({
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const updateNotice = (next: string | null) => {
+    if (noticeRef.current === next) return;
+    noticeRef.current = next;
+    setNotice(next);
+  };
+
+  const nextFocusSeq = () => {
+    focusSeqRef.current += 1;
+    return focusSeqRef.current;
+  };
+
+  const wheelBatcherRef = useRef<WheelBatcher | null>(null);
+  const getWheelBatcher = (): WheelBatcher => {
+    if (wheelBatcherRef.current === null) {
+      wheelBatcherRef.current = createWheelBatcher((step) => {
+        liveRef.current?.send(
+          browserInput({
+            _tag: "Wheel",
+            x: step.x,
+            y: step.y,
+            deltaX: step.deltaX,
+            deltaY: step.deltaY,
+          }),
+        );
+      });
+    }
+    return wheelBatcherRef.current;
+  };
+
   const send = (message: PersonalBrowserInputMessage) => {
+    wheelBatcherRef.current?.flush();
     liveRef.current?.send(browserInput(message));
+  };
+
+  const sendKey = (key: string) => {
+    if (key === "Tab" || key === "Enter") {
+      send({ _tag: "Key", key, seq: nextFocusSeq() });
+      return;
+    }
+    send({ _tag: "Key", key });
   };
 
   useImperativeHandle(ref, () => ({
@@ -111,18 +158,27 @@ export function ComputerLiveView({
     alive.current = true;
     return () => {
       alive.current = false;
+      wheelBatcherRef.current?.cancel();
       if (retryTimer.current !== null) clearTimeout(retryTimer.current);
       if (viewportTimer.current !== null) clearTimeout(viewportTimer.current);
     };
+    // eslint-disable-next-line react/exhaustive-effect-dependencies -- ref object is stable across renders
   }, []);
 
   useEffect(() => {
     if (notice === null) return;
-    const timer = setTimeout(() => setNotice(null), TOAST_MS);
+    const timer = setTimeout(() => {
+      noticeRef.current = null;
+      setNotice(null);
+    }, TOAST_MS);
     return () => clearTimeout(timer);
   }, [notice]);
 
   useEffect(() => {
+    if (retryTimer.current !== null) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
     // eslint-disable-next-line react/set-state-in-effect -- a new URL starts a fresh attempt
     setGaveUp(false);
     failures.current = 0;
@@ -158,12 +214,19 @@ export function ComputerLiveView({
   const frame = (event: NativeSyntheticEvent<{ width: number; height: number; scale: number }>) => {
     const next = event.nativeEvent;
     metaRef.current = { width: next.width, height: next.height };
-    onFrameSize?.({ width: next.width, height: next.height });
+    const prev = lastFrameSizeRef.current;
+    if (prev === null || prev.width !== next.width || prev.height !== next.height) {
+      lastFrameSizeRef.current = { width: next.width, height: next.height };
+      onFrameSizeRef.current?.({ width: next.width, height: next.height });
+    }
     setAspect((previous) => {
       const ratio = next.width / next.height;
       return Math.abs(previous - ratio) < 0.001 ? previous : ratio;
     });
-    setNotice(null);
+    if (noticeRef.current !== null) {
+      noticeRef.current = null;
+      setNotice(null);
+    }
   };
 
   const closed = (event: NativeSyntheticEvent<{ opened: boolean }>) => {
@@ -177,7 +240,9 @@ export function ComputerLiveView({
         return;
       }
     }
+    if (retryTimer.current !== null) clearTimeout(retryTimer.current);
     retryTimer.current = setTimeout(() => {
+      retryTimer.current = null;
       if (alive.current) onNeedsURL();
     }, 1500);
   };
@@ -242,10 +307,14 @@ export function ComputerLiveView({
 
   const focusChanged = (event: NativeSyntheticEvent<FocusChangedEvent>) => {
     const next = event.nativeEvent;
+    if (!shouldApplyFocusReport(next.seq, focusSeqRef.current)) return;
     stepKeyboard({ kind: "focusReport", editable: next.editable, field: next.field });
   };
 
   const fitted = fullScreen && box.width > 0 && box.height > 0 ? fitFrame(box, aspect) : null;
+  const fittedRef = useRef<{ width: number; height: number } | null>(fitted);
+  // eslint-disable-next-line react/refs -- latest-value ref read by pan responder callbacks
+  fittedRef.current = fitted;
 
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -258,14 +327,9 @@ export function ComputerLiveView({
 
   const point = (x: number, y: number) => {
     const meta = metaRef.current;
-    const current = boxRef.current;
-    if (meta === null || current.width <= 0 || current.height <= 0) return null;
-    return {
-      x: x * (meta.width / current.width),
-      y: y * (meta.height / current.height),
-      scaleX: meta.width / current.width,
-      scaleY: meta.height / current.height,
-    };
+    const current = fittedRef.current ?? boxRef.current;
+    if (meta === null) return null;
+    return mapFramePoint({ x, y, box: current, frame: meta });
   };
 
   const gesture = useRef<{
@@ -304,8 +368,7 @@ export function ComputerLiveView({
         if (current.scrolling) {
           const mapped = point(locationX, locationY);
           if (mapped !== null) {
-            send({
-              _tag: "Wheel",
+            getWheelBatcher().push({
               x: mapped.x,
               y: mapped.y,
               deltaX: (current.lastX - locationX) * mapped.scaleX,
@@ -322,15 +385,25 @@ export function ComputerLiveView({
         if (current === null) return;
         const { locationX, locationY } = event.nativeEvent;
         if (current.scrolling) {
+          wheelBatcherRef.current?.flush();
           if (scrollEndWanted.current) send({ _tag: "ScrollEnd" });
           return;
         }
         const mapped = point(locationX, locationY);
-        if (mapped !== null) send({ _tag: "Pointer", action: "tap", x: mapped.x, y: mapped.y });
+        if (mapped !== null) {
+          send({
+            _tag: "Pointer",
+            action: "tap",
+            x: mapped.x,
+            y: mapped.y,
+            seq: nextFocusSeq(),
+          });
+        }
       },
       onPanResponderTerminate: () => {
         const current = gesture.current;
         gesture.current = null;
+        wheelBatcherRef.current?.flush();
         if (current?.scrolling === true && scrollEndWanted.current) send({ _tag: "ScrollEnd" });
       },
     }),
@@ -363,17 +436,17 @@ export function ComputerLiveView({
             attemptKey={attemptKey}
             onLiveOpen={requestViewport}
             onFrame={frame}
-            onRejected={(event) => setNotice(event.nativeEvent.reason)}
-            onHidden={(event) => setNotice(event.nativeEvent.reason)}
+            onRejected={(event) => updateNotice(event.nativeEvent.reason)}
+            onHidden={(event) => updateNotice(event.nativeEvent.reason)}
             onFocusChanged={focusChanged}
             onClosed={closed}
             onScrollEndWanted={() => {
               scrollEndWanted.current = true;
             }}
-            onInputRefused={(event) => setNotice(event.nativeEvent.detail)}
+            onInputRefused={(event) => updateNotice(event.nativeEvent.detail)}
             onViewState={(event) => {
-              if (event.nativeEvent.state === "live") setNotice(null);
-              else setNotice(event.nativeEvent.detail ?? "The PC screen is not available.");
+              if (event.nativeEvent.state === "live") updateNotice(null);
+              else updateNotice(event.nativeEvent.detail ?? "The PC screen is not available.");
             }}
           />
         )}
@@ -400,10 +473,10 @@ export function ComputerLiveView({
             onKeyPress={(event) => {
               const key = event.nativeEvent.key;
               if (key === "Backspace" || key === "Enter" || key === "Tab" || key === "Escape") {
-                send({ _tag: "Key", key });
+                sendKey(key);
               }
             }}
-            onSubmitEditing={() => send({ _tag: "Key", key: "Enter" })}
+            onSubmitEditing={() => sendKey("Enter")}
             keyboardType={keyboardType(field)}
             secureTextEntry={field === "password"}
             autoCapitalize="none"
@@ -447,10 +520,10 @@ export function ComputerLiveView({
           <DockButton label="Page back" onPress={() => send({ _tag: "Back" })}>
             <IconArrowLeft size={18} color={tokens.text} />
           </DockButton>
-          <DockButton label="Tab" onPress={() => send({ _tag: "Key", key: "Tab" })}>
+          <DockButton label="Tab" onPress={() => sendKey("Tab")}>
             <Text style={styles.dockText}>Tab</Text>
           </DockButton>
-          <DockButton label="Enter" onPress={() => send({ _tag: "Key", key: "Enter" })}>
+          <DockButton label="Enter" onPress={() => sendKey("Enter")}>
             <Text style={styles.dockText}>Enter</Text>
           </DockButton>
           <DockButton label="More keys" onPress={() => setKeysOpen(true)}>
@@ -554,6 +627,8 @@ const styles = StyleSheet.create({
     gap: 8,
     borderRadius: 10,
     backgroundColor: tokens.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: tokens.border,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
@@ -568,7 +643,9 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 8,
     paddingVertical: 6,
-    backgroundColor: "rgba(15,15,14,0.86)",
+    backgroundColor: "rgba(15,15,14,0.88)",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: tokens.border,
   },
   dockButton: {
     flex: 1,
