@@ -25,6 +25,7 @@ import {
   dialogTitle,
   formatFileRow,
   fullScreenHeader,
+  headerPillLabel,
   isTicketFresh,
   LIVE_VIEW_TICKET_TTL_MS,
   liveKeyboardStep,
@@ -1151,5 +1152,19 @@ describe("lazy live-view tickets and conditional clock", () => {
     expect(dialogButtons("alert")).toEqual({ confirm: "OK", cancel: null });
     expect(dialogTitle("beforeunload")).toBe("Leave page?");
     expect(dialogButtons("beforeunload")).toEqual({ confirm: "Leave", cancel: "Stay" });
+  });
+
+  it("shows Offline in the header status pill when the laptop is unreachable", () => {
+    expect(headerPillLabel({ reachable: false, headerTone: "idle", dotTone: "idle" })).toBe(
+      "Offline",
+    );
+    expect(headerPillLabel({ reachable: true, headerTone: "control", dotTone: "live" })).toBe(
+      "In control",
+    );
+    expect(headerPillLabel({ reachable: true, headerTone: "review", dotTone: "pending" })).toBe(
+      "Needs you",
+    );
+    expect(headerPillLabel({ reachable: true, headerTone: "live", dotTone: "live" })).toBe("Live");
+    expect(headerPillLabel({ reachable: true, headerTone: "idle", dotTone: "idle" })).toBe("Idle");
   });
 });

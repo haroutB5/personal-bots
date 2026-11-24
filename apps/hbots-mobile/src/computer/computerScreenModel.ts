@@ -607,3 +607,29 @@ export function dialogButtons(type: PersonalBrowserDialog["type"]): {
       return { confirm: "Leave", cancel: "Stay" };
   }
 }
+
+/** Compact label for the header status pill. */
+export function headerPillLabel(input: {
+  readonly reachable: boolean;
+  readonly headerTone: HeaderLine["tone"];
+  readonly dotTone: ComputerDotTone;
+}): string {
+  if (!input.reachable) return "Offline";
+  switch (input.headerTone) {
+    case "control":
+      return "In control";
+    case "review":
+      return "Needs you";
+    case "live":
+      return "Live";
+    case "pending":
+      return "Starting";
+    case "problem":
+      return "Issue";
+    default:
+      if (input.dotTone === "live") return "Ready";
+      if (input.dotTone === "pending") return "Connecting";
+      if (input.dotTone === "problem") return "Issue";
+      return "Idle";
+  }
+}

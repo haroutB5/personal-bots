@@ -24,7 +24,7 @@ import {
   IconShield,
   IconWorld,
 } from "../ui/icons";
-import { useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { memo, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { BotAvatar } from "../shell/BotAvatar";
@@ -417,7 +417,7 @@ export function SensitiveCard({
   );
 }
 
-export function ActivityCard({
+export const ActivityCard = memo(function ActivityCard({
   events,
   limit,
   onSeeAll,
@@ -445,7 +445,7 @@ export function ActivityCard({
       )}
     </Card>
   );
-}
+});
 
 export function ActivityList({
   groups,
@@ -508,15 +508,15 @@ export function ActivityRowView({
           {row.text}
           {more > 0 ? <Text style={styles.moreCount}> · +{more} more</Text> : null}
         </Text>
-        {row.outcome === null ? null : (
+        {row.outcome !== null || row.failed ? (
           <View style={[styles.outcomePill, row.failed ? styles.outcomePillFailed : null]}>
             <Text
               style={[styles.outcomePillText, row.failed ? styles.outcomePillTextFailed : null]}
             >
-              {row.outcome}
+              {row.outcome ?? "failed"}
             </Text>
           </View>
-        )}
+        ) : null}
       </View>
       <Text style={styles.activityTime}>{formatActivityTime(row.at)}</Text>
     </>
@@ -535,6 +535,7 @@ export function ComputerActions({
   inControl,
   canTake = true,
   takeDisabled,
+  takeLabel = "Take control",
   handBackLabel,
   onTake,
   onHandBack,
@@ -545,6 +546,7 @@ export function ComputerActions({
   readonly inControl: boolean;
   readonly canTake?: boolean;
   readonly takeDisabled: boolean;
+  readonly takeLabel?: string;
   readonly handBackLabel: string;
   readonly onTake: () => void;
   readonly onHandBack: () => void;
@@ -571,7 +573,7 @@ export function ComputerActions({
           style={[styles.primaryButtonWide, takeDisabled ? styles.disabled : null]}
         >
           <Text style={styles.primaryButtonText} numberOfLines={1}>
-            Take control
+            {takeLabel}
           </Text>
         </Pressable>
       ) : null}

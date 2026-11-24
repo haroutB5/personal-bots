@@ -4,7 +4,7 @@ import {
   formatActivityTime,
 } from "@hbots/personal-client/computer/computerModel";
 import type { ComputerSource } from "@hbots/personal-client/computer/computerContract";
-import { mergeActivity } from "@hbots/personal-client/computer/computerActivity";
+import { latestBotAction, mergeActivity } from "@hbots/personal-client/computer/computerActivity";
 import {
   browserDriver,
   desktopDriver,
@@ -83,6 +83,7 @@ import {
   desktopEvents,
   desktopQueue,
   fullScreenHeader,
+  headerPillLabel,
   isTicketFresh,
   liveViewMode,
   needsClockTick,
@@ -167,7 +168,8 @@ export function ComputerScreen({
   const autoGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hadBrowserControlRef = useRef(false);
-  const ticketInFlightRef = useRef(false);
+  const ticketReqIdRef = useRef(0);
+  const ticketInFlightIdRef = useRef<number | null>(null);
   const handledRefreshNonceRef = useRef(0);
   // Live views with their hidden field open for a password (inline and full screen can both mount).
   const [passwordFields, setPasswordFields] = useState(0);
@@ -219,18 +221,7 @@ export function ComputerScreen({
   const browserEventList = useMemo(() => browserEvents(events), [events]);
   const desktopEventList = useMemo(() => desktopEvents(events), [events]);
 
-  const lastAction = useMemo(() => {
-    let best: { source: ComputerSource; at: number; botName: string | null } | null = null;
-    for (const event of events) {
-      if (["control", "release", "stop", "help"].includes(event.kind)) continue;
-      if (/^you\b/i.test(event.summary)) continue;
-      const at = Date.parse(event.at);
-      if (best === null || at > best.at) {
-        best = { source: event.source, at, botName: event.botName };
-      }
-    }
-    return best;
-  }, [events]);
+  const lastAction = useMemo(() => latestBotAction(events), [events]);
 
   const controller = status?.controller;
   const youBrowser = controller?._tag === "Human" && controller.self;
@@ -398,16 +389,17 @@ export function ComputerScreen({
     const explicitRefresh = ticketRefreshNonce !== handledRefreshNonceRef.current;
     const fresh = isTicketFresh(streamAccess?.fetchedAt ?? null, Date.now());
     if (!explicitRefresh && fresh) return;
-    if (ticketInFlightRef.current && !explicitRefresh) return;
+    if (ticketInFlightIdRef.current !== null && !explicitRefresh) return;
 
     handledRefreshNonceRef.current = ticketRefreshNonce;
-    ticketInFlightRef.current = true;
+    const reqId = ++ticketReqIdRef.current;
+    ticketInFlightIdRef.current = reqId;
     let cancelled = false;
     setUrlError(null);
     native
       .liveViews()
       .then((next) => {
-        if (cancelled) return;
+        if (cancelled || ticketReqIdRef.current !== reqId) return;
         setStreamAccess((prev) => ({
           urls: next,
           epoch: (prev?.epoch ?? 0) + 1,
@@ -415,16 +407,28 @@ export function ComputerScreen({
         }));
       })
       .catch(() => {
-        if (cancelled) return;
+        if (cancelled || ticketReqIdRef.current !== reqId) return;
         setUrlError("Couldn't open the live view.");
       })
       .finally(() => {
-        ticketInFlightRef.current = false;
+        if (ticketInFlightIdRef.current === reqId) {
+          ticketInFlightIdRef.current = null;
+        }
       });
     return () => {
       cancelled = true;
+      if (ticketInFlightIdRef.current === reqId) {
+        ticketInFlightIdRef.current = null;
+      }
     };
   }, [native, needTicket, ticketRefreshNonce, streamAccess?.fetchedAt]);
+
+  const openFullScreen = (source: ComputerSource) => {
+    if (!isTicketFresh(streamAccess?.fetchedAt ?? null, Date.now())) {
+      refreshURLs();
+    }
+    setFullScreenSource(source);
+  };
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect -- the toolbar address follows the embedded view
@@ -453,9 +457,10 @@ export function ComputerScreen({
   const takeControl = async () => {
     setTakeError(null);
     setActionError(null);
+    setShown("browser");
     setPausedDriver(browserDriverNow.state === "using" ? browserDriverNow : null);
     setTake((current) => takeStep(current, { kind: "requested", source: "browser" }));
-    setFullScreenSource("browser");
+    openFullScreen("browser");
     const result = await takeBrowser({ environmentId, input: {} });
     const failure = commandFailureMessage(result, "Could not take the browser.");
     if (failure !== null) {
@@ -492,6 +497,7 @@ export function ComputerScreen({
           const result = await closeBrowser({ environmentId, input: {} });
           const failure = commandFailureMessage(result, "Could not close the browser.");
           if (failure !== null) setActionError(failure);
+          else setFullScreenSource((current) => (current === "browser" ? null : current));
         } finally {
           setStopBusy(false);
         }
@@ -599,8 +605,14 @@ export function ComputerScreen({
     browserDriver: browserDriverNow,
     desktopDriver: desktopDriverNow,
   });
-  const statusPillLabel = headerPillLabel(header.tone, dotTone);
-  const statusPillColor = toneColor(header.tone !== "idle" ? header.tone : dotTone);
+  const statusPillLabel = headerPillLabel({
+    reachable,
+    headerTone: header.tone,
+    dotTone,
+  });
+  const statusPillColor = toneColor(
+    !reachable ? "idle" : header.tone !== "idle" ? header.tone : dotTone,
+  );
   const browserToolbarVisible = shown === "browser" && showBrowserToolbar(stage);
   const pipSource: ComputerSource = fullScreenSource ?? shown;
 
@@ -645,7 +657,11 @@ export function ComputerScreen({
                   accessibilityState={{ selected, disabled: unavailable }}
                   disabled={unavailable || !reachable}
                   onPress={() => selectSource(source)}
-                  style={[styles.segmentTab, selected ? styles.segmentTabActive : null]}
+                  style={[
+                    styles.segmentTab,
+                    selected ? styles.segmentTabActive : null,
+                    unavailable || !reachable ? styles.disabled : null,
+                  ]}
                 >
                   <Icon size={16} color={selected ? tokens.text : tokens.textSecondary} />
                   <Text style={[styles.segmentText, selected ? styles.segmentTextActive : null]}>
@@ -711,22 +727,32 @@ export function ComputerScreen({
           />
         ) : null}
 
-        <View style={styles.stage}>
+        <View style={[styles.stage, youShown ? styles.stageControl : null]}>
           {shown === "browser" ? (
             isLive ? (
-              <ComputerLiveView
-                ref={liveRef}
-                mode="browser"
-                url={urls?.browser ?? null}
-                interactive={youBrowser}
-                onPasswordField={passwordField}
-                fullScreen={false}
-                paused={!liveActive}
-                attemptKey={urlEpoch}
-                syncViewport={false}
-                onFrameSize={handleFrameSize}
-                onNeedsURL={refreshURLs}
-              />
+              <View>
+                <ComputerLiveView
+                  ref={liveRef}
+                  mode="browser"
+                  url={urls?.browser ?? null}
+                  interactive={youBrowser}
+                  onPasswordField={passwordField}
+                  fullScreen={false}
+                  paused={!liveActive}
+                  attemptKey={urlEpoch}
+                  syncViewport={false}
+                  onFrameSize={handleFrameSize}
+                  onNeedsURL={refreshURLs}
+                />
+                {youBrowser ? null : (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Open browser full screen"
+                    onPress={() => openFullScreen("browser")}
+                    style={StyleSheet.absoluteFill}
+                  />
+                )}
+              </View>
             ) : (
               <StagePlaceholder
                 stage={stage}
@@ -742,7 +768,7 @@ export function ComputerScreen({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Open desktop full screen"
-                onPress={() => setFullScreenSource("desktop")}
+                onPress={() => openFullScreen("desktop")}
               >
                 <ComputerLiveView
                   mode="desktop"
@@ -764,7 +790,7 @@ export function ComputerScreen({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Open desktop full screen"
-                  onPress={() => setFullScreenSource("desktop")}
+                  onPress={() => openFullScreen("desktop")}
                   style={styles.desktopExpandButton}
                 >
                   <IconMaximize size={16} color={tokens.text} />
@@ -823,7 +849,7 @@ export function ComputerScreen({
               accessibilityRole="button"
               accessibilityLabel="Open browser full screen"
               disabled={!isLive}
-              onPress={() => setFullScreenSource("browser")}
+              onPress={() => openFullScreen("browser")}
               style={[styles.toolButton, !isLive ? styles.disabled : null]}
             >
               <IconMaximize size={18} color={tokens.text} />
@@ -889,6 +915,7 @@ export function ComputerScreen({
                 inControl={youBrowser}
                 canTake
                 takeDisabled={actions.takeDisabled}
+                takeLabel={otherDevice ? "Take it here" : "Take control"}
                 handBackLabel={
                   queue.paused !== null && queue.paused.botName.length <= 14
                     ? `Hand back to ${queue.paused.botName}`
@@ -1259,26 +1286,6 @@ function StagePlaceholder({
   );
 }
 
-function headerPillLabel(headerTone: string, dotTone: string): string {
-  switch (headerTone) {
-    case "control":
-      return "In control";
-    case "review":
-      return "Needs you";
-    case "live":
-      return "Live";
-    case "pending":
-      return "Starting";
-    case "problem":
-      return "Issue";
-    default:
-      if (dotTone === "live") return "Ready";
-      if (dotTone === "pending") return "Connecting";
-      if (dotTone === "problem") return "Issue";
-      return "Idle";
-  }
-}
-
 function toneColor(tone: string): string {
   switch (tone) {
     case "live":
@@ -1289,7 +1296,7 @@ function toneColor(tone: string): string {
     case "problem":
       return tokens.danger;
     case "control":
-      return tokens.primary;
+      return tokens.info;
     default:
       return tokens.textTertiary;
   }
@@ -1414,6 +1421,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: tokens.border,
     backgroundColor: tokens.surface,
+  },
+  stageControl: {
+    borderWidth: 1.5,
+    borderColor: tokens.info,
   },
   placeholder: { alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   placeholderBadge: {

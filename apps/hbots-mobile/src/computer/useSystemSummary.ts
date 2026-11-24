@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -101,8 +101,10 @@ const sharedRegistry = createSystemSummaryRegistry();
  * instance so only one poller runs at a time and late mounts paint immediately.
  */
 export function useSystemSummary(native: NativePersonal): PhoneSystemSummary | null {
-  return useSyncExternalStore(
-    (onStoreChange) => sharedRegistry.subscribe(native, () => onStoreChange()),
-    () => sharedRegistry.getSnapshot(native),
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => sharedRegistry.subscribe(native, () => onStoreChange()),
+    [native],
   );
+  const getSnapshot = useCallback(() => sharedRegistry.getSnapshot(native), [native]);
+  return useSyncExternalStore(subscribe, getSnapshot);
 }

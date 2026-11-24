@@ -4,6 +4,7 @@ import {
   formatGB,
 } from "@hbots/personal-client/computer/systemStats";
 import { IconServer } from "../ui/icons";
+import { memo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { NativePersonal } from "../personal/nativePersonalClient";
@@ -38,7 +39,11 @@ function clampPct(value: number): number {
  * CPU/Memory/Disk meters, inline thermal & fan chips, and an optional 1-line
  * App server status footer when server telemetry is present.
  */
-export function MachineStatsCard({ native }: { readonly native: NativePersonal }) {
+export const MachineStatsCard = memo(function MachineStatsCard({
+  native,
+}: {
+  readonly native: NativePersonal;
+}) {
   const summary = useSystemSummary(native);
   if (summary === null) return null;
 
@@ -89,7 +94,7 @@ export function MachineStatsCard({ native }: { readonly native: NativePersonal }
   if (summary.cpuTempC !== null) {
     chips.push({
       key: "cpuTemp",
-      text: `${Math.round(summary.cpuTempC)} °C`,
+      text: `CPU ${Math.round(summary.cpuTempC)} °C`,
       hot: summary.cpuTempC >= HOT_CPU_TEMP_C,
     });
   }
@@ -159,17 +164,19 @@ export function MachineStatsCard({ native }: { readonly native: NativePersonal }
                   {tile.detail}
                 </Text>
               )}
-              <View style={styles.meterTrack}>
-                <View
-                  style={[
-                    styles.meterFill,
-                    {
-                      width: `${tile.percent ?? 0}%`,
-                      backgroundColor: tile.busy ? tokens.needs : tokens.working,
-                    },
-                  ]}
-                />
-              </View>
+              {tile.percent === null ? null : (
+                <View style={styles.meterTrack}>
+                  <View
+                    style={[
+                      styles.meterFill,
+                      {
+                        width: `${tile.percent > 0 ? Math.max(4, tile.percent) : 0}%`,
+                        backgroundColor: tile.busy ? tokens.needs : tokens.working,
+                      },
+                    ]}
+                  />
+                </View>
+              )}
             </View>
           ))}
         </View>
@@ -191,7 +198,7 @@ export function MachineStatsCard({ native }: { readonly native: NativePersonal }
       ) : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {
