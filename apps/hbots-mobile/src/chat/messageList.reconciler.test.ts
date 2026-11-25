@@ -511,6 +511,42 @@ describe("MessageList through the reconciler", () => {
     expect(counts.textDraws.get("Third paragraph is growing now")).toBe(1);
   });
 
+  it("R18 streaming chunks keep FlatList extraData and renderItem stable and skip card redraws", async () => {
+    const card = { kind: "question", id: "q1", card: { requestId: "q1" } };
+    const ctx = { nowMs: 1_000 };
+    const history = chat(10);
+    const makeItems = (tail: string) => [
+      ...history,
+      card,
+      message("a-stream", "assistant", tail, { streaming: true }),
+    ];
+    const r = mount(
+      props({
+        items: makeItems("Hello"),
+        cardContext: ctx,
+        latestMessageStatus: { messageId: "u9", status: "read" },
+      }),
+    );
+    const flatList = r.root.findByType((await import("./testSupport/reactNativeStub")).FlatList);
+    const initialExtraData = flatList.props.extraData;
+    const initialRenderItem = flatList.props.renderItem;
+    reset();
+
+    for (const tail of ["Hello world", "Hello world, streaming", "Hello world, streaming fast"]) {
+      update(
+        props({
+          items: makeItems(tail),
+          cardContext: ctx,
+          latestMessageStatus: { messageId: "u9", status: "read" },
+        }),
+      );
+      expect(flatList.props.extraData).toBe(initialExtraData);
+      expect(flatList.props.renderItem).toBe(initialRenderItem);
+    }
+    expect(counts.cards).toBe(0);
+    expect(counts.messageRows).toBe(3);
+  });
+
   it("R15 a swipe to reply on a reply that grew after its row mounted quotes the grown text", () => {
     const onReply = vi.fn();
     mount(

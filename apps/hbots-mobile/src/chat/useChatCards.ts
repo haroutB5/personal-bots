@@ -39,7 +39,7 @@ import {
 import type { SecretAccessChoice } from "@hbots/personal-client/settings/secretAccess";
 import { mergeTaskLists } from "@hbots/personal-client/conversation/taskPresentation";
 import { placeCallCards } from "@hbots/personal-client/conversation/conversationModel";
-import { useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatEnvironment } from "./chatEnvironment";
 import type { CardContext } from "./cards/types";
@@ -215,56 +215,38 @@ export function useChatCards(input: {
     { reportFailure: false },
   );
 
-  const clearSecretError = (requestId: string) => {
-    setSecretErrors((current) => withSecretError(current, requestId, null));
-  };
-
-  const provideSecret = (
-    requestId: string,
-    value: string,
-    shared: boolean,
-    access: SecretAccessChoice,
-  ) => {
-    if (environmentId === null) return;
-    setSecretErrors((current) => withSecretError(current, requestId, null));
-    setRespondingSecretIds((current) => new Set(current).add(requestId));
-    void fulfillSecret({
+  const latestSecretState = useRef({
+    environmentId,
+    pendingSecrets,
+    seenSecrets,
+    secretHistory,
+    refreshPendingSecrets: pendingSecretsQuery.refresh,
+    refreshApprovals: approvalsQuery.refresh,
+  });
+  useLayoutEffect(() => {
+    latestSecretState.current = {
       environmentId,
-      input: {
-        requestId: requestId as never,
-        value: Redacted.make(value),
-        shared,
-        mode: access.mode,
-        origins: [...access.origins],
-        placement: access.placement,
-      },
-    }).then((result) => {
-      if (result._tag === "Success") {
-        setSecretOutcomes((current) => new Map(current).set(requestId, "provided"));
-        rememberSecretOutcome(requestId, "provided");
-        setSecretErrors((current) => withSecretError(current, requestId, null));
-      } else {
-        const message = secretCommandError(result, "Couldn't save this secret. Try again.");
-        if (message !== null) {
-          setSecretErrors((current) => withSecretError(current, requestId, message));
-        }
-      }
-      setRespondingSecretIds((current) => {
-        const next = new Set(current);
-        next.delete(requestId);
-        return next;
-      });
-      pendingSecretsQuery.refresh();
-    });
-  };
+      pendingSecrets,
+      seenSecrets,
+      secretHistory,
+      refreshPendingSecrets: pendingSecretsQuery.refresh,
+      refreshApprovals: approvalsQuery.refresh,
+    };
+  });
 
-  const rememberSecretOutcome = (requestId: string, outcome: SecretRequestOutcome) => {
-    if (environmentId === null) return;
+  const rememberSecretOutcome = useCallback((requestId: string, outcome: SecretRequestOutcome) => {
+    const {
+      environmentId: envId,
+      pendingSecrets: currentPending,
+      seenSecrets: currentSeen,
+      secretHistory: currentHistory,
+    } = latestSecretState.current;
+    if (envId === null) return;
     const request =
-      pendingSecrets.find((entry) => String(entry.requestId) === requestId) ??
-      seenSecrets.get(requestId);
+      currentPending.find((entry) => String(entry.requestId) === requestId) ??
+      currentSeen.get(requestId);
     if (request === undefined) return;
-    const next = appendSecretOutcome(secretHistory, {
+    const next = appendSecretOutcome(currentHistory, {
       requestId,
       threadId: String(request.threadId),
       createdAtMs: DateTime.toEpochMillis(request.createdAt),
@@ -273,54 +255,104 @@ export function useChatCards(input: {
       outcome,
     });
     setSecretHistory(next);
-    writeSecretOutcomeHistory(environmentId, next);
-  };
+    writeSecretOutcomeHistory(envId, next);
+  }, []);
 
-  const declineSecret = (requestId: string) => {
-    if (environmentId === null) return;
+  const clearSecretError = useCallback((requestId: string) => {
     setSecretErrors((current) => withSecretError(current, requestId, null));
-    setRespondingSecretIds((current) => new Set(current).add(requestId));
-    void cancelSecret({
-      environmentId,
-      input: { requestId: requestId as never },
-    }).then((result) => {
-      if (result._tag === "Success") {
-        setSecretOutcomes((current) => new Map(current).set(requestId, "declined"));
-        rememberSecretOutcome(requestId, "declined");
-        setSecretErrors((current) => withSecretError(current, requestId, null));
-      } else {
-        const message = secretCommandError(result, "Couldn't decline this request. Try again.");
-        if (message !== null) {
-          setSecretErrors((current) => withSecretError(current, requestId, message));
-        }
-      }
-      setRespondingSecretIds((current) => {
-        const next = new Set(current);
-        next.delete(requestId);
-        return next;
-      });
-      pendingSecretsQuery.refresh();
-    });
-  };
+  }, []);
 
-  const decideConnectionApproval = (approvalId: string, decision: "approved" | "denied") => {
-    if (environmentId === null) return;
-    setRespondingApprovalIds((current) => new Set(current).add(approvalId));
-    void decideApproval({
-      environmentId,
-      input: { approvalId: approvalId as never, decision },
-    }).then((result) => {
-      if (result._tag === "Success") {
-        setApprovalOutcomes((current) => new Map(current).set(approvalId, decision));
-      }
-      setRespondingApprovalIds((current) => {
-        const next = new Set(current);
-        next.delete(approvalId);
-        return next;
+  const provideSecret = useCallback(
+    (requestId: string, value: string, shared: boolean, access: SecretAccessChoice) => {
+      const envId = latestSecretState.current.environmentId;
+      if (envId === null) return;
+      setSecretErrors((current) => withSecretError(current, requestId, null));
+      setRespondingSecretIds((current) => new Set(current).add(requestId));
+      void fulfillSecret({
+        environmentId: envId,
+        input: {
+          requestId: requestId as never,
+          value: Redacted.make(value),
+          shared,
+          mode: access.mode,
+          origins: [...access.origins],
+          placement: access.placement,
+        },
+      }).then((result) => {
+        if (result._tag === "Success") {
+          setSecretOutcomes((current) => new Map(current).set(requestId, "provided"));
+          rememberSecretOutcome(requestId, "provided");
+          setSecretErrors((current) => withSecretError(current, requestId, null));
+        } else {
+          const message = secretCommandError(result, "Couldn't save this secret. Try again.");
+          if (message !== null) {
+            setSecretErrors((current) => withSecretError(current, requestId, message));
+          }
+        }
+        setRespondingSecretIds((current) => {
+          const next = new Set(current);
+          next.delete(requestId);
+          return next;
+        });
+        latestSecretState.current.refreshPendingSecrets();
       });
-      approvalsQuery.refresh();
-    });
-  };
+    },
+    [fulfillSecret, rememberSecretOutcome],
+  );
+
+  const declineSecret = useCallback(
+    (requestId: string) => {
+      const envId = latestSecretState.current.environmentId;
+      if (envId === null) return;
+      setSecretErrors((current) => withSecretError(current, requestId, null));
+      setRespondingSecretIds((current) => new Set(current).add(requestId));
+      void cancelSecret({
+        environmentId: envId,
+        input: { requestId: requestId as never },
+      }).then((result) => {
+        if (result._tag === "Success") {
+          setSecretOutcomes((current) => new Map(current).set(requestId, "declined"));
+          rememberSecretOutcome(requestId, "declined");
+          setSecretErrors((current) => withSecretError(current, requestId, null));
+        } else {
+          const message = secretCommandError(result, "Couldn't decline this request. Try again.");
+          if (message !== null) {
+            setSecretErrors((current) => withSecretError(current, requestId, message));
+          }
+        }
+        setRespondingSecretIds((current) => {
+          const next = new Set(current);
+          next.delete(requestId);
+          return next;
+        });
+        latestSecretState.current.refreshPendingSecrets();
+      });
+    },
+    [cancelSecret, rememberSecretOutcome],
+  );
+
+  const decideConnectionApproval = useCallback(
+    (approvalId: string, decision: "approved" | "denied") => {
+      const envId = latestSecretState.current.environmentId;
+      if (envId === null) return;
+      setRespondingApprovalIds((current) => new Set(current).add(approvalId));
+      void decideApproval({
+        environmentId: envId,
+        input: { approvalId: approvalId as never, decision },
+      }).then((result) => {
+        if (result._tag === "Success") {
+          setApprovalOutcomes((current) => new Map(current).set(approvalId, decision));
+        }
+        setRespondingApprovalIds((current) => {
+          const next = new Set(current);
+          next.delete(approvalId);
+          return next;
+        });
+        latestSecretState.current.refreshApprovals();
+      });
+    },
+    [decideApproval],
+  );
 
   const leadQuery = native.bots.usePersonalLeadBotChanges(environmentId);
   const leadBotChanges = useMemo(

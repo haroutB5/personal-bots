@@ -431,7 +431,7 @@ function UsageSheet({
   const refreshProviders = native.client.useAtomCommand(native.bots.serverRefreshProviders, {
     reportFailure: false,
   });
-  const tokenUsage = native.bots.usePersonalTokenUsage(native.environmentId);
+  const tokenUsage = native.bots.usePersonalTokenUsage(visible ? native.environmentId : null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const probed = useRef(false);

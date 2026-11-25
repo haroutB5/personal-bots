@@ -133,6 +133,18 @@ export function sameRowProps(left: RowProps, right: RowProps): boolean {
   return left.shared === right.shared && sameRowInputs(left.inputs, right.inputs);
 }
 
+const ITEM_ROW_CACHE = new WeakMap<ConversationItem, Extract<Row, { readonly kind: "item" }>>();
+
+/** Reuses one Row wrapper per ConversationItem so FlatList Cell PureComponents skip unchanged rows. */
+export function itemRow(item: ConversationItem): Extract<Row, { readonly kind: "item" }> {
+  let cached = ITEM_ROW_CACHE.get(item);
+  if (cached === undefined) {
+    cached = { kind: "item", key: item.id, item };
+    ITEM_ROW_CACHE.set(item, cached);
+  }
+  return cached;
+}
+
 /** `rows.toReversed()` once per rows array: the same rows give the same reversed array. */
 export function createRowReverser<T>(): (rows: ReadonlyArray<T>) => ReadonlyArray<T> {
   let lastRows: ReadonlyArray<T> | null = null;
@@ -144,4 +156,48 @@ export function createRowReverser<T>(): (rows: ReadonlyArray<T>) => ReadonlyArra
     }
     return lastReversed;
   };
+}
+
+/** Keeps the previous value reference when structurally equal, so `rowContext` stays stable. */
+export function createStableValue<T>(same: (left: T, right: T) => boolean): (next: T) => T {
+  let held: { readonly value: T } | null = null;
+  return (next) => {
+    if (held !== null && same(held.value, next)) return held.value;
+    held = { value: next };
+    return next;
+  };
+}
+
+export function sameStringMap(
+  left: ReadonlyMap<string, string>,
+  right: ReadonlyMap<string, string>,
+): boolean {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const [key, value] of left) {
+    if (right.get(key) !== value) return false;
+  }
+  return true;
+}
+
+export function sameChoicesMap(
+  left: ReadonlyMap<string, ChoicesState>,
+  right: ReadonlyMap<string, ChoicesState>,
+): boolean {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const [key, value] of left) {
+    const other = right.get(key);
+    if (other === undefined || !sameValue(value, other, 2)) return false;
+  }
+  return true;
+}
+
+export function sameLatestMessageStatus(
+  left: LatestMessageReadStatus | null,
+  right: LatestMessageReadStatus | null,
+): boolean {
+  if (left === right) return true;
+  if (left === null || right === null) return false;
+  return left.messageId === right.messageId && left.status === right.status;
 }

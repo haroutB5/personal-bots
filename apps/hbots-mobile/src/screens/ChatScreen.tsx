@@ -59,7 +59,11 @@ import {
   driverSupportsActiveSteering,
 } from "@hbots/personal-client/feed/messageReadStatus";
 import { sharedPreferencesFromProfile } from "@hbots/personal-client/settings/profilePreferences";
-import type { PersonalBotThread } from "@t3tools/contracts";
+import type { PersonalBot, PersonalBotThread } from "@t3tools/contracts";
+
+const EMPTY_BOTS: ReadonlyArray<PersonalBot> = [];
+const EMPTY_THREADS: ReadonlyArray<PersonalBotThread> = [];
+const EMPTY_ID_SET: ReadonlySet<string> = new Set();
 import type { EnvironmentThreadShell } from "@hbots/personal-client/bots/threadShell";
 
 import type { ChatEnvironment } from "../chat/chatEnvironment";
@@ -206,7 +210,10 @@ export function ChatScreen({
   });
   const messageListControl = useRef<MessageListHandle | null>(null);
   const composerControl = useRef<ComposerControl | null>(null);
-  const revealCard = (itemId: string) => messageListControl.current?.scrollToCard(itemId);
+  const revealCard = useCallback(
+    (itemId: string) => messageListControl.current?.scrollToCard(itemId),
+    [],
+  );
 
   const interrupt = native.client.useAtomCommand(chat.thread.interruptTurn, {
     reportFailure: false,
@@ -245,12 +252,13 @@ export function ChatScreen({
   const startTurn = native.client.useAtomCommand(chat.thread.startTurn, {
     reportFailure: false,
   });
-  const tokenUsage = native.bots.usePersonalTokenUsage(environmentId);
+  const tokenUsage = native.bots.usePersonalTokenUsage(usageOpen ? environmentId : null);
 
-  const links = list.data?.threads ?? [];
+  const bots = list.data?.bots ?? EMPTY_BOTS;
+  const links = list.data?.threads ?? EMPTY_THREADS;
   const record = useMemo(
-    () => findChatBot(list.data?.bots ?? [], links, shells, botId, threadId),
-    [botId, links, list.data?.bots, shells, threadId],
+    () => findChatBot(bots, links, shells, botId, threadId),
+    [botId, bots, links, shells, threadId],
   );
   const thread = view.thread;
   // A failed load is retried by itself a few times; the error shows only after that.
@@ -287,21 +295,22 @@ export function ChatScreen({
   const callView = useCallView();
   const callBot = record?.bot ?? null;
   const callsEnabled = callBot !== null && botVoiceCallsEnabled(callBot);
-  const startCall = callsEnabled
-    ? () => {
-        if (callView.call !== null) {
-          callSession?.setMinimised(false);
-          return;
-        }
-        void callSession?.start({
-          threadId,
-          botId: callBot.botId,
-          botName: callBot.name,
-          avatarShape: callBot.avatarShape ?? "blob",
-          avatarColor: botVoiceCallColour(callBot),
-        });
-      }
-    : null;
+  const callActive = callView.call !== null;
+  const startCallStable = useCallback(() => {
+    if (callActive) {
+      callSession?.setMinimised(false);
+      return;
+    }
+    if (callBot === null) return;
+    void callSession?.start({
+      threadId,
+      botId: callBot.botId,
+      botName: callBot.name,
+      avatarShape: callBot.avatarShape ?? "blob",
+      avatarColor: botVoiceCallColour(callBot),
+    });
+  }, [callActive, callBot, callSession, threadId]);
+  const startCall = callsEnabled ? startCallStable : null;
   const cards = useChatCards({
     native,
     chat,
@@ -309,7 +318,7 @@ export function ChatScreen({
     threadId,
     projection: view.projection,
     items,
-    bots: list.data?.bots ?? [],
+    bots,
     botName: record?.bot?.name ?? "Bot",
     providers,
     nowMs: now,
@@ -351,8 +360,12 @@ export function ChatScreen({
     [cards.items, supportsActiveSteering, thread],
   );
   // A send the transcript now shows arrived: drop its failed bubble and saved copy.
-  const arrivedIds = useMemo(() => new Set(cards.items.map((item) => item.id)), [cards.items]);
+  const arrivedIds = useMemo(
+    () => (pending.length === 0 ? EMPTY_ID_SET : new Set(cards.items.map((item) => item.id))),
+    [cards.items, pending.length],
+  );
   useEffect(() => {
+    if (pending.length === 0) return;
     const arrived = pending.filter((message) => arrivedIds.has(message.id));
     if (arrived.length === 0) return;
     for (const message of arrived) composerControl.current?.forget(message.id);

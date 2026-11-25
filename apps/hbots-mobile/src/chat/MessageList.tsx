@@ -82,8 +82,13 @@ import {
 } from "./messageListModel";
 import {
   createRowReverser,
+  createStableValue,
+  itemRow,
   rowInputs,
+  sameChoicesMap,
+  sameLatestMessageStatus,
   sameRowProps,
+  sameStringMap,
   type Row,
   type RowContext,
   type RowInputs,
@@ -1371,6 +1376,8 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
   );
 }, sameRowProps);
 
+const EMPTY_ID_SET: ReadonlySet<string> = new Set();
+
 export function MessageList({
   threadId,
   native,
@@ -1443,10 +1450,13 @@ export function MessageList({
   const renderStartedAt = performance.now();
   const listRef = useRef<FlatList<Row>>(null);
   const highRefresh = useHighRefresh();
-  const arrivedIds = useMemo(() => new Set(items.map((item) => item.id)), [items]);
+  const arrivedIds = useMemo(
+    () => (pending.length === 0 ? EMPTY_ID_SET : new Set(items.map((item) => item.id))),
+    [items, pending.length],
+  );
   const rows = useMemo<ReadonlyArray<Row>>(
     () => [
-      ...items.map((item): Row => ({ kind: "item", key: item.id, item })),
+      ...items.map(itemRow),
       ...(work.phase === "idle"
         ? []
         : [{ kind: "work" as const, key: `work:${work.runId}`, work }]),
@@ -1471,8 +1481,18 @@ export function MessageList({
       rows: rows.length,
     });
   });
-  const contextTurns = useMemo(() => turnStartByAssistantItem(items), [items]);
-  const choiceStates = useMemo(() => choicesStates(items, busy), [items, busy]);
+  const [stabilizeContextTurns] = useState(() => createStableValue(sameStringMap));
+  const [stabilizeChoiceStates] = useState(() => createStableValue(sameChoicesMap));
+  const [stabilizeLatestStatus] = useState(() => createStableValue(sameLatestMessageStatus));
+  const contextTurns = useMemo(
+    () => stabilizeContextTurns(turnStartByAssistantItem(items)),
+    [items, stabilizeContextTurns],
+  );
+  const choiceStates = useMemo(
+    () => stabilizeChoiceStates(choicesStates(items, busy)),
+    [items, busy, stabilizeChoiceStates],
+  );
+  const stableLatestStatus = stabilizeLatestStatus(latestMessageStatus);
   const [reverseRows] = useState(createRowReverser<Row>);
   const handlerProps = {
     onReply,
@@ -1527,12 +1547,12 @@ export function MessageList({
     () => ({
       choiceStates,
       contextTurns,
-      latestMessageStatus,
+      latestMessageStatus: stableLatestStatus,
       cardContext,
       dayLabel: (at) => formatDayDivider(at, inDay(today)),
       groupSpeaker,
     }),
-    [choiceStates, contextTurns, latestMessageStatus, cardContext, groupSpeaker, today],
+    [choiceStates, contextTurns, stableLatestStatus, cardContext, groupSpeaker, today],
   );
   const renderItem = useCallback(
     ({ item: row }: ListRenderItemInfo<Row>) => (
