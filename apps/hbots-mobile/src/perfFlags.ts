@@ -10,7 +10,9 @@ export type AndroidPerfOptimization =
   /** Check for an app update when the connection comes back, at most once a minute. */
   | "android-update-on-reconnect"
   /** Compact thread snapshots (dedupe bodies + omit local turn items) before caching on disk. */
-  | "android-compact-thread-cache";
+  | "android-compact-thread-cache"
+  /** Use tagged DateTime.Utc JSON reviver for AES-GCM authenticated thread cache files. */
+  | "android-fast-cache-decode";
 
 let off: ReadonlySet<string> = new Set();
 

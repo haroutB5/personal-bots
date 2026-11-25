@@ -274,4 +274,36 @@ describe("thread cache file", () => {
         : null,
     ).toBe(longReply);
   });
+
+  it("fast-decodes cached snapshots identically to Effect Schema and honors the kill switch", async () => {
+    await writeCachedThread("environment-phone", snapshot);
+
+    const fastLoaded = Option.getOrThrow(
+      await readCachedThread("environment-phone", snapshot.projection.thread.id),
+    );
+    setPerfOff(["android-fast-cache-decode"]);
+    const schemaLoaded = Option.getOrThrow(
+      await readCachedThread("environment-phone", snapshot.projection.thread.id),
+    );
+    expect(fastLoaded).toEqual(schemaLoaded);
+    expect(DateTime.isUtc(fastLoaded.projection.thread.createdAt)).toBe(true);
+    expect(DateTime.isUtc(fastLoaded.projection.messages[0]!.createdAt)).toBe(true);
+  });
+
+  it("rejects malformed optional fields in fast decode so schema fallback handles them cleanly", async () => {
+    const { tryFastDecodeThreadSnapshotJson } = await import("./threadSnapshotJson");
+    const validRaw = JSON.parse(JSON.stringify(snapshot));
+    validRaw.projection.thread.titleRegeneration = "not-an-object";
+    expect(tryFastDecodeThreadSnapshotJson(validRaw, snapshot.projection.thread.id)).toBeNull();
+
+    const defaultedRaw = JSON.parse(JSON.stringify(snapshot));
+    delete defaultedRaw.projection.thread.settledOverride;
+    delete defaultedRaw.projection.thread.settledAt;
+    delete defaultedRaw.projection.thread.lastVisitedAt;
+    const decoded = tryFastDecodeThreadSnapshotJson(defaultedRaw, snapshot.projection.thread.id);
+    expect(decoded).not.toBeNull();
+    expect(decoded?.projection.thread.settledOverride).toBeNull();
+    expect(decoded?.projection.thread.settledAt).toBeNull();
+    expect(decoded?.projection.thread.lastVisitedAt).toBeNull();
+  });
 });

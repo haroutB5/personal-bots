@@ -15,7 +15,7 @@ import * as Option from "effect/Option";
 import { androidPerfOptimizationOn } from "../perfFlags";
 import { readDecryptedText, writeEncryptedText } from "../platform/secureStorage";
 import { noteCacheRead, noteCacheWrite } from "./chatOpenPerf";
-import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
+import { decodeThreadSnapshotJson, tryFastDecodeThreadSnapshotJson } from "./threadSnapshotJson";
 
 export const CACHE_DIRECTORY = "hbots-thread-cache";
 
@@ -137,10 +137,17 @@ export async function readCachedThread(
   const decodedFrom = performance.now();
   if (text !== null) {
     try {
-      return finish(
-        Option.some(decodeThreadSnapshotJson(JSON.parse(text) as unknown)),
-        decodedFrom,
-      );
+      const parsed: unknown = JSON.parse(text);
+      if (androidPerfOptimizationOn("android-fast-cache-decode")) {
+        const fast = tryFastDecodeThreadSnapshotJson(parsed, threadId);
+        if (fast !== null) return finish(Option.some(fast), decodedFrom);
+        // Fast reviver mutates dates in place on partial walks before failing; re-parse cleanly for fallback.
+        return finish(
+          Option.some(decodeThreadSnapshotJson(JSON.parse(text) as unknown)),
+          decodedFrom,
+        );
+      }
+      return finish(Option.some(decodeThreadSnapshotJson(parsed)), decodedFrom);
     } catch {
       // Falls through: decrypted but not a snapshot, so it is dropped like any unreadable file.
     }
