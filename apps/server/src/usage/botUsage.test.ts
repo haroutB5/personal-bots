@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { UsageBotAggregator } from "./botUsage.ts";
-import { createOverrideRateTable, parseRateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  parseRateTable,
+  priceUsage,
+  priceUsageCost,
+} from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import { initialCodexScanState, parseCodexLine } from "../provider/Drivers/codexUsage.ts";
 
@@ -183,6 +188,52 @@ describe("UsageBotAggregator cost", () => {
     agg.add(record({ dedupeKey: "m:r" }));
     agg.add(record({ dedupeKey: "m:r" }));
     expect(agg.finish()[0]?.costUsd).toBeCloseTo(0.0013875, 10);
+  });
+
+  it("matches priceUsage costUsd identically in allocation-free priceUsageCost", () => {
+    const tiered = parseRateTable({
+      "claude-opus-5-5": {
+        input_cost_per_token: 3e-6,
+        output_cost_per_token: 15e-6,
+        cache_read_input_token_cost: 0.3e-6,
+        cache_creation_input_token_cost: 3.75e-6,
+        cache_creation_input_token_cost_above_1hr: 6e-6,
+        input_cost_per_token_above_200k_tokens: 6e-6,
+        output_cost_per_token_above_200k_tokens: 22.5e-6,
+        provider_specific_entry: { fast: 2 },
+      },
+    });
+    const overrides = createOverrideRateTable({
+      "custom-model": { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 },
+    });
+    const samples = [
+      record(),
+      record({ speed: "fast", cacheCreation1hTokens: 5 }),
+      record({
+        totals: {
+          uncachedInputTokens: 250_000,
+          cachedInputTokens: 1000,
+          cacheCreationTokens: 0,
+          outputTokens: 500,
+          reasoningTokens: 0,
+        },
+      }),
+      record({ model: "custom-model" }),
+      record({ model: "unknown-model" }),
+      record({ model: "unknown-model", reportedCostUsd: 0.42 }),
+      record({ reportedCostUsd: 0.19 }),
+      record({ provider: "deepseek", model: "deepseek-v4-flash" }),
+      record({ provider: "antigravity", model: "gemini-4-argon-high" }),
+    ];
+    for (const sample of samples) {
+      const full = priceUsage(tiered, sample, overrides);
+      const fast = priceUsageCost(tiered, sample, overrides);
+      if (full.costSource === "unpriced") {
+        expect(fast).toBeNull();
+      } else {
+        expect(fast).toBeCloseTo(full.costUsd, 15);
+      }
+    }
   });
 });
 

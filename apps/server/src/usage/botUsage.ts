@@ -18,7 +18,7 @@
  */
 import type { UsageProviderKind } from "@t3tools/contracts";
 
-import { priceUsage, type RateTable } from "./usagePricing.ts";
+import { priceUsageCost, type RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 /** The four buckets the usage page shows. Reasoning is inside output. */
@@ -100,8 +100,15 @@ export class UsageBotAggregator {
   readonly #toDay: (timestampMs: number) => string;
   readonly #sinceDay: string;
   readonly #untilDay: string;
+  readonly #minPossibleMs: number;
+  readonly #maxPossibleMs: number;
   readonly #rates: RateTable;
   readonly #priceOverrides: RateTable | undefined;
+  #lastDay = "";
+  #lastSessionId = "";
+  #lastProvider: UsageProviderKind | "" = "";
+  #lastModel = "";
+  #lastCell: MutableCell | undefined;
   #duplicatesDropped = 0;
   #outOfWindow = 0;
 
@@ -109,8 +116,20 @@ export class UsageBotAggregator {
     this.#toDay = makeDayFormatter(options.timeZone);
     this.#sinceDay = options.sinceDay;
     this.#untilDay = options.untilDay;
+    // Generous +/-26h UTC guard covers every IANA timezone (-12..+14) without calling Intl.
+    const sinceUtc = Date.parse(`${options.sinceDay}T00:00:00Z`);
+    const untilUtc = Date.parse(`${options.untilDay}T00:00:00Z`);
+    this.#minPossibleMs = Number.isFinite(sinceUtc)
+      ? sinceUtc - 26 * 3_600_000
+      : Number.NEGATIVE_INFINITY;
+    this.#maxPossibleMs = Number.isFinite(untilUtc)
+      ? untilUtc + 50 * 3_600_000
+      : Number.POSITIVE_INFINITY;
     this.#rates = options.rates ?? new Map();
-    this.#priceOverrides = options.priceOverrides;
+    this.#priceOverrides =
+      options.priceOverrides !== undefined && options.priceOverrides.size > 0
+        ? options.priceOverrides
+        : undefined;
   }
 
   get duplicatesDropped(): number {
@@ -128,11 +147,12 @@ export class UsageBotAggregator {
    * timestamps can have only second precision). Same rule as the usage page.
    */
   beginFile(): BotUsageFileScope {
-    const occurrences = new Map<string, number>();
+    let occurrences: Map<string, number> | undefined;
     return {
       add: (record) => {
         let dedupeKey = record.dedupeKey;
         if (record.provider === "codex" && record.sessionId.length > 0) {
+          occurrences ??= new Map<string, number>();
           const content = codexContentKey(record);
           const occurrence = (occurrences.get(content) ?? 0) + 1;
           occurrences.set(content, occurrence);
@@ -157,43 +177,64 @@ export class UsageBotAggregator {
       this.#seen.add(dedupeKey);
     }
 
-    const day = this.#toDay(record.timestampMs);
+    const ts = record.timestampMs;
+    if (ts < this.#minPossibleMs || ts > this.#maxPossibleMs) {
+      this.#outOfWindow += 1;
+      return false;
+    }
+
+    const day = this.#toDay(ts);
     if (day < this.#sinceDay || day > this.#untilDay) {
       this.#outOfWindow += 1;
       return false;
     }
 
-    const key = `${day}\u0000${record.sessionId}\u0000${record.provider}\u0000${record.model}`;
-    let cell = this.#cells.get(key);
-    if (cell === undefined) {
-      cell = {
-        day,
-        provider: record.provider,
-        model: record.model,
-        sessionId: record.sessionId,
-        totals: {
-          uncachedInputTokens: 0,
-          cachedInputTokens: 0,
-          cacheCreationTokens: 0,
-          outputTokens: 0,
-        },
-        records: 0,
-        costUsd: 0,
-        unpricedTokens: 0,
-      };
-      this.#cells.set(key, cell);
+    let cell = this.#lastCell;
+    if (
+      cell === undefined ||
+      day !== this.#lastDay ||
+      record.sessionId !== this.#lastSessionId ||
+      record.provider !== this.#lastProvider ||
+      record.model !== this.#lastModel
+    ) {
+      const key = `${day}\u0000${record.sessionId}\u0000${record.provider}\u0000${record.model}`;
+      cell = this.#cells.get(key);
+      if (cell === undefined) {
+        cell = {
+          day,
+          provider: record.provider,
+          model: record.model,
+          sessionId: record.sessionId,
+          totals: {
+            uncachedInputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: 0,
+          },
+          records: 0,
+          costUsd: 0,
+          unpricedTokens: 0,
+        };
+        this.#cells.set(key, cell);
+      }
+      this.#lastDay = day;
+      this.#lastSessionId = record.sessionId;
+      this.#lastProvider = record.provider;
+      this.#lastModel = record.model;
+      this.#lastCell = cell;
     }
-    cell.totals.uncachedInputTokens += record.totals.uncachedInputTokens;
-    cell.totals.cachedInputTokens += record.totals.cachedInputTokens;
-    cell.totals.cacheCreationTokens += record.totals.cacheCreationTokens;
-    cell.totals.outputTokens += record.totals.outputTokens;
+    const totals = record.totals;
+    cell.totals.uncachedInputTokens += totals.uncachedInputTokens;
+    cell.totals.cachedInputTokens += totals.cachedInputTokens;
+    cell.totals.cacheCreationTokens += totals.cacheCreationTokens;
+    cell.totals.outputTokens += totals.outputTokens;
     cell.records += 1;
     // Priced per record, because speed and reported cost can differ inside one cell.
-    const priced = priceUsage(this.#rates, record, this.#priceOverrides);
-    if (priced.costSource === "unpriced") {
-      cell.unpricedTokens += botUsageTotalTokens(record.totals);
+    const costUsd = priceUsageCost(this.#rates, record, this.#priceOverrides);
+    if (costUsd === null) {
+      cell.unpricedTokens += botUsageTotalTokens(totals);
     } else {
-      cell.costUsd += priced.costUsd;
+      cell.costUsd += costUsd;
     }
     return true;
   }
@@ -222,16 +263,7 @@ interface MutableCell {
 
 function codexContentKey(record: UsageRecord): string {
   const totals = record.totals;
-  return [
-    record.sessionId,
-    record.timestampMs,
-    record.model,
-    totals.uncachedInputTokens,
-    totals.cachedInputTokens,
-    totals.cacheCreationTokens,
-    totals.outputTokens,
-    totals.reasoningTokens,
-  ].join("\u0000");
+  return `${record.sessionId}\u0000${record.timestampMs}\u0000${record.model}\u0000${totals.uncachedInputTokens}\u0000${totals.cachedInputTokens}\u0000${totals.cacheCreationTokens}\u0000${totals.outputTokens}\u0000${totals.reasoningTokens}`;
 }
 
 /** The sum of a cell's four buckets: the headline figure (all input plus output). */

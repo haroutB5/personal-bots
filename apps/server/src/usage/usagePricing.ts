@@ -333,8 +333,18 @@ function promptTokens(totals: UsageTokenTotals): number {
 
 // A tier without the requested speed keeps the base tier's rate for that speed.
 function ratesAt(rate: ModelRate, speed: UsageSpeed, totals: UsageTokenTotals): TokenRates {
-  const prompt = promptTokens(totals);
-  const tier = rate.contextTiers.find((tier) => prompt > tier.thresholdTokens)?.rate;
+  let tier: SpeedRates | undefined;
+  const tiers = rate.contextTiers;
+  if (tiers.length > 0) {
+    const prompt = promptTokens(totals);
+    for (let i = 0; i < tiers.length; i += 1) {
+      const candidate = tiers[i]!;
+      if (prompt > candidate.thresholdTokens) {
+        tier = candidate.rate;
+        break;
+      }
+    }
+  }
   if (speed === "standard") return tier ?? rate;
   return tier?.[speed] ?? rate[speed] ?? tier ?? rate;
 }
@@ -446,6 +456,36 @@ function baseRate(table: RateTable, record: PricedRecord): ModelRate | null {
   return recordRate(table, record);
 }
 
+/**
+ * Allocation-free cost lookup for callers that only need total USD (not per-category splits).
+ * Returns `null` when the record is unpriced; matches `priceUsage(...).costUsd` identically.
+ */
+export function priceUsageCost(
+  table: RateTable,
+  record: PricedRecord,
+  overrides?: RateTable,
+): number | null {
+  const { model, totals, reportedCostUsd } = record;
+  const override =
+    overrides !== undefined && overrides.size > 0 ? overrides.get(model.trim()) : undefined;
+  const reported =
+    override === undefined && reportedCostUsd !== null && Number.isFinite(reportedCostUsd)
+      ? reportedCostUsd
+      : null;
+  const rate = override ?? baseRate(table, record);
+  if (rate === null) return reported;
+  if (reported !== null) return reported;
+  const rates = ratesAt(rate, record.speed, totals);
+  const oneHour = Math.min(record.cacheCreation1hTokens ?? 0, totals.cacheCreationTokens);
+  return (
+    totals.uncachedInputTokens * rates.inputCostPerToken +
+    totals.cachedInputTokens * rates.cacheReadCostPerToken +
+    (totals.cacheCreationTokens - oneHour) * rates.cacheCreationCostPerToken +
+    oneHour * rates.cacheCreation1hCostPerToken +
+    totals.outputTokens * rates.outputCostPerToken
+  );
+}
+
 /** Reasoning tokens are already included in outputTokens; do not charge twice. */
 export function priceUsage(
   table: RateTable,
@@ -453,7 +493,8 @@ export function priceUsage(
   overrides?: RateTable,
 ): PricedUsage {
   const { model, totals, reportedCostUsd } = record;
-  const override = overrides?.get(model.trim());
+  const override =
+    overrides !== undefined && overrides.size > 0 ? overrides.get(model.trim()) : undefined;
   const reported =
     override === undefined && reportedCostUsd !== null && Number.isFinite(reportedCostUsd)
       ? reportedCostUsd

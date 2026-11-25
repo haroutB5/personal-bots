@@ -1161,23 +1161,37 @@ export const make = Effect.gen(function* () {
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
     const slice = makeSliceYield();
+    const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
     let scannedFiles = 0;
     let fed = 0;
     for (const { provider, dir, files } of scannedDirs) {
       const retained = [...(files ?? [])];
       const livePaths = new Set(retained.map((file) => file.path));
+      const foldersWithin = new Map<string, boolean>();
+      const isRetained = (filePath: string) => {
+        const folder = path.dirname(filePath);
+        let within = foldersWithin.get(folder);
+        if (within === undefined) {
+          within = isWithinDirectory(folder, dir);
+          foldersWithin.set(folder, within);
+        }
+        return within;
+      };
       for (const [filePath, entry] of fileCache) {
         if (
           entry.provider !== provider ||
-          entry.mtimeMs < Math.max(windowStartMs, retentionCutoffMs) ||
+          entry.mtimeMs < retainedSinceMs ||
           livePaths.has(filePath) ||
-          !isWithinDirectory(filePath, dir)
+          !isRetained(filePath)
         ) {
           continue;
         }
         retained.push({
           path: filePath,
-          records: [...entry.records, ...entry.tailRecords],
+          records:
+            entry.tailRecords.length === 0
+              ? entry.records
+              : [...entry.records, ...entry.tailRecords],
           malformedRecords: entry.malformedRecords,
         });
       }
