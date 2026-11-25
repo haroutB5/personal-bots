@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "@effect/vitest";
 
+import * as ServerConfig from "../../../config.ts";
 import { PersonalBotRepository } from "../../../personal/PersonalBotRepository.ts";
 import { PersonalBrowser } from "../../../personal/browser/PersonalBrowser.ts";
 import { PersonalMemoryService } from "../../../personal/memory/PersonalMemoryService.ts";
@@ -86,19 +87,26 @@ function fakeRoutines(initial: ReadonlyArray<PersonalRoutine>) {
     layer: Layer.mock(PersonalRoutineService)({
       list: () => Effect.succeed({ routines: [...store.values()], occurrences: [] }),
       create: (input) =>
-        Effect.sync(() =>
-          write(
+        Effect.sync(() => {
+          const isEvent = input.trigger === "event";
+          return write(
             routine({
               routineId: input.routineId,
               botId: input.botId,
               title: input.title,
               prompt: input.prompt,
+              trigger: isEvent ? "event" : "schedule",
+              schedule: isEvent ? null : (input.schedule ?? { kind: "daily", time: "07:00" }),
+              eventLabel: isEvent ? (input.eventLabel ?? null) : null,
+              hookToken: isEvent ? "secret-hook-token-do-not-expose-1234567890" : null,
+              nextDueAt: isEvent ? null : nextDue,
+              delivery: input.delivery ?? "model",
               threadId: input.threadId ?? null,
               newChatEachRun: input.newChatEachRun === true,
               ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
             }),
-          ),
-        ),
+          );
+        }),
       get: ({ routineId }) => read(routineId),
       update: (input) =>
         read(input.routineId).pipe(
@@ -135,8 +143,9 @@ function call(
     | "delete_routine"
     | "list_routines",
   params: Record<string, unknown>,
+  options?: { readonly baseDir?: string },
 ) {
-  const layer = PersonalToolkitHandlersLive.pipe(
+  const baseLayer = PersonalToolkitHandlersLive.pipe(
     Layer.provide(Layer.mock(PersonalBrowser)({ sensitiveExposure: () => Effect.succeed([]) })),
     Layer.provide(Layer.mock(PersonalBotRepository)({ listBots: () => Effect.succeed(BOTS) })),
     Layer.provide(routines.layer),
@@ -147,6 +156,17 @@ function call(
     ),
     Layer.provide(Layer.mock(PersonalSessionAccess)({})),
   );
+  const layer =
+    options?.baseDir === undefined
+      ? baseLayer
+      : baseLayer.pipe(
+          Layer.provide(
+            Layer.succeed(ServerConfig.ServerConfig, {
+              baseDir: options.baseDir,
+              port: 3773,
+            } as ServerConfig.ServerConfig["Service"]),
+          ),
+        );
   return Effect.gen(function* () {
     const toolkit = yield* PersonalToolkit;
     const result = yield* toolkit
@@ -415,5 +435,119 @@ describe("routine notification mode tools", () => {
       yield* call(routines, "update_routine", { routineId: "r1", notifyMode: "sometimes" });
       expect(routines.store.get("r1")?.notifyMode).toBeUndefined();
     }),
+  );
+});
+
+describe("bot-creatable webhook/event routines and delivery modes", () => {
+  it.effect(
+    "create_routine supports frequency='event' with relay delivery, omits threadId, returns hookEnvPath, and never leaks hookToken",
+    () =>
+      Effect.gen(function* () {
+        const routines = fakeRoutines([]);
+        const out = yield* call(
+          routines,
+          "create_routine",
+          {
+            title: "Battery alert",
+            prompt: "Relay battery alert.",
+            frequency: "event",
+            eventLabel: "Battery low",
+            delivery: "relay",
+          },
+          { baseDir: "/tmp/hbots-test-base" },
+        );
+        const [created] = [...routines.store.values()];
+        expect(created?.trigger).toBe("event");
+        expect(created?.eventLabel).toBe("Battery low");
+        expect(created?.delivery).toBe("relay");
+        expect(created?.threadId).toBeNull();
+        expect(out).toContain(
+          `"hookEnvPath":"/tmp/hbots-test-base/personal/routine-hooks/${created?.routineId}.env"`,
+        );
+        expect(out).toContain("Delivery: relay");
+        expect(out).not.toContain("secret-hook-token-do-not-expose");
+      }),
+  );
+
+  it.effect(
+    "create_routine with frequency='event' defaults to model delivery and keeps the calling thread",
+    () =>
+      Effect.gen(function* () {
+        const routines = fakeRoutines([]);
+        const out = yield* call(
+          routines,
+          "create_routine",
+          {
+            title: "PR hook",
+            prompt: "Summarise the merged PR.",
+            frequency: "event",
+            eventLabel: "PR merged",
+          },
+          { baseDir: "/tmp/hbots-test-base" },
+        );
+        const [created] = [...routines.store.values()];
+        expect(created?.trigger).toBe("event");
+        expect(created?.delivery).toBe("model");
+        expect(created?.threadId).toBe("thread");
+        expect(out).toContain(
+          `"hookEnvPath":"/tmp/hbots-test-base/personal/routine-hooks/${created?.routineId}.env"`,
+        );
+        expect(out).not.toContain("secret-hook-token-do-not-expose");
+      }),
+  );
+
+  it.effect(
+    "create_routine refuses event routines missing eventLabel or supplying schedule fields",
+    () =>
+      Effect.gen(function* () {
+        const routines = fakeRoutines([]);
+        const noLabel = yield* call(routines, "create_routine", {
+          title: "Missing label",
+          prompt: "Do it.",
+          frequency: "event",
+        });
+        expect(noLabel).toContain("eventLabel");
+        expect(routines.store.size).toBe(0);
+
+        const withTime = yield* call(routines, "create_routine", {
+          title: "With time",
+          prompt: "Do it.",
+          frequency: "event",
+          eventLabel: "Battery low",
+          time: "09:00",
+        });
+        expect(withTime).toContain("not a schedule");
+        expect(routines.store.size).toBe(0);
+      }),
+  );
+
+  it.effect(
+    "create_routine refuses eventLabel on scheduled routines and passes delivery through",
+    () =>
+      Effect.gen(function* () {
+        const routines = fakeRoutines([]);
+        const refused = yield* call(routines, "create_routine", {
+          title: "Bad daily",
+          prompt: "Ping.",
+          frequency: "daily",
+          time: "09:00",
+          eventLabel: "Not an event",
+        });
+        expect(refused).toContain("Scheduled routines do not use eventLabel");
+        expect(routines.store.size).toBe(0);
+
+        const relayed = yield* call(routines, "create_routine", {
+          title: "Daily reminder",
+          prompt: "Stretch!",
+          frequency: "daily",
+          time: "10:00",
+          delivery: "relay",
+        });
+        const [created] = [...routines.store.values()];
+        expect(created?.trigger).toBe("schedule");
+        expect(created?.delivery).toBe("relay");
+        expect(created?.threadId).toBeNull();
+        expect(relayed).not.toContain("hookEnvPath");
+      }),
   );
 });

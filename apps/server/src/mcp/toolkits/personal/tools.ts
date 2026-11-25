@@ -34,7 +34,17 @@ export const Weekday = Schema.Literals([
 ]);
 
 const RoutineFrequency = Schema.Literals(["daily", "weekly", "every_n_hours", "once"]).annotate({
-  description: "daily, weekly (with days), every_n_hours (with everyHours) or once (with date).",
+  description: "daily, weekly (days), every_n_hours (everyHours), or once (date).",
+});
+
+const CreateRoutineFrequency = Schema.Literals([
+  "daily",
+  "weekly",
+  "every_n_hours",
+  "once",
+  "event",
+]).annotate({
+  description: "daily, weekly, every_n_hours, once, or event (webhook with eventLabel).",
 });
 
 /** The natural schedule fields create_routine and update_routine share. */
@@ -50,28 +60,32 @@ const routineScheduleFields = {
 };
 
 const RoutineNotifyModeField = Schema.Literals(["always", "bot_decides", "never"]).annotate({
-  description: "Push notify: always (default), bot_decides (via notify_user), or never.",
+  description: "always (default), bot_decides (notify_user), or never.",
 });
 
 export const CreateRoutineInput = Schema.Struct({
-  title: TrimmedNonEmptyString.annotate({ description: "Short routine title." }),
-  prompt: TrimmedNonEmptyString.annotate({ description: "Self-contained task prompt per run." }),
-  frequency: RoutineFrequency,
+  title: TrimmedNonEmptyString.annotate({ description: "Short title." }),
+  prompt: TrimmedNonEmptyString.annotate({ description: "Self-contained prompt per run." }),
+  frequency: CreateRoutineFrequency,
   ...routineScheduleFields,
+  eventLabel: Schema.optional(
+    TrimmedNonEmptyString.annotate({ description: "Event name (event only)." }),
+  ),
+  delivery: Schema.optional(
+    Schema.Literals(["model", "relay"]).annotate({
+      description: "model (default) or relay (direct post, no LLM).",
+    }),
+  ),
   timeZone: Schema.optional(
-    Schema.String.annotate({ description: "IANA time zone (default Europe/London)." }),
+    Schema.String.annotate({ description: "IANA zone (default Europe/London)." }),
   ),
   missedRuns: Schema.optional(
     Schema.Literals(["catch_up_once", "skip"]).annotate({
-      description: "Missed while asleep: catch_up_once (default) or skip.",
+      description: "catch_up_once (default) or skip.",
     }),
   ),
-  botName: Schema.optional(
-    Schema.String.annotate({ description: "Target bot name (default you)." }),
-  ),
-  newChatEachRun: Schema.optional(
-    Schema.Boolean.annotate({ description: "Omit (runs post in this chat; true refused)." }),
-  ),
+  botName: Schema.optional(Schema.String.annotate({ description: "Target bot (default you)." })),
+  newChatEachRun: Schema.optional(Schema.Boolean.annotate({ description: "Omit (true refused)." })),
   notifyMode: Schema.optional(RoutineNotifyModeField),
 });
 export type CreateRoutineInput = typeof CreateRoutineInput.Type;
@@ -92,25 +106,23 @@ const RoutineIdField = TrimmedNonEmptyString.annotate({
 export const UpdateRoutineInput = Schema.Struct({
   routineId: RoutineIdField,
   title: Schema.optional(TrimmedNonEmptyString.annotate({ description: "New title." })),
-  prompt: Schema.optional(
-    TrimmedNonEmptyString.annotate({ description: "New self-contained task prompt." }),
-  ),
+  prompt: Schema.optional(TrimmedNonEmptyString.annotate({ description: "New prompt." })),
   frequency: Schema.optional(
     RoutineFrequency.annotate({
-      description: "Full new schedule (frequency plus time/days/everyHours/date).",
+      description: "Full schedule (frequency + time/days/everyHours/date).",
     }),
   ),
   ...routineScheduleFields,
-  timeZone: Schema.optional(Schema.String.annotate({ description: "New IANA time zone." })),
+  timeZone: Schema.optional(Schema.String.annotate({ description: "New IANA zone." })),
   missedRuns: Schema.optional(
     Schema.Literals(["catch_up_once", "skip"]).annotate({
       description: "catch_up_once or skip.",
     }),
   ),
-  botName: Schema.optional(Schema.String.annotate({ description: "Reassign to bot name." })),
+  botName: Schema.optional(Schema.String.annotate({ description: "Reassign bot." })),
   enabled: Schema.optional(Schema.Boolean.annotate({ description: "false pauses, true resumes." })),
   newChatEachRun: Schema.optional(
-    Schema.Boolean.annotate({ description: "false posts in original chat; true refused." }),
+    Schema.Boolean.annotate({ description: "false: original chat; true refused." }),
   ),
   notifyMode: Schema.optional(RoutineNotifyModeField),
 });
@@ -136,7 +148,7 @@ export const SetRoutineEnabledInput = Schema.Struct({
 export const DeleteRoutineInput = Schema.Struct({
   routineId: RoutineIdField,
   title: TrimmedNonEmptyString.annotate({
-    description: "Current title exactly as list_routines shows it, to confirm the id.",
+    description: "Exact current title from list_routines.",
   }),
 });
 
@@ -148,11 +160,12 @@ export const DeleteRoutineResult = Schema.Struct({
 export const CreateRoutineResult = Schema.Struct({
   routineId: Schema.String,
   summary: Schema.String.annotate({
-    description: "One-line confirmation to show the user, with time zone and next run.",
+    description: "One-line confirmation to show the user.",
   }),
   timeZone: Schema.String,
   nextRunLocal: Schema.NullOr(Schema.String),
   nextRunUtc: Schema.NullOr(Schema.String),
+  hookEnvPath: Schema.optional(Schema.String),
 });
 export type CreateRoutineResult = typeof CreateRoutineResult.Type;
 
@@ -351,7 +364,7 @@ export const SaveMemoryResult = Schema.Struct({
 
 const CreateRoutineTool = Tool.make("create_routine", {
   description:
-    "Schedule a recurring or one-off routine (self-contained prompt; posts into this chat; local time in timeZone, default Europe/London). Use notifyMode='bot_decides' to notify only when worth it. Show the returned summary with time zone and next run.",
+    "Create a scheduled or webhook ('event') routine (default Europe/London; delivery='relay' posts directly with no LLM turn; event routines write hookEnvPath). Show the returned summary.",
   parameters: CreateRoutineInput,
   success: CreateRoutineResult,
   failure: PersonalToolFailure,
@@ -365,7 +378,7 @@ const CreateRoutineTool = Tool.make("create_routine", {
 
 const ListRoutinesTool = Tool.make("list_routines", {
   description:
-    "List every routine across all bots with routineId, title, bot, schedule, enabled, next run, chat mode, notifyMode and prompt.",
+    "List all routines across bots with routineId, title, bot, schedule, enabled, next run, chat mode, notifyMode and prompt.",
   success: ListRoutinesResult,
   failure: PersonalToolFailure,
   dependencies,
@@ -378,7 +391,7 @@ const ListRoutinesTool = Tool.make("list_routines", {
 
 const UpdateRoutineTool = Tool.make("update_routine", {
   description:
-    "Update any bot's routine by routineId from list_routines (omitted fields unchanged; schedule changes need full frequency/time/days/everyHours/date; refused on webhook routines). Show the returned summary with time zone and next run.",
+    "Update a routine by routineId (omitted fields unchanged; schedule changes need full fields and are refused on webhooks). Show the returned summary.",
   parameters: UpdateRoutineInput,
   success: RoutineChangeResult,
   failure: PersonalToolFailure,
@@ -392,7 +405,7 @@ const UpdateRoutineTool = Tool.make("update_routine", {
 
 const SetRoutineEnabledTool = Tool.make("set_routine_enabled", {
   description:
-    "Pause (enabled=false) or resume (enabled=true) a routine by routineId. Resuming never replays missed runs; expired one-offs are removed. Show the returned summary with time zone and next run.",
+    "Pause (enabled=false) or resume (enabled=true) a routine by routineId. Resuming skips missed runs; expired one-offs are removed.",
   parameters: SetRoutineEnabledInput,
   success: RoutineChangeResult,
   failure: PersonalToolFailure,
@@ -406,7 +419,7 @@ const SetRoutineEnabledTool = Tool.make("set_routine_enabled", {
 
 const DeleteRoutineTool = Tool.make("delete_routine", {
   description:
-    "Permanently delete a routine by routineId and exact current title (no undo; confirm with user first unless already asked). Pause instead to stop temporarily.",
+    "Permanently delete a routine by routineId and exact title (no undo; confirm first unless asked).",
   parameters: DeleteRoutineInput,
   success: DeleteRoutineResult,
   failure: PersonalToolFailure,

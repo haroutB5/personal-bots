@@ -46,8 +46,10 @@ import {
   createResearchClient,
   type ResearchEvent,
 } from "../../../personal/research/researchClient.ts";
+import * as ServerConfig from "../../../config.ts";
 import * as PersonalMemoryService from "../../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
+import { routineHookEnvPath } from "../../../personal/routines/routineHookEnv.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   CreateRoutineInput,
@@ -218,6 +220,7 @@ const make = Effect.gen(function* () {
     onEvent: (event) => void runFork(logResearch(event)),
   });
   const engine = yield* Effect.serviceOption(PersonalEngine);
+  const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   // The same published snapshots the Bots home header reads. Read-only: this
   // never refreshes or probes a provider, so usage_status adds no fetch path.
   const personalProviders = yield* Effect.serviceOption(PersonalProviders);
@@ -691,18 +694,75 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { scope, botId } = yield* requireBotThread;
         if (input.newChatEachRun === true) return yield* refuse(NEW_CHAT_REFUSAL);
-        const schedule = routineScheduleFromToolInput(input);
-        if (typeof schedule === "string") return yield* refuse(schedule);
-        const targetBotId = (yield* botByName(input.botName)) ?? botId;
+        const callerThreadId = McpInvocationContext.requireMcpThread(scope).threadId;
         // Derived from the call itself, so a retried tool call dedupes.
         const routineId = PersonalRoutineId.make(
           `routine-${NodeCrypto.createHash("sha256")
-            .update(
-              `${McpInvocationContext.requireMcpThread(scope).threadId}\n${encodeCreateRoutineInput(input)}`,
-            )
+            .update(`${callerThreadId}\n${encodeCreateRoutineInput(input)}`)
             .digest("hex")
             .slice(0, 24)}`,
         );
+        if (input.frequency === "event") {
+          const eventLabel = input.eventLabel?.trim() ?? "";
+          if (eventLabel.length === 0) {
+            return yield* refuse("Event routines need eventLabel (for example 'Battery low').");
+          }
+          if (
+            input.time !== undefined ||
+            input.days !== undefined ||
+            input.everyHours !== undefined ||
+            input.date !== undefined
+          ) {
+            return yield* refuse(
+              "Event routines run on a webhook, not a schedule. Leave time, days, everyHours and date out.",
+            );
+          }
+          const targetBotId = (yield* botByName(input.botName)) ?? botId;
+          const delivery = input.delivery ?? "model";
+          const routine = yield* routines
+            .create({
+              routineId,
+              botId: targetBotId,
+              title: input.title,
+              prompt: input.prompt,
+              trigger: "event",
+              eventLabel,
+              delivery,
+              ...(input.timeZone === undefined ? {} : { timeZone: input.timeZone }),
+              missedPolicy: input.missedRuns === "skip" ? "skip" : "coalesce",
+              ...(delivery === "relay" ? {} : { threadId: callerThreadId }),
+              ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
+            })
+            .pipe(Effect.mapError((error) => refuse(error.message)));
+          const hookEnvPath = Option.isSome(serverConfig)
+            ? routineHookEnvPath(serverConfig.value.baseDir, routine.routineId)
+            : undefined;
+          const deliveryNote =
+            routine.delivery === "relay"
+              ? " Delivery: relay (posts directly with no LLM turn)."
+              : "";
+          const hookNote =
+            hookEnvPath === undefined
+              ? ""
+              : ` Hook env file: ${hookEnvPath} (contains HBOTS_HOOK_URL).`;
+          return {
+            routineId: routine.routineId,
+            summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}.${deliveryNote} ${routineRunsIn(routine, callerThreadId)}${notifyModeNote(routine)}${hookNote}`,
+            timeZone: routine.timeZone,
+            nextRunLocal: null,
+            nextRunUtc: null,
+            ...(hookEnvPath === undefined ? {} : { hookEnvPath }),
+          };
+        }
+        if (input.eventLabel !== undefined) {
+          return yield* refuse(
+            "Scheduled routines do not use eventLabel. Use frequency='event' for a webhook routine, or leave eventLabel out.",
+          );
+        }
+        const schedule = routineScheduleFromToolInput({ ...input, frequency: input.frequency });
+        if (typeof schedule === "string") return yield* refuse(schedule);
+        const targetBotId = (yield* botByName(input.botName)) ?? botId;
+        const delivery = input.delivery;
         const routine = yield* routines
           .create({
             routineId,
@@ -710,10 +770,11 @@ const make = Effect.gen(function* () {
             title: input.title,
             prompt: input.prompt,
             schedule,
+            ...(delivery === undefined ? {} : { delivery }),
             ...(input.timeZone === undefined ? {} : { timeZone: input.timeZone }),
             missedPolicy: input.missedRuns === "skip" ? "skip" : "coalesce",
-            // The chat that asked for it: each run comes back here unless opted out.
-            threadId: McpInvocationContext.requireMcpThread(scope).threadId,
+            // The chat that asked for it: each run comes back here unless relayed.
+            ...(delivery === "relay" ? {} : { threadId: callerThreadId }),
             ...(input.notifyMode === undefined ? {} : { notifyMode: input.notifyMode }),
           })
           .pipe(Effect.mapError((error) => refuse(error.message)));
@@ -722,7 +783,7 @@ const make = Effect.gen(function* () {
         const nextRunLocal = formatNextRun(nextRunUtc, routine.timeZone);
         return {
           routineId: routine.routineId,
-          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}. ${routineRunsIn(routine, McpInvocationContext.requireMcpThread(scope).threadId)}${notifyModeNote(routine)}`,
+          summary: `${routine.title}: ${describePersonalRoutineTrigger(routine)}. Next run: ${nextRunLocal ?? "none"}. ${routineRunsIn(routine, callerThreadId)}${notifyModeNote(routine)}`,
           timeZone: routine.timeZone,
           nextRunLocal,
           nextRunUtc,

@@ -1,3 +1,5 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   PersonalBotId,
@@ -31,6 +33,7 @@ import {
 } from "../test/personalEngineTestLayer.ts";
 import { personalTestDatabase } from "../test/personalReadsTestLayer.ts";
 import * as PersonalRoutineService from "./PersonalRoutineService.ts";
+import { routineHookEnvPath } from "./routineHookEnv.ts";
 
 /** What the routine tests observe: engine commands and the notices it posts. */
 interface RoutineHarness {
@@ -1726,4 +1729,80 @@ it.effect("schedulers unset or on: the same due routine fires once and its task 
     expect(turnStarts(harness).length).toBe(1);
     expect(yield* nextDueIso(routineId)).toBe("2026-09-15T08:00:00.000Z");
   }).pipe(Effect.provide(makeLayer(harness)), withSchedulersEnv(undefined));
+});
+
+it.effect(
+  "event routines write a 0600 hook env file on create, idempotent retry, and regenerateHook, and remove it on delete",
+  () =>
+    Effect.gen(function* () {
+      yield* setNow("2026-09-14T10:00:00Z");
+      yield* seedBot;
+      const routines = yield* PersonalRoutineService.PersonalRoutineService;
+      const config = yield* ServerConfig.ServerConfig;
+      const routineId = PersonalRoutineId.make("battery-alert-hook");
+
+      const created = yield* routines.create({
+        routineId,
+        botId: BOT,
+        title: "Battery alert",
+        prompt: "Alert me.",
+        trigger: "event",
+        eventLabel: "Battery low",
+        delivery: "relay",
+      });
+      expect(created.hookToken).not.toBeNull();
+
+      const envPath = routineHookEnvPath(config.baseDir, routineId);
+      const dirStat = yield* Effect.promise(() => NodeFSP.stat(NodePath.dirname(envPath)));
+      expect(dirStat.mode & 0o777).toBe(0o700);
+      const fileStat = yield* Effect.promise(() => NodeFSP.stat(envPath));
+      expect(fileStat.mode & 0o777).toBe(0o600);
+      const initialContent = yield* Effect.promise(() => NodeFSP.readFile(envPath, "utf8"));
+      expect(initialContent).toBe(
+        `HBOTS_HOOK_URL=http://127.0.0.1:${config.port}/api/personal/hooks/${created.hookToken}\n`,
+      );
+
+      // Idempotent retry restores the env file if it went missing.
+      yield* Effect.promise(() => NodeFSP.unlink(envPath));
+      const retried = yield* routines.create({
+        routineId,
+        botId: BOT,
+        title: "Battery alert",
+        prompt: "Alert me.",
+        trigger: "event",
+        eventLabel: "Battery low",
+        delivery: "relay",
+      });
+      expect(retried.hookToken).toBe(created.hookToken);
+      const restoredContent = yield* Effect.promise(() => NodeFSP.readFile(envPath, "utf8"));
+      expect(restoredContent).toBe(initialContent);
+
+      // Regenerating the hook rotates the env file atomically and keeps 0600.
+      const rotated = yield* routines.regenerateHook({ routineId });
+      expect(rotated.hookToken).not.toBeNull();
+      expect(rotated.hookToken).not.toBe(created.hookToken);
+      const rotatedStat = yield* Effect.promise(() => NodeFSP.stat(envPath));
+      expect(rotatedStat.mode & 0o777).toBe(0o600);
+      const rotatedContent = yield* Effect.promise(() => NodeFSP.readFile(envPath, "utf8"));
+      expect(rotatedContent).toBe(
+        `HBOTS_HOOK_URL=http://127.0.0.1:${config.port}/api/personal/hooks/${rotated.hookToken}\n`,
+      );
+
+      // Deleting the routine removes the env file; a second remove does not fail on ENOENT.
+      yield* routines.remove({ routineId });
+      const existsAfterRemove = yield* Effect.promise(() =>
+        NodeFSP.access(envPath).then(
+          () => true,
+          () => false,
+        ),
+      );
+      expect(existsAfterRemove).toBe(false);
+      yield* routines.remove({ routineId });
+    }).pipe(Effect.provide(makeLayer())),
+);
+
+it("routineHookEnvPath rejects unsafe routineIds", () => {
+  for (const bad of ["", ".", "..", "../escape", "a/b", "a\\b", "id with spaces"]) {
+    expect(() => routineHookEnvPath("/tmp/base", bad)).toThrow("Invalid routineId");
+  }
 });

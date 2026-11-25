@@ -42,6 +42,7 @@ import {
 } from "@t3tools/contracts";
 
 import { timingSafeEqualBase64Url } from "../../auth/utils.ts";
+import * as ServerConfig from "../../config.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { resolveDeliveryThread } from "../automaticDelivery.ts";
 import * as PersonalEngine from "../engine/PersonalEngine.ts";
@@ -49,6 +50,7 @@ import { personalSchedulersOff } from "../schedulersSwitch.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
 import * as PersonalTaskService from "../tasks/PersonalTaskService.ts";
 import { buildEventRoutinePrompt, formatHookPayload } from "./eventPrompt.ts";
+import { removeRoutineHookEnv, writeRoutineHookEnv } from "./routineHookEnv.ts";
 import { dueRoutineSlots, nextRoutineSlot, type RoutineSlot } from "./routineSchedule.ts";
 import { isValidTimeZone, parseLocal } from "./zonedTime.ts";
 import { withStallJob } from "../../observability/stallJobs.ts";
@@ -248,6 +250,7 @@ export const make = Effect.gen(function* () {
   const tasks = yield* PersonalTaskService.PersonalTaskService;
   const bots = yield* PersonalBotRepository.PersonalBotRepository;
   const engine = yield* PersonalEngine.PersonalEngine;
+  const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   // Serialises ticks with mutations so an edit never races a firing.
   const lock = yield* Semaphore.make(1);
   // A restored test copy (T3CODE_PERSONAL_SCHEDULERS=off) never catches up its routines.
@@ -256,6 +259,34 @@ export const make = Effect.gen(function* () {
 
   const fail = (message: string, cause?: unknown) =>
     new PersonalRoutinesError({ message, ...(cause === undefined ? {} : { cause }) });
+
+  const syncHookEnv = (routine: PersonalRoutine) => {
+    if (routine.trigger !== "event" || routine.hookToken === null || Option.isNone(serverConfig)) {
+      return Effect.void;
+    }
+    const { baseDir, port } = serverConfig.value;
+    const hookToken = routine.hookToken;
+    return Effect.tryPromise({
+      try: () => writeRoutineHookEnv(baseDir, port, routine.routineId, hookToken),
+      catch: (cause) => fail("Could not write the routine hook env file.", cause),
+    }).pipe(Effect.asVoid);
+  };
+
+  const cleanupHookEnv = (routineId: PersonalRoutineId) => {
+    if (Option.isNone(serverConfig)) return Effect.void;
+    const { baseDir } = serverConfig.value;
+    return Effect.tryPromise({
+      try: () => removeRoutineHookEnv(baseDir, routineId),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("personal routine could not remove its hook env file", {
+          routineId,
+          cause: String(cause),
+        }),
+      ),
+    );
+  };
 
   const storageFailure =
     (operation: string) =>
@@ -574,7 +605,10 @@ export const make = Effect.gen(function* () {
   // Keeping this as the one deletion path makes manual and automatic removal
   // agree while the existing retention pass eventually prunes old occurrences.
   const deleteRoutine = (routineId: PersonalRoutineId) =>
-    sql`DELETE FROM personal_routines WHERE routine_id = ${routineId}`.pipe(Effect.asVoid);
+    sql`DELETE FROM personal_routines WHERE routine_id = ${routineId}`.pipe(
+      Effect.tap(() => cleanupHookEnv(routineId)),
+      Effect.asVoid,
+    );
 
   // Missed runs (the laptop slept): an on-time slot always runs; otherwise
   // `coalesce` runs ONE occurrence for the latest missed slot and `skip`
@@ -713,7 +747,10 @@ export const make = Effect.gen(function* () {
       .withPermit(
         Effect.gen(function* () {
           const existing = yield* readRoutine(input.routineId);
-          if (Option.isSome(existing)) return existing.value;
+          if (Option.isSome(existing)) {
+            yield* syncHookEnv(existing.value);
+            return existing.value;
+          }
           const trigger = input.trigger ?? "schedule";
           const eventLabel = input.eventLabel?.trim() ?? "";
           // Both halves submitted: one of them would have to be thrown away, and
@@ -751,7 +788,9 @@ export const make = Effect.gen(function* () {
               )
               ON CONFLICT (routine_id) DO NOTHING
             `;
-            return yield* requireRoutine(input.routineId);
+            const created = yield* requireRoutine(input.routineId);
+            yield* syncHookEnv(created);
+            return created;
           }
           if (input.schedule === undefined) {
             return yield* fail("A scheduled routine needs a schedule.");
@@ -1060,7 +1099,9 @@ export const make = Effect.gen(function* () {
             SET hook_token = ${makeHookToken()}, updated_at = ${nowIso}
             WHERE routine_id = ${input.routineId}
           `;
-          return yield* requireRoutine(input.routineId);
+          const updated = yield* requireRoutine(input.routineId);
+          yield* syncHookEnv(updated);
+          return updated;
         }),
       )
       .pipe(storageFailure("regenerate hook"));
