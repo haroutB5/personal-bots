@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   EventId,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
@@ -112,54 +113,56 @@ function isUserMessageDelivered(
   return run !== undefined && run.startedAt !== null;
 }
 
-export function toChatThread(
-  environmentId: EnvironmentId,
-  projection: OrchestrationV2ThreadProjection,
-): ChatThread {
-  const thread = projection.thread;
-  const runsById = new Map<string, OrchestrationV2Run>(projection.runs.map((run) => [run.id, run]));
-  const messages: ReadonlyArray<OrchestrationMessage> = projection.messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    text: message.text,
-    attachments: message.attachments,
-    context: message.context,
-    turnId: message.runId as unknown as TurnId | null,
-    streaming: message.streaming,
-    createdAt: DateTime.formatIso(message.createdAt),
-    updatedAt: DateTime.formatIso(message.updatedAt),
-  }));
-  const proposedPlans: ReadonlyArray<OrchestrationProposedPlan> = projection.plans
-    .filter((plan) => plan.kind === "proposed_plan")
-    .map((plan) => ({
-      id: String(plan.id),
-      turnId: plan.runId as unknown as TurnId | null,
-      planMarkdown: plan.markdown,
-      implementedAt: plan.status === "completed" ? DateTime.formatIso(thread.updatedAt) : null,
-      implementationThreadId: null,
-      createdAt: DateTime.formatIso(thread.createdAt),
-      updatedAt: DateTime.formatIso(thread.updatedAt),
-    }));
-  const activities: Array<OrchestrationThreadActivity> = [];
-  for (const row of projection.visibleTurnItems) {
-    const item = row.item;
-    if (item.type === "user_message") {
-      if (isUserMessageDelivered(item, runsById)) {
-        activities.push({
-          id: `${item.id}:delivered` as unknown as EventId,
-          tone: "info",
-          kind: USER_MESSAGE_DELIVERED_KIND,
-          summary: "Message read",
-          payload: { messageId: item.messageId },
-          turnId: item.runId as unknown as TurnId | null,
-          sequence: item.ordinal,
-          createdAt: DateTime.formatIso(item.completedAt ?? item.updatedAt),
-        });
-      }
-      continue;
-    }
-    if (MESSAGE_ITEM_TYPES.has(item.type)) continue;
-    activities.push({
+const MESSAGE_CACHE = new WeakMap<OrchestrationV2ConversationMessage, OrchestrationMessage>();
+const ACTIVITY_CACHE = new WeakMap<OrchestrationV2TurnItem, OrchestrationThreadActivity>();
+const DELIVERED_ACTIVITY_CACHE = new WeakMap<
+  OrchestrationV2TurnItem,
+  OrchestrationThreadActivity
+>();
+
+function projectMessage(message: OrchestrationV2ConversationMessage): OrchestrationMessage {
+  let cached = MESSAGE_CACHE.get(message);
+  if (cached === undefined) {
+    cached = {
+      id: message.id,
+      role: message.role,
+      text: message.text,
+      attachments: message.attachments,
+      context: message.context,
+      turnId: message.runId as unknown as TurnId | null,
+      streaming: message.streaming,
+      createdAt: DateTime.formatIso(message.createdAt),
+      updatedAt: DateTime.formatIso(message.updatedAt),
+    };
+    MESSAGE_CACHE.set(message, cached);
+  }
+  return cached;
+}
+
+function projectDeliveredActivity(
+  item: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }>,
+): OrchestrationThreadActivity {
+  let cached = DELIVERED_ACTIVITY_CACHE.get(item);
+  if (cached === undefined) {
+    cached = {
+      id: `${item.id}:delivered` as unknown as EventId,
+      tone: "info",
+      kind: USER_MESSAGE_DELIVERED_KIND,
+      summary: "Message read",
+      payload: { messageId: item.messageId },
+      turnId: item.runId as unknown as TurnId | null,
+      sequence: item.ordinal,
+      createdAt: DateTime.formatIso(item.completedAt ?? item.updatedAt),
+    };
+    DELIVERED_ACTIVITY_CACHE.set(item, cached);
+  }
+  return cached;
+}
+
+function projectTurnActivity(item: OrchestrationV2TurnItem): OrchestrationThreadActivity {
+  let cached = ACTIVITY_CACHE.get(item);
+  if (cached === undefined) {
+    cached = {
       id: item.id as unknown as EventId,
       tone: activityTone(item),
       kind: item.type,
@@ -168,7 +171,49 @@ export function toChatThread(
       turnId: item.runId as unknown as TurnId | null,
       sequence: item.ordinal,
       createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
-    });
+    };
+    ACTIVITY_CACHE.set(item, cached);
+  }
+  return cached;
+}
+
+export function toChatThread(
+  environmentId: EnvironmentId,
+  projection: OrchestrationV2ThreadProjection,
+): ChatThread {
+  const thread = projection.thread;
+  const runsById = new Map<string, OrchestrationV2Run>();
+  for (const run of projection.runs) runsById.set(run.id, run);
+  const messages: ReadonlyArray<OrchestrationMessage> = projection.messages.map(projectMessage);
+  let threadCreatedIso: string | undefined;
+  let threadUpdatedIso: string | undefined;
+  const getThreadCreatedIso = () => (threadCreatedIso ??= DateTime.formatIso(thread.createdAt));
+  const getThreadUpdatedIso = () => (threadUpdatedIso ??= DateTime.formatIso(thread.updatedAt));
+  const proposedPlans: ReadonlyArray<OrchestrationProposedPlan> =
+    projection.plans.length === 0
+      ? []
+      : projection.plans
+          .filter((plan) => plan.kind === "proposed_plan")
+          .map((plan) => ({
+            id: String(plan.id),
+            turnId: plan.runId as unknown as TurnId | null,
+            planMarkdown: plan.markdown,
+            implementedAt: plan.status === "completed" ? getThreadUpdatedIso() : null,
+            implementationThreadId: null,
+            createdAt: getThreadCreatedIso(),
+            updatedAt: getThreadUpdatedIso(),
+          }));
+  const activities: Array<OrchestrationThreadActivity> = [];
+  for (const row of projection.visibleTurnItems) {
+    const item = row.item;
+    if (item.type === "user_message") {
+      if (isUserMessageDelivered(item, runsById)) {
+        activities.push(projectDeliveredActivity(item));
+      }
+      continue;
+    }
+    if (MESSAGE_ITEM_TYPES.has(item.type)) continue;
+    activities.push(projectTurnActivity(item));
   }
   const latestRun = projection.runs.at(-1) ?? null;
   const latestAssistant = messages.findLast((message) => message.role === "assistant") ?? null;
@@ -213,8 +258,8 @@ export function toChatThread(
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
-    createdAt: DateTime.formatIso(thread.createdAt),
-    updatedAt: DateTime.formatIso(thread.updatedAt),
+    createdAt: getThreadCreatedIso(),
+    updatedAt: getThreadUpdatedIso(),
     archivedAt: thread.archivedAt === null ? null : DateTime.formatIso(thread.archivedAt),
     session,
     latestTurn,

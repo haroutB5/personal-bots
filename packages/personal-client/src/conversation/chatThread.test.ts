@@ -391,4 +391,27 @@ describe("toChatThread", () => {
       .map((activity) => (activity.payload as { messageId?: string }).messageId);
     expect(delivered).toEqual(["m-start", "m-steer-done"]);
   });
+
+  it("preserves object identity for unchanged messages and activities across streaming deltas", () => {
+    const m0 = message("user-1", "user", "run-1");
+    const m1 = message("a-1", "assistant", "run-1");
+    const m2a = { ...message("a-2", "assistant", "run-2"), text: "chunk 1", streaming: true };
+    const m2b = { ...m2a, text: "chunk 1 + 2" };
+    const vis = visible([assistantItem, approval, command]);
+
+    const first = toChatThread(
+      environmentId,
+      projection({ messages: [m0, m1, m2a], visibleTurnItems: vis }),
+    );
+    const second = toChatThread(
+      environmentId,
+      projection({ messages: [m0, m1, m2b], visibleTurnItems: vis }),
+    );
+
+    expect(second.messages[0]).toBe(first.messages[0]);
+    expect(second.messages[1]).toBe(first.messages[1]);
+    expect(second.messages[2]).not.toBe(first.messages[2]);
+    expect(second.activities[0]).toBe(first.activities[0]);
+    expect(second.activities[1]).toBe(first.activities[1]);
+  });
 });

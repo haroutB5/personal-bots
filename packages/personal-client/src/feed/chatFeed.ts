@@ -62,15 +62,6 @@ export function workEntriesFromActivities(
     }));
 }
 
-function messageEntries(messages: ReadonlyArray<OrchestrationMessage>): TimelineEntry[] {
-  return messages.map((message) => ({
-    id: message.id,
-    kind: "message",
-    createdAt: message.createdAt,
-    message: message as ChatMessage,
-  }));
-}
-
 function planEntries(plans: ReadonlyArray<OrchestrationProposedPlan>): TimelineEntry[] {
   return plans.map((proposedPlan) => ({
     id: proposedPlan.id,
@@ -97,24 +88,71 @@ export interface ChatFeedInput {
   readonly groups?: boolean;
 }
 
+const MESSAGE_ENTRY_CACHE = new WeakMap<OrchestrationMessage, TimelineEntry>();
+
+function messageEntry(message: OrchestrationMessage): TimelineEntry {
+  let cached = MESSAGE_ENTRY_CACHE.get(message);
+  if (cached === undefined) {
+    cached = {
+      id: message.id,
+      kind: "message",
+      createdAt: message.createdAt,
+      message: message as ChatMessage,
+    };
+    MESSAGE_ENTRY_CACHE.set(message, cached);
+  }
+  return cached;
+}
+
+function sortTimelineEntries(raw: ReadonlyArray<TimelineEntry>): ReadonlyArray<TimelineEntry> {
+  const length = raw.length;
+  if (length <= 1) return raw;
+  const times = new Array<number>(length);
+  let monotonic = true;
+  let prev = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < length; i += 1) {
+    const at = Date.parse(raw[i]!.createdAt);
+    times[i] = at;
+    if (Number.isNaN(at) || at < prev) {
+      monotonic = false;
+    } else {
+      prev = at;
+    }
+  }
+  if (monotonic) return raw;
+  const indices = new Array<number>(length);
+  for (let i = 0; i < length; i += 1) indices[i] = i;
+  indices.sort((left, right) => {
+    const leftAt = times[left]!;
+    const rightAt = times[right]!;
+    if (leftAt === rightAt) return 0;
+    return leftAt < rightAt ? -1 : 1;
+  });
+  const sorted = new Array<TimelineEntry>(length);
+  for (let i = 0; i < length; i += 1) sorted[i] = raw[indices[i]!]!;
+  return sorted;
+}
+
 /**
  * The transcript rows for one chat. The message, plan and work streams become
  * one ordered timeline, then the shared conversation model adds day dividers
  * and groups work steps exactly as it does on the web.
  */
 export function buildChatFeed(input: ChatFeedInput): ConversationItem[] {
-  const work = input.showToolSteps === true ? workEntriesFromActivities(input.activities) : [];
-  const entries = [
-    ...messageEntries(input.messages),
-    ...planEntries(input.proposedPlans),
-    ...workTimelineEntries(work),
-    ...htmlRenderEntriesFromActivities(input.activities),
-  ].toSorted((left, right) => {
-    const leftAt = Date.parse(left.createdAt);
-    const rightAt = Date.parse(right.createdAt);
-    if (leftAt === rightAt) return 0;
-    return leftAt < rightAt ? -1 : 1;
-  });
+  const raw: TimelineEntry[] = [];
+  for (const message of input.messages) raw.push(messageEntry(message));
+  if (input.proposedPlans.length > 0) {
+    for (const entry of planEntries(input.proposedPlans)) raw.push(entry);
+  }
+  if (input.showToolSteps === true) {
+    for (const entry of workTimelineEntries(workEntriesFromActivities(input.activities))) {
+      raw.push(entry);
+    }
+  }
+  if (input.activities.length > 0) {
+    for (const entry of htmlRenderEntriesFromActivities(input.activities)) raw.push(entry);
+  }
+  const entries = sortTimelineEntries(raw);
   return buildConversationItems(entries, {
     showToolSteps: input.showToolSteps === true,
     ...(input.groups === true ? { groups: true } : {}),

@@ -493,16 +493,20 @@ const DAY_KEY_CACHE = new Map<string, string>();
 const DAY_KEY_CACHE_LIMIT = 1_000;
 
 export function dayKey(date: Date, timeZone: string): string {
+  return dayKeyMs(date.getTime(), timeZone);
+}
+
+function dayKeyMs(epochMs: number, timeZone: string): string {
   // Every real zone offset is a multiple of 15 minutes, so all instants in
   // one 15-minute UTC bucket fall on the same local day.
-  const cacheKey = `${timeZone}|${Math.floor(date.getTime() / 900_000)}`;
+  const cacheKey = `${timeZone}|${Math.floor(epochMs / 900_000)}`;
   const cached = DAY_KEY_CACHE.get(cacheKey);
   if (cached !== undefined) return cached;
   const parts = formatter(timeZone, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).formatToParts(date);
+  }).formatToParts(new Date(epochMs));
   const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
   const key = `${part("year")}-${part("month")}-${part("day")}`;
   if (DAY_KEY_CACHE.size >= DAY_KEY_CACHE_LIMIT) DAY_KEY_CACHE.clear();
@@ -687,6 +691,11 @@ export const voiceCallSummaryPending = (
     (card) => card.summary === undefined && nowMs - card.endedAtMs < VOICE_SUMMARY_WAIT_MS,
   );
 
+const PLAIN_MESSAGE_ITEM_CACHE = new WeakMap<
+  ChatMessage,
+  Extract<ConversationItem, { readonly kind: "message" }>
+>();
+
 /**
  * Flattens the upstream timeline into chat rows: consecutive work entries
  * fold into one collapsible group, and day dividers are inserted from the
@@ -715,37 +724,40 @@ export function buildConversationItems(
   let lastSpeakerBotId: string | null = null;
   const items: ConversationItem[] = [];
   /** The last row actually rendered: day dividers are about visible gaps. */
-  let lastAt: Date | null = null;
+  let lastAtMs: number | null = null;
+  let lastDayKey: string | null = null;
   /**
    * The last entry of any kind, hidden work included. A bot that worked for an
    * hour was not silent, so its reply must not inherit a "gap" divider just
    * because the steps behind it are hidden.
    */
-  let lastActivityAt: Date | null = null;
+  let lastActivityAtMs: number | null = null;
   let openWork: { id: string; entries: WorkLogEntry[] } | null = null;
 
   const noteActivity = (createdAt: string) => {
-    const at = new Date(createdAt);
-    if (!Number.isNaN(at.getTime())) lastActivityAt = at;
+    const ms = Date.parse(createdAt);
+    if (!Number.isNaN(ms)) lastActivityAtMs = ms;
   };
 
   const pushDividerIfNeeded = (createdAt: string) => {
-    const at = new Date(createdAt);
-    if (Number.isNaN(at.getTime())) return;
-    const since = lastActivityAt ?? lastAt;
+    const ms = Date.parse(createdAt);
+    if (Number.isNaN(ms)) return;
+    const currentDayKey = dayKeyMs(ms, timeZone);
+    const sinceMs = lastActivityAtMs ?? lastAtMs;
     if (
-      lastAt === null ||
-      dayKey(at, timeZone) !== dayKey(lastAt, timeZone) ||
-      (since !== null && at.getTime() - since.getTime() >= DIVIDER_GAP_MS)
+      lastAtMs === null ||
+      currentDayKey !== lastDayKey ||
+      (sinceMs !== null && ms - sinceMs >= DIVIDER_GAP_MS)
     ) {
       openWork = null;
       // A day or an hour of silence ends a run: the next message re-introduces
       // its speaker rather than inheriting a header from before the gap.
       lastSpeakerBotId = null;
-      items.push({ kind: "divider", id: `divider:${createdAt}`, at });
+      items.push({ kind: "divider", id: `divider:${createdAt}`, at: new Date(ms) });
     }
-    lastAt = at;
-    lastActivityAt = at;
+    lastAtMs = ms;
+    lastDayKey = currentDayKey;
+    lastActivityAtMs = ms;
   };
 
   for (const entry of entries) {
@@ -802,17 +814,28 @@ export function buildConversationItems(
         });
         continue;
       }
+      const cachedPlain = PLAIN_MESSAGE_ITEM_CACHE.get(entry.message);
+      if (cachedPlain !== undefined && cachedPlain.id === entry.id) {
+        items.push(cachedPlain);
+        continue;
+      }
       const notice = readChatNotice(entry.message);
       if (notice !== null) {
         items.push({ kind: "notice", id: entry.id, message: entry.message, notice });
         continue;
       }
       const turn = readServerTurn(entry.message);
-      items.push(
-        turn === null
-          ? { kind: "message", id: entry.id, message: entry.message }
-          : { kind: "system-turn", id: entry.id, message: entry.message, turn },
-      );
+      if (turn !== null) {
+        items.push({ kind: "system-turn", id: entry.id, message: entry.message, turn });
+      } else {
+        const plain: Extract<ConversationItem, { readonly kind: "message" }> = {
+          kind: "message",
+          id: entry.id,
+          message: entry.message,
+        };
+        if (entry.id === entry.message.id) PLAIN_MESSAGE_ITEM_CACHE.set(entry.message, plain);
+        items.push(plain);
+      }
     } else if (entry.kind === "html-render") {
       lastSpeakerBotId = null;
       items.push({

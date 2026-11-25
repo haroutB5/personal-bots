@@ -88,4 +88,32 @@ describe("buildChatFeed", () => {
     ] as never);
     expect(entries.map((entry) => entry.label)).toEqual(["Ran the tests"]);
   });
+
+  it("sorts out-of-order timestamps and preserves item identity for unchanged messages", () => {
+    const m1 = message("m1", "user", "first", "2026-11-04T09:00:00.000Z");
+    const m2 = message("m2", "assistant", "second", "2026-11-04T09:00:05.000Z");
+    const m3a = message("m3", "assistant", "third", "2026-11-04T09:00:10.000Z");
+    const m3b = { ...m3a, text: "third updated" };
+
+    const outOfOrder = buildChatFeed({
+      messages: [m2, m1],
+      proposedPlans: [],
+      activities: [],
+    });
+    expect(outOfOrder.filter((i) => i.kind === "message").map((i) => i.id)).toEqual(["m1", "m2"]);
+
+    const first = buildChatFeed({
+      messages: [m1, m2, m3a],
+      proposedPlans: [],
+      activities: [],
+    });
+    const second = buildChatFeed({
+      messages: [m1, m2, m3b],
+      proposedPlans: [],
+      activities: [],
+    });
+    expect(second[1]).toBe(first[1]);
+    expect(second[2]).toBe(first[2]);
+    expect(second[3]).not.toBe(first[3]);
+  });
 });
