@@ -33,12 +33,31 @@ import { foldPersonalTasksFeed } from "./taskFeed.ts";
  */
 export function createPersonalAutomationClient<R, ER>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options?: {
+    /**
+     * Shared `personalTasks.subscribe` atom family (e.g. from `createPersonalBotsClient`)
+     * so screens reading `bots.usePersonalTasks` and `automation.usePersonalTasks` share
+     * one live WebSocket subscription instead of opening two identical streams.
+     */
+    readonly personalTasksFeed?:
+      | ReturnType<
+          typeof createEnvironmentRpcSubscriptionAtomFamily<
+            R,
+            ER,
+            typeof WS_METHODS.personalTasksSubscribe,
+            ReadonlyMap<string, PersonalTask>
+          >
+        >
+      | undefined;
+  },
 ) {
-  const personalTasksFeed = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-    label: "personal-tasks:feed",
-    tag: WS_METHODS.personalTasksSubscribe,
-    transform: foldPersonalTasksFeed,
-  });
+  const personalTasksFeed =
+    options?.personalTasksFeed ??
+    createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "personal-tasks:feed",
+      tag: WS_METHODS.personalTasksSubscribe,
+      transform: foldPersonalTasksFeed,
+    });
 
   const personalTaskDetail = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "personal-tasks:get",

@@ -317,7 +317,9 @@ export function createNativePersonal(
   };
   const client = createPersonalClient(runtime, ports, host);
   const bots = createPersonalBotsClient(runtime, client);
-  const automation = createPersonalAutomationClient(runtime);
+  const automation = createPersonalAutomationClient(runtime, {
+    personalTasksFeed: bots.personalTasksFeed,
+  });
   const groups = createPersonalGroupsClient(runtime, client, {
     refreshBots: (registry, environmentId) => {
       registry.refresh(
@@ -477,15 +479,18 @@ export function createNativePersonal(
           ),
         );
         attempt = 0;
-        void Effect.runPromise(next.session.initialConfig).then(
-          (config) => Effect.runSync(SubscriptionRef.set(providersRef, config.providers)),
-          () => undefined,
-        );
+        // Providers arrive on `connectNativeSession`'s `subscribeServerConfig` initial snapshot
+        // (`deferNetworkDiscovery: true, workspaceSnapshotsOnDemand: true`), so no duplicate
+        // `server.getConfig` RPC is needed here.
         setState(connectedState(generation.value));
+        let restartStatusTimer: ReturnType<typeof setTimeout> | null = null;
         if (ownerCanRestart) {
           // Warm the server's in-memory credential cache and persist any rescue
-          // endpoint immediately on connect, before disk or server failures happen.
-          void readRestartStatus();
+          // endpoint shortly after connect, off the cold-start critical path.
+          restartStatusTimer = setTimeout(() => {
+            restartStatusTimer = null;
+            if (!disposed && socketAlive) void readRestartStatus();
+          }, 2_500);
         }
         let stopWatchdog: () => void = () => undefined;
         const liveness = new Promise<void>((resolve) => {
@@ -521,6 +526,10 @@ export function createNativePersonal(
           liveness,
         ]);
         socketAlive = false;
+        if (restartStatusTimer !== null) {
+          clearTimeout(restartStatusTimer);
+          restartStatusTimer = null;
+        }
         stopWatchdog();
         // A session that drops within ten seconds is part of the same outage.
         if (Date.now() - connectedAt >= 10_000) {

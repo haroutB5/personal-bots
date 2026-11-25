@@ -27,3 +27,16 @@ describe("refreshPersonalWorkQuestions", () => {
     expect(refreshed).toEqual([]);
   });
 });
+
+describe("shared personalTasksFeed", () => {
+  it("reuses a caller-supplied personalTasksFeed atom family instead of creating a duplicate stream", () => {
+    const sharedFeed = ((args: unknown) => ({ shared: true, args })) as unknown as NonNullable<
+      Parameters<typeof createPersonalAutomationClient>[1]
+    >["personalTasksFeed"];
+    const client = createPersonalAutomationClient(
+      Atom.runtime(Layer.empty) as unknown as Parameters<typeof createPersonalAutomationClient>[0],
+      { personalTasksFeed: sharedFeed },
+    );
+    expect(client.personalTasksFeed).toBe(sharedFeed);
+  });
+});
