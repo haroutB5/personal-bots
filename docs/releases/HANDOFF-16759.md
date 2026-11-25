@@ -28,8 +28,10 @@ Faster chat opens, smoother live reply streaming, smaller and quicker local chat
 
 ## Verification
 
-- Pre-release locked benchmarks and unit/type/lint/parity/hygiene suites passed on `bc0b901fbc` (`@hbots/mobile` 187 files, `@hbots/personal-client` 90 files, `apps/server` 18 usage/personal/hygiene files, and 14/14 Android emulator QA on throwaway x86_64 APK).
-- Release staging, untiered gates, arm64 release APK build, and 14-flow emulator QA against the staged 1.67.59 server binary run next and are recorded in the follow-up docs commit.
+- **Stage:** staged release `7356b96267e4` built in 19 s (`rc=0`, `/home/harout/.personal-bots/releases/7356b96267e4`).
+- **Gates:** full (untiered) gates PASS in 809 s wall on release `7356b96267e4` (block below; `preflight` 6 s, `parity` 13 s, `hbots-mobile` 100 s, `personal-client` 60 s, `web-tests` 111 s, `web-tsc` 129 s, `server-tsc` 273 s, `e2e` 12 journeys 320 s, `server-tests` 241 files 726 s; `apps/server/src/usage/botUsage.test.ts` plus full `src/usage/` suite also verified directly with 294/294 tests passing). The arm64 release APK was built inside them in 201 s (`50,043,219` bytes, sha256 `33ca028d955dab622dc57876bbd99477f2a8f031a97aa0ca6bdb5483decc8e23`), passing `build-android.sh` (`check-bundle-duplicates`, `apksigner verify`, `verify-apk.mjs`) and `unzip -tq`.
+- **Emulator QA:** x86_64 QA APK built in 116 s (sha256 `23897016c4520e79`); all 14 flows (no `--tier`) ran against staged release `7356b96267e4`: **14/14 PASS, 0 FAIL**, 224 s of flows, 259 s total (`dev-team/qa/hbots-16759/emulator/hbots-16759-release-qa-20261125T012532Z`), `FATAL 0`, `JS errors 0`, `emulator free`.
+- **Locked benchmarks:** cached 180-turn snapshot bytes `-43.1%` (`1.26 MB → 718 KB`), cache write `-35.4%` (`11.08 → 7.16 ms`), cache read/decode `-80.8%` (`19.87 → 3.81 ms`), 60-chunk 6 KB markdown streaming `-91.8%` (`5.70 → 0.47 ms`), 360-msg projection `-52.8%` (`1.27 → 0.60 ms`, `359/359` historical ref stability), `UsageBotAggregator` 200k records `-35.7%` (`153.96 → 98.99 ms`), real-DB read-only `personalBots.list` (`omitArchived`) `-85.9%` (`25.79 → 3.64 ms`).
 
 ## Migration
 
@@ -40,3 +42,39 @@ None. Schema stays at 161.
 Binary rollback to 1.67.58 (`b8353057ddab`). No schema change, so the rollback is clean. Per-optimization kill switches (`PB_PERF_OFF`): `android-compact-thread-cache`, `android-fast-cache-decode`, `list-links-omit-archived-sql`.
 
 ## Gate evidence
+
+<!-- gate-evidence:begin sha=7356b96267e4eadd7c020f14a321e6ca9bc56e3f release=7356b96267e4 json-sha256=bddf7ca5c6a88f1f1838203f58ce65f0473d15807521bec4bf2ad56bcc6b68e4 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/src/personal/PersonalBotRepository.test.ts, apps/server/src/personal/PersonalBotRepository.ts, apps/server/src/personal/PersonalBotService.ts, apps/server/src/personal/perfFlags.ts, ...; selected 241 test files
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, selected: e2e inputs changed: apps/server/src/personal/PersonalBotRepository.test.ts, apps/server/src/personal/PersonalBotRepository.ts, apps/server/src/personal/PersonalBotService.ts, apps/server/src/personal/perfFlags.ts, ...; selected 12 journeys
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+- not run by any gate: apps/server/src/usage/botUsage.test.ts
+
+<!-- gate-evidence:end -->
+
+<!-- gate-timing:begin -->
+
+```
+gate timing: 809 s wall, 1737 s if serial; budget 5 of 12 cores, server lanes 4; min MemAvailable 14745 MB, swap growth 0 MB, peak load 12.3
+  preflight            guards   start    0 s      6 s   1 job  PASS  |#
+  server-tests         selected start    6 s    726 s  12 jobs PASS  |######################################################
+  server-tsc           whole    start  425 s    273 s   1 job  PASS  |                                ####################
+  web-tests            whole    start  698 s    111 s   1 job  PASS  |                                                    ########
+  web-tsc              whole    start  610 s    129 s   1 job  PASS  |                                             ##########
+  e2e                  selected start  105 s    320 s   1 job  PASS  |        ########################
+  personal-client      whole    start  550 s     60 s   1 job  PASS  |                                         ####
+  hbots-mobile         whole    start    6 s    100 s   1 job  PASS  |#######
+  hbots-mobile-kotlin  skip     start    0 s      0 s   0 jobs SKIP  |
+  parity               whole    start    0 s     13 s   1 job  PASS  |#
+  release-tools        skip     start    0 s      0 s   0 jobs SKIP  |
+  arm64 build (bg)     android  start  105 s    201 s   1 job  PASS  |        ###############
+```
+
+<!-- gate-timing:end -->
