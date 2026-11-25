@@ -8,7 +8,9 @@ export type AndroidPerfOptimization =
   /** Start a chat's snapshot request at the press, before the screen mounts. */
   | "android-preload-chat"
   /** Check for an app update when the connection comes back, at most once a minute. */
-  | "android-update-on-reconnect";
+  | "android-update-on-reconnect"
+  /** Compact thread snapshots (dedupe bodies + omit local turn items) before caching on disk. */
+  | "android-compact-thread-cache";
 
 let off: ReadonlySet<string> = new Set();
 

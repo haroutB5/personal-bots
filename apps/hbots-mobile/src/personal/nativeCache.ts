@@ -6,10 +6,13 @@ import {
   type VcsListRefsResult,
 } from "@t3tools/contracts";
 import { ConnectionPersistenceError, Persistence } from "@t3tools/client-runtime/platform";
+import { omitLocalVisibleTurnItems } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
+import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import { Directory, File, Paths } from "expo-file-system";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { androidPerfOptimizationOn } from "../perfFlags";
 import { readDecryptedText, writeEncryptedText } from "../platform/secureStorage";
 import { noteCacheRead, noteCacheWrite } from "./chatOpenPerf";
 import { decodeThreadSnapshotJson } from "./threadSnapshotJson";
@@ -24,11 +27,15 @@ export const CACHE_DIRECTORY = "hbots-thread-cache";
  */
 export const MAX_CACHED_THREAD_BYTES = 2_097_152;
 
+const NON_ASCII = /[^\x00-\x7f]/;
+
 /** The UTF-8 length of `text`, or any number over `limit` once it passes it: counting stops there. */
 function utf8Bytes(text: string, limit: number): number {
   if (text.length > limit) return text.length;
-  let bytes = 0;
-  for (let index = 0; index < text.length; index += 1) {
+  const firstNonAscii = text.search(NON_ASCII);
+  if (firstNonAscii === -1) return text.length;
+  let bytes = firstNonAscii;
+  for (let index = firstNonAscii; index < text.length; index += 1) {
     const unit = text.charCodeAt(index);
     if (unit < 0x80) {
       bytes += 1;
@@ -43,6 +50,16 @@ function utf8Bytes(text: string, limit: number): number {
     if (bytes > limit) return bytes;
   }
   return bytes;
+}
+
+function compactSnapshotForCache(snapshot: ThreadSnapshot): unknown {
+  if (!androidPerfOptimizationOn("android-compact-thread-cache")) return snapshot;
+  const deduped = dedupeSnapshotBodies(snapshot.projection);
+  const omitted = omitLocalVisibleTurnItems(deduped);
+  if (omitted !== null) {
+    return { ...snapshot, projection: omitted, turnItemsOmitLocalVisible: true as const };
+  }
+  return deduped === snapshot.projection ? snapshot : { ...snapshot, projection: deduped };
 }
 
 /** Set by a wipe: a save that was already running cannot recreate the folder after it. */
@@ -143,7 +160,7 @@ export async function writeCachedThread(
   if (sealed) return;
   const file = threadFile(environmentId, snapshot.projection.thread.id);
   const startedAt = performance.now();
-  const text = JSON.stringify(snapshot);
+  const text = JSON.stringify(compactSnapshotForCache(snapshot));
   const bytes = utf8Bytes(text, MAX_CACHED_THREAD_BYTES);
   if (bytes > MAX_CACHED_THREAD_BYTES) {
     // Too big to read back safely: drop the older copy too, so no stale one is shown later.

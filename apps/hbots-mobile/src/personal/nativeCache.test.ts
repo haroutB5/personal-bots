@@ -59,20 +59,24 @@ vi.mock("expo-file-system", () => {
   return { Directory, File, Paths: { document: "file:///documents" } };
 });
 
+import { resetPerfOffForTest, setPerfOff } from "../perfFlags";
 import serverBody from "./fixtures/boundedThreadSnapshot.json";
 import { hasCachedThread, readCachedThread, writeCachedThread } from "./nativeCache";
 
 const FILE =
   "file:///documents/hbots-thread-cache/thread-environment-phone-f37b73c4-f46d-4da7-8d7b-32007f18562b.json";
 
-const snapshot = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot))(
-  serverBody,
+const decodeDetailSnapshot = Schema.decodeUnknownSync(
+  Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot),
 );
+
+const snapshot = decodeDetailSnapshot(serverBody);
 
 describe("thread cache file", () => {
   beforeEach(() => {
     files.clear();
     writer.failure = null;
+    resetPerfOffForTest();
   });
 
   it("reads back a written thread snapshot", async () => {
@@ -187,5 +191,87 @@ describe("thread cache file", () => {
 
     expect(hasCachedThread("environment-phone", "f37b73c4-f46d-4da7-8d7b-32007f18562b")).toBe(true);
     expect(hasCachedThread("environment-phone", "another-thread")).toBe(false);
+  });
+
+  it("compacts duplicated turn items and message bodies on write and restores them exactly on read", async () => {
+    const longReply = "Detailed answer. ".repeat(400);
+    const threadId = String(snapshot.projection.thread.id);
+    const assistantMsg = snapshot.projection.messages[1]!;
+    const turnItem = {
+      id: "item-assistant-1",
+      threadId,
+      runId: assistantMsg.runId,
+      nodeId: assistantMsg.nodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: "2026-11-08T21:03:44.000Z",
+      completedAt: "2026-11-08T21:03:44.000Z",
+      updatedAt: "2026-11-08T21:03:44.000Z",
+      type: "assistant_message",
+      messageId: String(assistantMsg.id),
+      text: longReply,
+      streaming: false,
+    };
+    const rich = decodeDetailSnapshot({
+      ...serverBody,
+      projection: {
+        ...serverBody.projection,
+        messages: serverBody.projection.messages.map((m, idx) =>
+          idx === 1 ? { ...m, text: longReply } : m,
+        ),
+        turnItems: [turnItem],
+        visibleTurnItems: [
+          {
+            position: 0,
+            visibility: "local",
+            sourceThreadId: threadId,
+            sourceItemId: turnItem.id,
+            item: turnItem,
+          },
+        ],
+      },
+    });
+    const sharedRich = {
+      ...rich,
+      projection: {
+        ...rich.projection,
+        turnItems: rich.projection.visibleTurnItems.map((row) => row.item),
+      },
+    };
+
+    // Uncompacted size (kill switch off)
+    setPerfOff(["android-compact-thread-cache"]);
+    await writeCachedThread("environment-phone", sharedRich);
+    const uncompactedStored = files.get(FILE) ?? "";
+    const uncompactedDecoded = Buffer.from(uncompactedStored.slice(3), "base64").toString("utf8");
+    const loadedLegacy = Option.getOrThrow(
+      await readCachedThread("environment-phone", snapshot.projection.thread.id),
+    );
+    expect(loadedLegacy.projection).toEqual(sharedRich.projection);
+
+    // Compacted size (default on)
+    resetPerfOffForTest();
+    files.clear();
+    await writeCachedThread("environment-phone", sharedRich);
+    const compactedStored = files.get(FILE) ?? "";
+    const compactedDecoded = Buffer.from(compactedStored.slice(3), "base64").toString("utf8");
+    expect(compactedDecoded.length).toBeLessThan(uncompactedDecoded.length * 0.5);
+
+    const loadedCompact = Option.getOrThrow(
+      await readCachedThread("environment-phone", snapshot.projection.thread.id),
+    );
+    expect(loadedCompact.projection).toEqual(sharedRich.projection);
+    expect(loadedCompact.projection.turnItems).toHaveLength(1);
+    expect(loadedCompact.projection.visibleTurnItems).toHaveLength(1);
+    expect(
+      loadedCompact.projection.turnItems[0]?.type === "assistant_message"
+        ? loadedCompact.projection.turnItems[0].text
+        : null,
+    ).toBe(longReply);
   });
 });
