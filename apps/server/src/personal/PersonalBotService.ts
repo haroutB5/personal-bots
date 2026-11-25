@@ -577,7 +577,13 @@ export const make = Effect.gen(function* () {
       );
       const [bots, threads, storedProjectId, groupPresence, archivedCountRows] = yield* Effect.all([
         repository.listBots().pipe(Effect.mapError(repositoryError("list"))),
-        repository.listThreadLinks().pipe(Effect.mapError(repositoryError("list"))),
+        repository
+          .listThreadLinks({
+            omitArchived: input?.omitArchived,
+            archivedBotId: input?.archivedBotId,
+            archivedThreadId: input?.archivedThreadId,
+          })
+          .pipe(Effect.mapError(repositoryError("list"))),
         repository
           .getMeta({ key: PERSONAL_META_PROJECT_ID })
           .pipe(Effect.mapError(repositoryError("list"))),

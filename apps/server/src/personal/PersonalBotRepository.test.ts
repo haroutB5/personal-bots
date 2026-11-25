@@ -504,6 +504,20 @@ it.effect(
       expect(ownerAt(guarded, "t-archived")).toBeNull();
       expect(ownerAt(unguarded, "t-open")).toBe("2026-09-25T20:00:00.000Z");
       expect(ownerAt(unguarded, "t-archived")).toBe("2026-09-25T20:00:00.000Z");
+
+      // Pushing omitArchived into SQL returns the exact open subset (and respects overrides).
+      const omitted = yield* repository.listThreadLinks({ omitArchived: true });
+      expect(omitted.map((link) => link.threadId)).toEqual(["t-open"]);
+      const withThread = yield* repository.listThreadLinks({
+        omitArchived: true,
+        archivedThreadId: ThreadId.make("t-archived"),
+      });
+      expect(withThread.map((link) => link.threadId).toSorted()).toEqual(["t-archived", "t-open"]);
+      const withBot = yield* repository.listThreadLinks({
+        omitArchived: true,
+        archivedBotId: botId,
+      });
+      expect(withBot.map((link) => link.threadId).toSorted()).toEqual(["t-archived", "t-open"]);
     }).pipe(Effect.provide(testLayer)),
 );
 

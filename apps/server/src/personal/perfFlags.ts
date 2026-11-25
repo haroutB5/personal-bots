@@ -21,6 +21,8 @@ export type ServerPerfOptimization =
   | "task-replay-index"
   /** The bots list reads the owner's newest message (`lastOwnerMessageAt`) for unarchived chats only. */
   | "owner-message-active-links"
+  /** Push `personalBots.list({ omitArchived })` filtering into SQL instead of decoding archived links. */
+  | "list-links-omit-archived-sql"
   /** The Bots app's shell leaves out idle archived bot chats (personalShellSlim.ts). */
   | "shell-omit-archived"
   /** Thread snapshots drop a tool update whose completion has the same timestamp (ActivityPayloadProjection.ts). */

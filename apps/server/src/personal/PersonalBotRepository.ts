@@ -224,6 +224,12 @@ export interface PersonalMessageSearchRow {
   readonly snippetStart: number;
 }
 
+export interface ListPersonalBotThreadLinksInput {
+  readonly omitArchived?: boolean | undefined;
+  readonly archivedBotId?: string | undefined;
+  readonly archivedThreadId?: string | undefined;
+}
+
 /** A bot chat with a live provider session, as the Performance sampler reads it. */
 export interface PersonalBotProviderSession {
   readonly threadId: string;
@@ -348,10 +354,9 @@ export class PersonalBotRepository extends Context.Service<
     readonly deleteThreadLink: (
       input: GetPersonalBotThreadInput,
     ) => Effect.Effect<void, PersonalBotRepositoryError>;
-    readonly listThreadLinks: () => Effect.Effect<
-      ReadonlyArray<PersonalBotThread>,
-      PersonalBotRepositoryError
-    >;
+    readonly listThreadLinks: (
+      input?: ListPersonalBotThreadLinksInput,
+    ) => Effect.Effect<ReadonlyArray<PersonalBotThread>, PersonalBotRepositoryError>;
     /** Every open bot chat id, for the shell stream's first snapshot. */
     readonly listOpenThreadIds: () => Effect.Effect<
       ReadonlyArray<ThreadId>,
@@ -1186,9 +1191,14 @@ export const make = Effect.gen(function* () {
   // time has passed is awake again, ordered as if a message arrived at the wake
   // time (`activity_at`) and unread from then (`wokeAt`, see `unreadFields`).
   const listThreadLinkRows = SqlSchema.findAll({
-    Request: Schema.Struct({ now: Schema.String }),
+    Request: Schema.Struct({
+      now: Schema.String,
+      omitArchived: Schema.Int,
+      archivedBotId: Schema.NullOr(Schema.String),
+      archivedThreadId: Schema.NullOr(Schema.String),
+    }),
     Result: PersonalBotThreadListRawDbRow,
-    execute: ({ now }) =>
+    execute: ({ now, omitArchived, archivedBotId, archivedThreadId }) =>
       sql`
         WITH candidates AS (
           SELECT
@@ -1227,6 +1237,12 @@ export const make = Effect.gen(function* () {
             ) AS base_activity_at
           FROM personal_bot_threads t
           LEFT JOIN ${sql.unsafe(rel.threads)} p ON p.thread_id = t.thread_id
+          WHERE (
+            ${omitArchived} = 0
+            OR t.archived_at IS NULL
+            OR (${archivedBotId} IS NOT NULL AND t.bot_id = ${archivedBotId})
+            OR (${archivedThreadId} IS NOT NULL AND t.thread_id = ${archivedThreadId})
+          )
         ),
         timed AS (
           SELECT
@@ -2096,9 +2112,18 @@ export const make = Effect.gen(function* () {
           Effect.mapError(toPersistenceSqlError("PersonalBotRepository.openThreadIds:query")),
         );
 
-  const listThreadLinkPreviews = () =>
+  const listThreadLinkPreviews = (input?: ListPersonalBotThreadLinksInput) =>
     DateTime.now.pipe(
-      Effect.flatMap((now) => listThreadLinkRows({ now: DateTime.formatIso(now) })),
+      Effect.flatMap((now) => {
+        const omit =
+          input?.omitArchived === true && serverPerfOptimizationOn("list-links-omit-archived-sql");
+        return listThreadLinkRows({
+          now: DateTime.formatIso(now),
+          omitArchived: omit ? 1 : 0,
+          archivedBotId: omit ? (input?.archivedBotId ?? null) : null,
+          archivedThreadId: omit ? (input?.archivedThreadId ?? null) : null,
+        });
+      }),
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "PersonalBotRepository.listThreadLinks:query",
@@ -2120,8 +2145,8 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const listThreadLinks: PersonalBotRepository["Service"]["listThreadLinks"] = () =>
-    listThreadLinkPreviews();
+  const listThreadLinks: PersonalBotRepository["Service"]["listThreadLinks"] = (input) =>
+    listThreadLinkPreviews(input);
 
   const listArchivedChatCounts: PersonalBotRepository["Service"]["listArchivedChatCounts"] = () =>
     sql<{ readonly botId: string; readonly count: number }>`
