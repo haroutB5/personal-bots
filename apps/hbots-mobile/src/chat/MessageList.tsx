@@ -107,10 +107,10 @@ import { useStreamCommitPerf } from "./useStreamCommitPerf";
 import {
 
   /* eslint-disable react/refs -- the list owns imperative scroll and swipe handles */
+  blocksNeedWidth,
   hasFileSpan,
   linkTarget,
   markdownBlocks,
-  markdownNeedsWidth,
   sameBlock,
   type FileLink,
   type InlineSpan,
@@ -227,6 +227,9 @@ function SpanText({
         onOpenLink={onOpenLink}
       />
     );
+  }
+  if (spans.length === 1 && spans[0]?.kind === "text") {
+    return <Text style={style}>{spans[0].text}</Text>;
   }
   return <Text style={style}>{spanNodes(spans, onOpenLink)}</Text>;
 }
@@ -444,12 +447,14 @@ function FileChips({
 
 function MarkdownBody({
   text,
+  parsedBlocks,
   messageId,
   onOpenFile,
   onOpenLink,
   tone,
 }: {
   readonly text: string;
+  readonly parsedBlocks?: ReadonlyArray<MarkdownBlock> | undefined;
   readonly messageId?: string | null;
   readonly onOpenFile?: ((request: FileOpenRequest) => void) | undefined;
   readonly onOpenLink?: ((href: string) => void) | undefined;
@@ -463,7 +468,10 @@ function MarkdownBody({
         : (path: string) => onOpenFile({ path, messageId: MessageId.make(messageId) }),
     [messageId, onOpenFile],
   );
-  const blocks = useMemo(() => keyedList(markdownBlocks(text), blockKey), [text]);
+  const blocks = useMemo(
+    () => positionalBlockKeys(parsedBlocks ?? markdownBlocks(text)),
+    [parsedBlocks, text],
+  );
   return (
     <View style={styles.markdown}>
       {blocks.map(({ key, item: block }) => (
@@ -471,6 +479,16 @@ function MarkdownBody({
       ))}
     </View>
   );
+}
+
+/**
+ * Positional keys per block kind keep the growing tail block mounted in place across
+ * streaming deltas instead of destroying and recreating its native subtree on every chunk.
+ */
+function positionalBlockKeys(
+  blocks: ReadonlyArray<MarkdownBlock>,
+): ReadonlyArray<{ readonly key: string; readonly item: MarkdownBlock }> {
+  return blocks.map((item, position) => ({ key: `${item.kind}#${position}`, item }));
 }
 
 /** Stable render keys from item content, with a count for repeated items. */
@@ -485,13 +503,6 @@ function keyedList<T>(
     seen.set(base, count);
     return { key: `${base}#${count}`, item };
   });
-}
-
-function blockKey(block: MarkdownBlock): string {
-  if (block.kind === "table") {
-    return `table:${block.table.header.map((cell) => cell.text).join("|")}`;
-  }
-  return `${block.kind}:${block.text}`;
 }
 
 function replyBody(
@@ -1188,6 +1199,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
       sentAt,
       streaming: message.streaming,
     };
+    const blocks = markdownBlocks(body);
     return (
       <View style={styles.messageRowStart}>
         <SwipeMessageRow
@@ -1209,7 +1221,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
             }
             style={[
               styles.assistantPress,
-              markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
+              blocksNeedWidth(blocks) || reply.options !== null ? styles.assistantWide : null,
             ]}
           >
             {item.showSpeaker ? (
@@ -1229,6 +1241,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
             ) : null}
             <MarkdownBody
               text={body}
+              parsedBlocks={blocks}
               tone="assistant"
               onOpenFile={onOpenFile}
               onOpenLink={onOpenLink}
@@ -1316,6 +1329,7 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
     sentAt,
     streaming: message.streaming,
   };
+  const blocks = markdownBlocks(body);
   return (
     <View style={styles.messageRowStart}>
       <SwipeMessageRow
@@ -1337,11 +1351,12 @@ const ChatRow = memo(function ChatRow({ inputs, shared }: RowViewProps) {
           }
           style={[
             styles.assistantPress,
-            markdownNeedsWidth(body) || reply.options !== null ? styles.assistantWide : null,
+            blocksNeedWidth(blocks) || reply.options !== null ? styles.assistantWide : null,
           ]}
         >
           <MarkdownBody
             text={body}
+            parsedBlocks={blocks}
             messageId={String(message.id)}
             tone="assistant"
             onOpenFile={onOpenFile}

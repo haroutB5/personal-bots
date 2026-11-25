@@ -700,4 +700,35 @@ describe("sameBlock", () => {
     expect(sameBlock(first("```ts\nlet a\n```"), first("```ts\nlet a\nlet b\n```"))).toBe(false);
     expect(sameBlock(first("```ts\nlet a\n```"), first("```js\nlet a\n```"))).toBe(false);
   });
+
+  it("reuses settled block references during streaming and matches full parse on tricky boundaries", () => {
+    const doc = [
+      "# Title",
+      "Paragraph with **bold** and https://example.com/a",
+      "```ts\nconst a = 1;\n\nconst b = 2;\n```",
+      "| Col |\n| --- |\n| one |\n| two |",
+      "Tail line one\n   \nTail line two",
+    ].join("\n\n");
+
+    let prev = markdownBlocks("");
+    for (let len = 1; len <= doc.length; len += 7) {
+      const slice = doc.slice(0, len);
+      const streamed = markdownBlocks(slice);
+      // Compare against a fresh parse by perturbing cache with a non-matching prefix first.
+      const fresh = markdownBlocks(`fresh-bypass-${len}\n\n${slice}`).slice(1);
+      expect(streamed).toEqual(fresh);
+      prev = streamed;
+    }
+    const finalA = markdownBlocks(`${doc} more`);
+    expect(finalA[0]).toBe(prev[0]);
+    expect(finalA[1]).toBe(prev[1]);
+    expect(finalA[2]).toBe(prev[2]);
+
+    // Unterminated blank line at end of chunk must NOT be treated as a settled boundary.
+    const partial = markdownBlocks("Alpha\n ");
+    expect(partial).toHaveLength(1);
+    const continued = markdownBlocks("Alpha\n beta");
+    expect(continued).toHaveLength(1);
+    expect(continued[0]).toMatchObject({ kind: "paragraph", text: "Alpha\n beta" });
+  });
 });

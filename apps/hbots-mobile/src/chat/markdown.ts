@@ -181,7 +181,15 @@ function fileLink(path: string, label: string): { readonly kind: "file" } & File
   return { kind: "file", path, label, name: fileBasename(path) || label };
 }
 
+const HAS_INLINE_SYNTAX = /[*_`[]/;
+
 function inline(text: string, depth = 0): ReadonlyArray<InlineSpan> {
+  if (!HAS_INLINE_SYNTAX.test(text)) {
+    if (!text.includes("://")) return [{ kind: "text", text }];
+    const spans: InlineSpan[] = [];
+    pushTextWithAddresses(spans, text);
+    return spans.length === 0 ? [{ kind: "text", text }] : spans;
+  }
   const source = shieldIntrawordUnderscores(text);
   const spans: InlineSpan[] = [];
   let last = 0;
@@ -250,6 +258,10 @@ function trimAddress(candidate: string): string {
 
 /** Adds plain text, turning each written-out http or https address into a link. */
 function pushTextWithAddresses(spans: InlineSpan[], text: string): void {
+  if (!text.includes("://")) {
+    if (text.length > 0) spans.push({ kind: "text", text });
+    return;
+  }
   let last = 0;
   for (const match of text.matchAll(BARE_ADDRESS)) {
     const index = match.index ?? 0;
@@ -308,35 +320,141 @@ function fileFields(spans: ReadonlyArray<InlineSpan>): {
   return files.length > 0 ? { files } : {};
 }
 
-/** Same drawn content, so a block parsed again from grown text need not redraw. */
-export function sameBlock(a: MarkdownBlock, b: MarkdownBlock): boolean {
-  return sameValue(a, b);
+function sameFileLinks(
+  a: ReadonlyArray<FileLink> | undefined,
+  b: ReadonlyArray<FileLink> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i]!;
+    const right = b[i]!;
+    if (left === right) continue;
+    if (left.path !== right.path || left.label !== right.label || left.name !== right.name) {
+      return false;
+    }
+  }
+  return true;
 }
 
-function sameValue(a: unknown, b: unknown): boolean {
+function sameInlineSpan(a: InlineSpan, b: InlineSpan): boolean {
   if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case "text":
+    case "code":
+      return a.text === (b as typeof a).text;
+    case "link": {
+      const right = b as typeof a;
+      return a.text === right.text && a.href === right.href;
+    }
+    case "file": {
+      const right = b as typeof a;
+      return a.path === right.path && a.label === right.label && a.name === right.name;
+    }
+    case "bold":
+    case "italic": {
+      const right = b as typeof a;
+      return a.text === right.text && sameInlineSpans(a.spans, right.spans);
+    }
+  }
+}
+
+function sameInlineSpans(
+  a: ReadonlyArray<InlineSpan> | undefined,
+  b: ReadonlyArray<InlineSpan> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (!sameInlineSpan(a[i]!, b[i]!)) return false;
+  }
+  return true;
+}
+
+function sameMarkdownCell(a: MarkdownCell, b: MarkdownCell): boolean {
+  return a === b || (a.text === b.text && sameInlineSpans(a.spans, b.spans));
+}
+
+function sameMarkdownTable(a: MarkdownTable, b: MarkdownTable): boolean {
+  if (a === b) return true;
+  if (
+    a.header.length !== b.header.length ||
+    a.aligns.length !== b.aligns.length ||
+    a.rows.length !== b.rows.length
+  ) {
+    return false;
+  }
+  for (let i = 0; i < a.aligns.length; i += 1) {
+    if (a.aligns[i] !== b.aligns[i]) return false;
+  }
+  for (let i = 0; i < a.header.length; i += 1) {
+    if (!sameMarkdownCell(a.header[i]!, b.header[i]!)) return false;
+  }
+  for (let r = 0; r < a.rows.length; r += 1) {
+    const leftRow = a.rows[r]!;
+    const rightRow = b.rows[r]!;
+    if (leftRow === rightRow) continue;
+    if (leftRow.length !== rightRow.length) return false;
+    for (let c = 0; c < leftRow.length; c += 1) {
+      if (!sameMarkdownCell(leftRow[c]!, rightRow[c]!)) return false;
+    }
+  }
+  return true;
+}
+
+/** Same drawn content, so a block parsed again from grown text need not redraw. */
+export function sameBlock(a: MarkdownBlock, b: MarkdownBlock): boolean {
+  if (a === b) return true;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "code") {
+    const right = b as typeof a;
+    return a.text === right.text && a.language === right.language;
+  }
+  if (a.kind === "table") {
+    return sameMarkdownTable(a.table, (b as typeof a).table);
+  }
+  if (a.kind === "bullet" || a.kind === "number") {
+    const right = b as typeof a;
     return (
-      Array.isArray(a) &&
-      Array.isArray(b) &&
-      a.length === b.length &&
-      a.every((item, index) => sameValue(item, b[index]))
+      a.text === right.text &&
+      a.marker === right.marker &&
+      a.depth === right.depth &&
+      sameFileLinks(a.files, right.files) &&
+      sameInlineSpans(a.spans, right.spans)
     );
   }
-  const left = Object.entries(a);
-  const right = b as Record<string, unknown>;
+  const right = b as typeof a;
   return (
-    left.length === Object.keys(right).length &&
-    left.every(([key, value]) => key in right && sameValue(value, right[key]))
+    a.text === right.text &&
+    sameFileLinks(a.files, right.files) &&
+    sameInlineSpans(a.spans, right.spans)
   );
 }
 
-export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
-  const lines = source.replaceAll("\r\n", "\n").split("\n");
+interface ParsedMarkdownCacheEntry {
+  readonly normalized: string;
+  readonly blocks: ReadonlyArray<MarkdownBlock>;
+  /** End offset (in `normalized`) of the last terminated blank line outside any code fence. */
+  readonly safeOffset: number;
+  readonly safeBlockCount: number;
+}
+
+const PARSED_CACHE_LIMIT = 12;
+const parsedCache: ParsedMarkdownCacheEntry[] = [];
+
+function parseNormalized(normalized: string): {
+  readonly blocks: MarkdownBlock[];
+  readonly safeOffset: number;
+  readonly safeBlockCount: number;
+} {
+  const lines = normalized.split("\n");
   const blocks: MarkdownBlock[] = [];
   let paragraph: string[] = [];
   let code: { language: string; lines: string[] } | null = null;
+  let offset = 0;
+  let safeOffset = 0;
+  let safeBlockCount = 0;
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
@@ -350,6 +468,7 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
+    const nextOffset = offset + line.length + (index < lines.length - 1 ? 1 : 0);
     if (code !== null) {
       if (FENCE.test(line)) {
         const text = code.lines.join("\n");
@@ -362,16 +481,25 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
       } else {
         code.lines.push(line);
       }
+      offset = nextOffset;
       continue;
     }
     const fence = FENCE.exec(line);
     if (fence !== null) {
       flushParagraph();
       code = { language: fence[1] ?? "", lines: [] };
+      offset = nextOffset;
       continue;
     }
     if (line.trim().length === 0) {
       flushParagraph();
+      // A terminated blank line outside any fence resets parser state completely, so everything
+      // before `nextOffset` is immutable when future streaming chunks append to this string.
+      if (index < lines.length - 1) {
+        safeOffset = nextOffset;
+        safeBlockCount = blocks.length;
+      }
+      offset = nextOffset;
       continue;
     }
     const heading = HEADING.exec(line);
@@ -380,6 +508,7 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
       const text = heading[2] ?? "";
       const spans = inline(text);
       blocks.push({ kind: "heading", spans, text, ...fileFields(spans) });
+      offset = nextOffset;
       continue;
     }
     const quote = QUOTE.exec(line);
@@ -388,6 +517,7 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
       const text = quote[1] ?? "";
       const spans = inline(text);
       blocks.push({ kind: "quote", spans, text, ...fileFields(spans) });
+      offset = nextOffset;
       continue;
     }
     const bullet = BULLET.exec(line);
@@ -403,6 +533,7 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
         depth: listDepth(bullet[1] ?? ""),
         ...fileFields(spans),
       });
+      offset = nextOffset;
       continue;
     }
     const number = NUMBER.exec(line);
@@ -418,16 +549,21 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
         depth: listDepth(number[1] ?? ""),
         ...fileFields(spans),
       });
+      offset = nextOffset;
       continue;
     }
     const table = tableAt(lines, index);
     if (table !== null) {
       flushParagraph();
       blocks.push({ kind: "table", table: table.table });
+      for (let t = index; t <= table.last; t += 1) {
+        offset += (lines[t] ?? "").length + (t < lines.length - 1 ? 1 : 0);
+      }
       index = table.last;
       continue;
     }
     paragraph.push(line);
+    offset = nextOffset;
   }
   if (code !== null) {
     const text = code.lines.join("\n");
@@ -438,16 +574,64 @@ export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
     });
   }
   flushParagraph();
-  return blocks;
+  return { blocks, safeOffset, safeBlockCount };
 }
 
-/**
- * Lists and code blocks put a flexing column inside a shrink-to-fit bubble, and
- * a table puts a horizontal scroll there. Android lays that out during an
- * unclamped intrinsic pass, so it collapses. Those messages need a definite width.
- */
-export function markdownNeedsWidth(source: string): boolean {
-  return markdownBlocks(source).some((block) => {
+function storeParsedCache(entry: ParsedMarkdownCacheEntry, replaceIndex?: number): void {
+  if (replaceIndex !== undefined) {
+    parsedCache.splice(replaceIndex, 1);
+  } else if (parsedCache.length >= PARSED_CACHE_LIMIT) {
+    parsedCache.shift();
+  }
+  parsedCache.push(entry);
+}
+
+export function markdownBlocks(source: string): ReadonlyArray<MarkdownBlock> {
+  const normalized = source.includes("\r") ? source.replaceAll("\r\n", "\n") : source;
+  let bestPrefixIdx = -1;
+  let bestSafeOffset = 0;
+  for (let i = parsedCache.length - 1; i >= 0; i -= 1) {
+    const entry = parsedCache[i]!;
+    if (entry.normalized === normalized) {
+      return entry.blocks;
+    }
+    if (
+      entry.safeOffset > bestSafeOffset &&
+      normalized.length > entry.safeOffset &&
+      normalized.startsWith(entry.normalized.slice(0, entry.safeOffset))
+    ) {
+      bestSafeOffset = entry.safeOffset;
+      bestPrefixIdx = i;
+    }
+  }
+  if (bestPrefixIdx !== -1) {
+    const base = parsedCache[bestPrefixIdx]!;
+    const tail = parseNormalized(normalized.slice(base.safeOffset));
+    const blocks = [...base.blocks.slice(0, base.safeBlockCount), ...tail.blocks];
+    storeParsedCache(
+      {
+        normalized,
+        blocks,
+        safeOffset: base.safeOffset + tail.safeOffset,
+        safeBlockCount: base.safeBlockCount + tail.safeBlockCount,
+      },
+      bestPrefixIdx,
+    );
+    return blocks;
+  }
+  const parsed = parseNormalized(normalized);
+  storeParsedCache({
+    normalized,
+    blocks: parsed.blocks,
+    safeOffset: parsed.safeOffset,
+    safeBlockCount: parsed.safeBlockCount,
+  });
+  return parsed.blocks;
+}
+
+/** Whether already-parsed markdown blocks need a definite bubble width on Android. */
+export function blocksNeedWidth(blocks: ReadonlyArray<MarkdownBlock>): boolean {
+  for (const block of blocks) {
     if (
       block.kind === "bullet" ||
       block.kind === "number" ||
@@ -456,6 +640,16 @@ export function markdownNeedsWidth(source: string): boolean {
     ) {
       return true;
     }
-    return block.files !== undefined || hasFileSpan(block.spans);
-  });
+    if (block.files !== undefined || hasFileSpan(block.spans)) return true;
+  }
+  return false;
+}
+
+/**
+ * Lists and code blocks put a flexing column inside a shrink-to-fit bubble, and
+ * a table puts a horizontal scroll there. Android lays that out during an
+ * unclamped intrinsic pass, so it collapses. Those messages need a definite width.
+ */
+export function markdownNeedsWidth(source: string): boolean {
+  return blocksNeedWidth(markdownBlocks(source));
 }
