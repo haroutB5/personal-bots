@@ -325,6 +325,13 @@ export const WS_METHODS = {
   personalMemoryTidyUndo: "personalMemory.tidyUndo",
   personalMemoryCards: "personalMemory.cards",
 
+  // Personal external MCP servers (Bearer tokens are write-only and never returned)
+  personalExternalMcpList: "personalExternalMcp.list",
+  personalExternalMcpCreate: "personalExternalMcp.create",
+  personalExternalMcpUpdate: "personalExternalMcp.update",
+  personalExternalMcpDelete: "personalExternalMcp.delete",
+  personalExternalMcpTestConnection: "personalExternalMcp.testConnection",
+
   // Personal Web Push methods
   personalPushPublicKey: "personalPush.publicKey",
   personalPushGetSettings: "personalPush.getSettings",

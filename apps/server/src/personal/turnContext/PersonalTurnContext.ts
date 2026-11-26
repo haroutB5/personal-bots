@@ -33,6 +33,7 @@ import { personalBotSystemInstructions } from "../personalBotInstructions.ts";
 import { isPersonalTaskMessageId } from "../personalThreadTitles.ts";
 import { uniqueAutomaticTitle } from "../personalChatTitles.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
+import * as PersonalExternalMcpService from "../externalMcp/PersonalExternalMcpService.ts";
 import * as PersonalProjectRepository from "../projects/PersonalProjectRepository.ts";
 import { openProjectsContext } from "../projects/projectText.ts";
 import * as PersonalSessionAccess from "../secrets/PersonalSessionAccess.ts";
@@ -76,6 +77,9 @@ export interface PersonalTurnContextShape {
   readonly sessionInstructions: (threadId: ThreadId) => Effect.Effect<Option.Option<string>>;
   readonly sessionPersonal: (threadId: ThreadId) => Effect.Effect<PersonalSession>;
   readonly isPersonalBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
+  readonly externalMcpServersForThread?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<{ readonly serverId: string; readonly slug: string }>>;
   readonly uniqueTitle: (input: {
     readonly threadId: ThreadId;
     readonly title: string;
@@ -99,6 +103,9 @@ export const makePersonalTurnContext = (deps: {
   readonly personalBots: PersonalBotRepository.PersonalBotRepository["Service"];
   readonly personalSessions: Option.Option<PersonalSessionAccess.PersonalSessionAccess["Service"]>;
   readonly personalMemory: Option.Option<PersonalMemoryService.PersonalMemoryService["Service"]>;
+  readonly personalExternalMcp?: Option.Option<
+    PersonalExternalMcpService.PersonalExternalMcpService["Service"]
+  >;
   readonly voiceCalls: PersonalVoiceCallRepository.PersonalVoiceCallRepository["Service"];
   readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThreadShell">;
   readonly projects?: Pick<
@@ -165,6 +172,28 @@ export const makePersonalTurnContext = (deps: {
           threadId,
           cause: Cause.pretty(cause),
         }).pipe(Effect.as(false)),
+      ),
+    );
+
+  const externalMcpServersForThread = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const externalMcp = deps.personalExternalMcp;
+      if (externalMcp === undefined || Option.isNone(externalMcp)) return [];
+      const link = yield* deps.personalBots.getThreadLink({ threadId });
+      if (Option.isNone(link)) return [];
+      const servers = yield* externalMcp.value.forBot(link.value.botId);
+      return servers.map((server) => ({
+        serverId: String(server.serverId),
+        slug: server.slug,
+      }));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("external MCP servers lookup failed; continuing without them", {
+          threadId,
+          cause: Cause.pretty(cause),
+        }).pipe(
+          Effect.as([] as ReadonlyArray<{ readonly serverId: string; readonly slug: string }>),
+        ),
       ),
     );
 
@@ -297,13 +326,23 @@ export const makePersonalTurnContext = (deps: {
       };
     });
 
-  return { sessionInstructions, sessionPersonal, isPersonalBotThread, uniqueTitle, prepareTurn };
+  return {
+    sessionInstructions,
+    sessionPersonal,
+    isPersonalBotThread,
+    externalMcpServersForThread,
+    uniqueTitle,
+    prepareTurn,
+  };
 };
 
 const make = Effect.gen(function* () {
   const personalBots = yield* PersonalBotRepository.PersonalBotRepository;
   const personalSessions = yield* Effect.serviceOption(PersonalSessionAccess.PersonalSessionAccess);
   const personalMemory = yield* Effect.serviceOption(PersonalMemoryService.PersonalMemoryService);
+  const personalExternalMcp = yield* Effect.serviceOption(
+    PersonalExternalMcpService.PersonalExternalMcpService,
+  );
   const voiceCalls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   const projectionStore = yield* ProjectionStoreV2;
   const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
@@ -311,6 +350,7 @@ const make = Effect.gen(function* () {
     personalBots,
     personalSessions,
     personalMemory,
+    personalExternalMcp,
     voiceCalls,
     projectionStore,
     projects,

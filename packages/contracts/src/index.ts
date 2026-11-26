@@ -104,6 +104,7 @@ export * from "./personalBrowser.ts";
 export * from "./personalDesktop.ts";
 export * from "./personalRoutines.ts";
 export * from "./personalMemory.ts";
+export * from "./personalExternalMcp.ts";
 export * from "./personalPush.ts";
 export * from "./personalRpc.ts";
 export {

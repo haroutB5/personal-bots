@@ -246,6 +246,16 @@ import {
   PersonalPushInAppAckInput,
   PersonalPushInAppNotification,
 } from "./personalPush.ts";
+import {
+  PersonalExternalMcpCreateInput,
+  PersonalExternalMcpDeleteInput,
+  PersonalExternalMcpError,
+  PersonalExternalMcpListResult,
+  PersonalExternalMcpServer,
+  PersonalExternalMcpTestConnectionInput,
+  PersonalExternalMcpTestConnectionResult,
+  PersonalExternalMcpUpdateInput,
+} from "./personalExternalMcp.ts";
 import { WS_METHODS } from "./wsMethods.ts";
 import {
   PersonalLoginRequest,
@@ -284,6 +294,10 @@ const PersonalRoutinesRpcError = Schema.Union([
   EnvironmentAuthorizationError,
 ]);
 const PersonalMemoryRpcError = Schema.Union([PersonalMemoryError, EnvironmentAuthorizationError]);
+const PersonalExternalMcpRpcError = Schema.Union([
+  PersonalExternalMcpError,
+  EnvironmentAuthorizationError,
+]);
 const PersonalPushRpcError = Schema.Union([PersonalPushError, EnvironmentAuthorizationError]);
 const WsPersonalBotsListRpc = Rpc.make(WS_METHODS.personalBotsList, {
   payload: Schema.Struct({
@@ -1035,6 +1049,34 @@ const WsPersonalPushGetSettingsRpc = Rpc.make(WS_METHODS.personalPushGetSettings
   success: PersonalPushSettings,
   error: PersonalPushRpcError,
 });
+const WsPersonalExternalMcpListRpc = Rpc.make(WS_METHODS.personalExternalMcpList, {
+  payload: Schema.Struct({}),
+  success: PersonalExternalMcpListResult,
+  error: PersonalExternalMcpRpcError,
+});
+const WsPersonalExternalMcpCreateRpc = Rpc.make(WS_METHODS.personalExternalMcpCreate, {
+  payload: PersonalExternalMcpCreateInput,
+  success: PersonalExternalMcpServer,
+  error: PersonalExternalMcpRpcError,
+});
+const WsPersonalExternalMcpUpdateRpc = Rpc.make(WS_METHODS.personalExternalMcpUpdate, {
+  payload: PersonalExternalMcpUpdateInput,
+  success: PersonalExternalMcpServer,
+  error: PersonalExternalMcpRpcError,
+});
+const WsPersonalExternalMcpDeleteRpc = Rpc.make(WS_METHODS.personalExternalMcpDelete, {
+  payload: PersonalExternalMcpDeleteInput,
+  success: Schema.Struct({}),
+  error: PersonalExternalMcpRpcError,
+});
+const WsPersonalExternalMcpTestConnectionRpc = Rpc.make(
+  WS_METHODS.personalExternalMcpTestConnection,
+  {
+    payload: PersonalExternalMcpTestConnectionInput,
+    success: PersonalExternalMcpTestConnectionResult,
+    error: PersonalExternalMcpRpcError,
+  },
+);
 const WsPersonalPushSubscribeRpc = Rpc.make(WS_METHODS.personalPushSubscribe, {
   payload: PersonalPushSubscribeInput,
   success: PersonalPushSubscribeResult,
@@ -1268,6 +1310,11 @@ export const WsPersonalRpcGroup = RpcGroup.make(
   WsPersonalMemoryTidyDecideRpc,
   WsPersonalMemoryTidyUndoRpc,
   WsPersonalMemoryCardsRpc,
+  WsPersonalExternalMcpListRpc,
+  WsPersonalExternalMcpCreateRpc,
+  WsPersonalExternalMcpUpdateRpc,
+  WsPersonalExternalMcpDeleteRpc,
+  WsPersonalExternalMcpTestConnectionRpc,
   WsPersonalPushPublicKeyRpc,
   WsPersonalPushGetSettingsRpc,
   WsPersonalPushSubscribeRpc,

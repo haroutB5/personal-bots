@@ -2358,10 +2358,24 @@ export function claudeMcpQueryOverrides(input: {
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
+  const extraServers = input.readOnlySandbox ? [] : (session.extraMcpServers ?? []);
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
-    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+    : [CLAUDE_T3_MCP_TOOL_WILDCARD, ...extraServers.map((extra) => `mcp__${extra.name}__*`)];
   const authorization = McpProviderSession.claudeMcpAuthorization(session);
+  const extraMcpServersEntries = Object.fromEntries(
+    extraServers.map((extra) => [
+      extra.name,
+      {
+        type: "http" as const,
+        url: extra.url,
+        headers: {
+          Authorization: McpProviderSession.claudeMcpAuthorization(extra).header,
+        },
+        timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+      },
+    ]),
+  );
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     credentialKey: session.authorizationHeader,
@@ -2374,6 +2388,7 @@ export function claudeMcpQueryOverrides(input: {
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
+      ...extraMcpServersEntries,
     },
   };
 }

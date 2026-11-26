@@ -4,6 +4,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
   ModelSelection,
+  PERSONAL_EXTERNAL_MCP_ROUTE_PREFIX,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
@@ -575,6 +576,26 @@ export const layerWithOptions = (
                   capabilities.add("bots");
                   capabilities.add("personal");
                 }
+                const externalMcpDefs =
+                  personalBot &&
+                  Option.isSome(personalTurnContext) &&
+                  personalTurnContext.value.externalMcpServersForThread !== undefined
+                    ? yield* personalTurnContext.value.externalMcpServersForThread(threadId)
+                    : [];
+                const buildExtraMcpServers = (
+                  endpoint: string,
+                  authorizationHeader: string,
+                ): ReadonlyArray<
+                  import("@t3tools/provider-core/server/mcpSession").McpExtraServerConfig
+                > => {
+                  if (externalMcpDefs.length === 0) return [];
+                  const origin = new URL(endpoint).origin;
+                  return externalMcpDefs.map((server) => ({
+                    name: `ext-${server.slug}`,
+                    url: `${origin}${PERSONAL_EXTERNAL_MCP_ROUTE_PREFIX}/${encodeURIComponent(server.serverId)}/mcp`,
+                    authorizationHeader,
+                  }));
+                };
                 const subagent = yield* projectionStore.getThread(threadId).pipe(
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
@@ -604,6 +625,25 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
+                    const nextExtra = buildExtraMcpServers(
+                      existing.endpoint,
+                      existing.authorizationHeader,
+                    );
+                    const prevExtra = existing.extraMcpServers ?? [];
+                    const extraChanged =
+                      prevExtra.length !== nextExtra.length ||
+                      prevExtra.some(
+                        (entry, index) =>
+                          entry.name !== nextExtra[index]?.name ||
+                          entry.url !== nextExtra[index]?.url,
+                      );
+                    if (extraChanged) {
+                      const { extraMcpServers: _prevExtra, ...existingBase } = existing;
+                      yield* mcpSessions.set({
+                        ...existingBase,
+                        ...(nextExtra.length > 0 ? { extraMcpServers: nextExtra } : {}),
+                      });
+                    }
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -616,8 +656,13 @@ export const layerWithOptions = (
                   capabilities,
                   subagent,
                 });
+                const extraMcpServers = buildExtraMcpServers(
+                  credential.config.endpoint,
+                  credential.config.authorizationHeader,
+                );
                 yield* mcpSessions.set({
                   ...credential.config,
+                  ...(extraMcpServers.length > 0 ? { extraMcpServers } : {}),
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(

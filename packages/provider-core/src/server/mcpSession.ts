@@ -7,6 +7,13 @@ import type * as Effect from "effect/Effect";
  */
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 
+/** Additional owner-configured external MCP server proxied by T3 for a personal bot. */
+export interface McpExtraServerConfig {
+  readonly name: string;
+  readonly url: string;
+  readonly authorizationHeader: string;
+}
+
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -17,6 +24,8 @@ export interface McpProviderSessionConfig {
   /** Omit preview_* instructions when the user withholds agent browser access. */
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
+  /** Extra proxied MCP servers visible to this personal bot's thread. */
+  readonly extraMcpServers?: ReadonlyArray<McpExtraServerConfig>;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /**
    * `PB_SECRET_<NAME>` values for a personal bot's thread (see

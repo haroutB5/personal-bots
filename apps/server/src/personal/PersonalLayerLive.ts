@@ -24,6 +24,7 @@ import * as PersonalBrowserLease from "./browser/BrowserLease.ts";
 import * as PersonalBrowserLeaseRepository from "./browser/PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./browser/PersonalBrowserProtectionRepository.ts";
 import * as PersonalLeadBots from "./leadBots/PersonalLeadBotService.ts";
+import * as PersonalExternalMcpService from "./externalMcp/PersonalExternalMcpService.ts";
 import * as MemoryEmbedder from "./memory/MemoryEmbedder.ts";
 import * as PersonalMemoryService from "./memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "./memory/PersonalMemoryTidyService.ts";
@@ -237,7 +238,9 @@ export const PersonalRuntimeLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PersonalLoginRepository.layer),
   Layer.provideMerge(PersonalTasksDispatcherLive),
   Layer.provideMerge(PersonalGroupsDispatcherLive),
-  Layer.provideMerge(PersonalSecretService.layerLive),
+  Layer.provideMerge(
+    Layer.mergeAll(PersonalSecretService.layerLive, PersonalExternalMcpService.layerLive),
+  ),
   Layer.provideMerge(PersonalTaskService.layerLive),
   Layer.provideMerge(PersonalGroupService.layerLive),
   Layer.provideMerge(PersonalBotsSeedLive),

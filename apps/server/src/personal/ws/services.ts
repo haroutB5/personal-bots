@@ -12,6 +12,7 @@ import { layer as PersonalProviderSessionsLayer } from "../engine/PersonalProvid
 import * as PersonalLeadBots from "../leadBots/PersonalLeadBotService.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "../memory/PersonalMemoryTidyService.ts";
+import * as PersonalExternalMcpService from "../externalMcp/PersonalExternalMcpService.ts";
 import * as PersonalPushService from "../push/PersonalPushService.ts";
 import * as PersonalRoutineService from "../routines/PersonalRoutineService.ts";
 import * as PersonalLoginService from "../secrets/PersonalLoginService.ts";
@@ -37,6 +38,7 @@ export const makePersonalWsServices = () =>
     const routines = yield* PersonalRoutineService.PersonalRoutineService;
     const memory = yield* PersonalMemoryService.PersonalMemoryService;
     const memoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
+    const externalMcp = yield* PersonalExternalMcpService.PersonalExternalMcpService;
     const push = yield* PersonalPushService.PersonalPushService;
     return {
       tasks,
@@ -49,6 +51,7 @@ export const makePersonalWsServices = () =>
       routines,
       memory,
       memoryTidy,
+      externalMcp,
       push,
     };
   });
@@ -81,5 +84,6 @@ export const personalWsProvisionLayer = (services: PersonalWsServices) =>
     Layer.succeed(PersonalRoutineService.PersonalRoutineService, services.routines),
     Layer.succeed(PersonalMemoryService.PersonalMemoryService, services.memory),
     Layer.succeed(PersonalMemoryTidy.PersonalMemoryTidy, services.memoryTidy),
+    Layer.succeed(PersonalExternalMcpService.PersonalExternalMcpService, services.externalMcp),
     Layer.succeed(PersonalPushService.PersonalPushService, services.push),
   );

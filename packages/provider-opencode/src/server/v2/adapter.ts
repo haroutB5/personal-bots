@@ -374,6 +374,14 @@ interface ThreadState {
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
+  extraMcps?:
+    | ReadonlyArray<{
+        readonly name: string;
+        readonly url: string;
+        readonly directory: string;
+        readonly credential: string;
+      }>
+    | undefined;
   instructions: string | undefined;
 }
 
@@ -420,20 +428,30 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
   return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
 
-// Last match wins: deny all threads' T3 servers, then allow only this thread's.
-const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
-  mcpServerName === null
+// Last match wins: deny all threads' T3 servers, then allow only this thread's and its external MCP servers.
+export const mcpRules = (
+  mcpServerName: string | null,
+  extraMcpNames: ReadonlyArray<string> = [],
+): ReadonlyArray<Rule> => [
+  ...(mcpServerName === null
     ? []
     : [
-        { action: "t3-code-*", resource: "*", effect: "deny" },
-        { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
-      ];
+        { action: "t3-code-*", resource: "*", effect: "deny" as const },
+        { action: `${mcpServerName}_*`, resource: "*", effect: "allow" as const },
+      ]),
+  ...extraMcpNames.map((name) => ({
+    action: `${name}_*`,
+    resource: "*",
+    effect: "allow" as const,
+  })),
+];
 
 const sessionRules = (
   policy: RulesPolicy,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
+  extraMcpNames: ReadonlyArray<string> = [],
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -446,7 +464,7 @@ const sessionRules = (
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
-  ...mcpRules(mcpServerName),
+  ...mcpRules(mcpServerName, extraMcpNames),
 ];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
@@ -3714,6 +3732,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
       for (const state of threads.values()) {
         state.mcp = undefined;
+        state.extraMcps = undefined;
         state.goalFresh = false;
         state.goalRefreshing = false;
         state.goalRevision += 1;
@@ -3968,11 +3987,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
+      const mcpSessionForRules =
+        appThreadId === null
+          ? undefined
+          : yield* mcpSessions.read(appThreadId as Parameters<typeof mcpSessions.read>[0]);
+      const extraMcpNames = mcpSessionForRules?.extraMcpServers?.map((server) => server.name) ?? [];
       const rules = sessionRules(
         policy,
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
+        extraMcpNames,
       );
       return input.personal?.personalBot === true
         ? [...rules, ...(options.personalBotPermissionRules ?? [])]
@@ -4235,7 +4260,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
 
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
-        [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        [...threads.values()].flatMap((state) => [
+          ...(state.mcp === undefined ? [] : [state.mcp]),
+          ...(state.extraMcps ?? []),
+        ]),
         removeMcp,
         { concurrency: 8, discard: true },
       ),
@@ -4301,6 +4329,59 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
         }
       }
+      const wantedExtras =
+        mcpSession === undefined || connection.external
+          ? []
+          : (mcpSession.extraMcpServers ?? []).map((extra) => ({
+              name: extra.name,
+              url: extra.url,
+              directory,
+              credential: extra.authorizationHeader,
+            }));
+      const prevExtras = state.extraMcps ?? [];
+      const wantedByName = new Map(wantedExtras.map((extra) => [extra.name, extra]));
+      for (const prev of prevExtras) {
+        const next = wantedByName.get(prev.name);
+        if (
+          next === undefined ||
+          next.directory !== prev.directory ||
+          next.url !== prev.url ||
+          next.credential !== prev.credential
+        ) {
+          yield* removeMcp(prev);
+        }
+      }
+      const addedExtras: Array<{
+        readonly name: string;
+        readonly url: string;
+        readonly directory: string;
+        readonly credential: string;
+      }> = [];
+      for (const extra of wantedExtras) {
+        const added = yield* client.mcp
+          .add({
+            server: extra.name,
+            location: { directory: extra.directory },
+            config: new Mcp.RemoteConfig({
+              type: "remote",
+              url: extra.url,
+              headers: { Authorization: extra.credential },
+              oauth: false,
+            }),
+          })
+          .pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Could not add external MCP server ${extra.name} to OpenCode.`,
+                cause,
+              ).pipe(Effect.as(false)),
+            ),
+          );
+        if (added) addedExtras.push(extra);
+      }
+      state.extraMcps = addedExtras.length > 0 ? addedExtras : undefined;
       const instructions = [
         withBotInstructions(
           buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
@@ -5131,6 +5212,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           threads.delete(child);
         }
         if (state.mcp !== undefined) yield* removeMcp(state.mcp);
+        for (const extra of state.extraMcps ?? []) yield* removeMcp(extra);
       }),
       respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(
         function* (requestInput) {

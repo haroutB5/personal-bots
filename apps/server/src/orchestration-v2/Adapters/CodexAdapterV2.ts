@@ -1487,7 +1487,7 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOL = "t3_thread_wait";
 
-function codexThreadRuntimeParams(input: {
+export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
@@ -1507,6 +1507,20 @@ function codexThreadRuntimeParams(input: {
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
+  const extraMcpEntries =
+    mcpSession?.extraMcpServers === undefined || mcpSession.extraMcpServers.length === 0
+      ? []
+      : mcpSession.extraMcpServers.map(
+          (extra) =>
+            [
+              `mcp_servers.${extra.name}`,
+              {
+                url: extra.url,
+                tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
+                http_headers: { Authorization: extra.authorizationHeader },
+              },
+            ] as const,
+        );
   const secretEntries =
     input.personalSecretEnvironment === undefined
       ? []
@@ -1535,6 +1549,7 @@ function codexThreadRuntimeParams(input: {
               enabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL],
               omit_tools_from: ["code_mode", "deferred"],
             },
+            ...Object.fromEntries(extraMcpEntries),
           }),
     },
   };

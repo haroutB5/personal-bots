@@ -22,6 +22,7 @@ import {
   personalRoutineHookMethodRouteLayer,
   personalRoutineHookRouteLayer,
 } from "../routines/hookRoutes.ts";
+import { personalExternalMcpProxyRouteLayer } from "../externalMcp/proxyRoute.ts";
 
 /**
  * Every HTTP route the personal layer owns, in one registration. The shared
@@ -59,5 +60,7 @@ export const personalHttpRoutesLayer = Layer.mergeAll(
   // Unauthenticated by necessity; the URL token is the whole credential.
   personalRoutineHookRouteLayer,
   personalRoutineHookMethodRouteLayer,
+  // Sensitive-site-guarded and secret-redacting Streamable HTTP proxy for external MCP servers.
+  personalExternalMcpProxyRouteLayer,
   PersonalBrowserHost.layer,
 );

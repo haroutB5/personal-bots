@@ -987,7 +987,7 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
-function acpMcpContext(
+export function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
@@ -1033,6 +1033,12 @@ function acpMcpContext(
                   : []),
               ],
             },
+            ...(session.extraMcpServers ?? []).map((extra) => ({
+              type: "http" as const,
+              name: extra.name,
+              url: extra.url,
+              headers: [{ name: "Authorization", value: extra.authorizationHeader }],
+            })),
           ]
         : [],
     endpoint: session.endpoint,

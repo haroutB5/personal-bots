@@ -39,6 +39,7 @@ import * as PersonalGroupService from "../groups/PersonalGroupService.ts";
 import * as PersonalLeadBots from "../leadBots/PersonalLeadBotService.ts";
 import * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "../memory/PersonalMemoryTidyService.ts";
+import * as PersonalExternalMcpService from "../externalMcp/PersonalExternalMcpService.ts";
 import * as PersonalBotTokenUsage from "../PersonalBotTokenUsageService.ts";
 import { signPersonalFiles } from "../PersonalFiles.ts";
 import * as PersonalBotService from "../PersonalBotService.ts";
@@ -125,6 +126,7 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
     const personalProjects = yield* PersonalProjectRepository.PersonalProjectRepository;
     const personalMemory = yield* PersonalMemoryService.PersonalMemoryService;
     const personalMemoryTidy = yield* PersonalMemoryTidy.PersonalMemoryTidy;
+    const personalExternalMcp = yield* PersonalExternalMcpService.PersonalExternalMcpService;
     const personalPush = yield* PersonalPushService.PersonalPushService;
     const notificationActions = yield* NotificationActions.NotificationActions;
     const personalProviderUpdates = yield* PersonalProviderUpdates.PersonalProviderUpdates;
@@ -1139,6 +1141,30 @@ export const makePersonalWsHandlers = (deps: PersonalWsHandlerDeps) =>
         observeRpcStream(WS_METHODS.personalPushInApp, personalPush.inApp(viewing.connectionId), {
           "rpc.aggregate": "server",
         }),
+      [WS_METHODS.personalExternalMcpList]: (_input) =>
+        observeRpcEffect(WS_METHODS.personalExternalMcpList, personalExternalMcp.list(), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalExternalMcpCreate]: (input) =>
+        observeRpcEffect(WS_METHODS.personalExternalMcpCreate, personalExternalMcp.create(input), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalExternalMcpUpdate]: (input) =>
+        observeRpcEffect(WS_METHODS.personalExternalMcpUpdate, personalExternalMcp.update(input), {
+          "rpc.aggregate": "server",
+        }),
+      [WS_METHODS.personalExternalMcpDelete]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalExternalMcpDelete,
+          personalExternalMcp.delete(input).pipe(Effect.as({})),
+          { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.personalExternalMcpTestConnection]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.personalExternalMcpTestConnection,
+          personalExternalMcp.testConnection(input),
+          { "rpc.aggregate": "server" },
+        ),
       [WS_METHODS.personalPushAckInApp]: (input) =>
         observeRpcEffect(
           WS_METHODS.personalPushAckInApp,

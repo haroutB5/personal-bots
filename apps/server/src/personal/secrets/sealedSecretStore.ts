@@ -32,11 +32,12 @@ import {
   type SecretStoreError,
 } from "../../auth/ServerSecretStore.ts";
 
-/** Saved website passwords, managed connection credentials and bot API keys. */
+/** Saved website passwords, managed connection credentials, bot API keys and external MCP tokens. */
 const SEALED_SECRET_NAME_PREFIXES: ReadonlyArray<string> = [
   "personal-login-",
   "personal-connection-",
   "personal-secret-",
+  "personal-external-mcp:",
 ];
 
 export const isEncryptedSecretName = (name: string): boolean =>
