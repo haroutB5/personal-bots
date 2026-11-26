@@ -92,6 +92,7 @@ function saveMemory(input: {
   readonly apps?: ReadonlyArray<string>;
   /** search_memory: the query, what the text search finds, and the rules scoped to the apps it names. */
   readonly query?: string;
+  readonly includeHistory?: boolean;
   readonly found?: ReadonlyArray<ReturnType<typeof entryFor>>;
   readonly appRules?: ReadonlyArray<ReturnType<typeof entryFor>>;
   readonly kind?: "note" | "preference";
@@ -133,6 +134,7 @@ function saveMemory(input: {
   const notices = vi.fn();
   const proposed = vi.fn();
   const rulesForApps = vi.fn();
+  const searched = vi.fn();
   const texts = input.ownerTexts ?? (input.userRequest === undefined ? [] : [input.userRequest]);
   const targetKind = input.target?.kind ?? "preference";
   const layer = PersonalToolkitHandlersLive.pipe(
@@ -149,7 +151,11 @@ function saveMemory(input: {
     Layer.provide(
       Layer.mock(PersonalMemoryService)({
         botForThread: () => Effect.succeed(Option.some(botId)),
-        search: () => Effect.succeed(input.found ?? []),
+        search: (query) =>
+          Effect.sync(() => {
+            searched(query);
+            return input.found ?? [];
+          }),
         rulesForApps: (query) =>
           Effect.sync(() => {
             rulesForApps(query.apps);
@@ -243,7 +249,12 @@ function saveMemory(input: {
       .handle(
         (input.tool ?? "save_memory") as "save_memory",
         (input.tool === "search_memory"
-          ? { query: input.query ?? "anything" }
+          ? {
+              query: input.query ?? "anything",
+              ...(input.includeHistory === undefined
+                ? {}
+                : { includeHistory: input.includeHistory }),
+            }
           : input.tool === "forget_memory"
             ? {
                 memoryId: "0123abcd",
@@ -272,6 +283,7 @@ function saveMemory(input: {
       notices,
       proposed,
       rulesForApps,
+      searched,
     };
   }).pipe(
     Effect.provide(layer),
@@ -1845,6 +1857,39 @@ describe("1.66.7: a save into an entry that already exists still shows what it a
             }),
           },
         ]);
+      }),
+  );
+});
+
+describe("Phase 1: search_memory includeHistory & superseded metadata", () => {
+  it.effect(
+    "forwards includeHistory and returns supersededAt and supersededBy on history entries",
+    () =>
+      Effect.gen(function* () {
+        const current = {
+          ...entryFor({ scope: "shared", kind: "note", content: "Laptop is ThinkPad X1." }),
+          memoryId: PersonalMemoryId.make("curr1111-note"),
+        };
+        const superseded = {
+          ...entryFor({ scope: "shared", kind: "note", content: "Laptop is MacBook Pro." }),
+          memoryId: PersonalMemoryId.make("prev2222-note"),
+          supersededAt: DateTime.makeUnsafe("2026-10-01T10:00:00.000Z"),
+          supersededBy: PersonalMemoryId.make("curr1111-note"),
+          supersededReason: "Replaced by a newer save.",
+        };
+        const { encoded, searched } = yield* saveMemory({
+          memoryAutoSave: false,
+          exposure: [],
+          tool: "search_memory",
+          query: "laptop",
+          includeHistory: true,
+          found: [superseded, current],
+        });
+        expect(searched).toHaveBeenCalledWith(
+          expect.objectContaining({ query: "laptop", includeHistory: true }),
+        );
+        expect(encoded).toContain('"supersededAt":"2026-10-01T10:00:00.000Z"');
+        expect(encoded).toContain('"supersededBy":"curr1111-note"');
       }),
   );
 });

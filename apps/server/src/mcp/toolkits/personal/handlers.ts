@@ -910,7 +910,12 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { botId } = yield* requireBotThread;
         const found = yield* memory
-          .search({ query: input.query, botId, limit: input.limit ?? 8 })
+          .search({
+            query: input.query,
+            botId,
+            limit: input.limit ?? 8,
+            includeHistory: input.includeHistory,
+          })
           .pipe(Effect.mapError((error) => refuse(error.message)));
         // A query that names an app brings every rule scoped to it, first: the
         // index line sends a bot here to read exactly those, and a rule whose
@@ -938,6 +943,12 @@ const make = Effect.gen(function* () {
             verifiedAt: entry.verifiedAt ?? null,
             conflict: entry.conflict ?? null,
             ...(entry.apps == null ? {} : { apps: [...entry.apps] }),
+            ...(entry.supersededAt == null
+              ? {}
+              : {
+                  supersededAt: DateTime.formatIso(entry.supersededAt),
+                  supersededBy: entry.supersededBy ?? null,
+                }),
           })),
           memorySearchMaxChars(),
         );

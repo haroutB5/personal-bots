@@ -182,6 +182,8 @@ export const PersonalMemorySearchInput = Schema.Struct({
   /** Limits results to shared entries plus this bot's; omitted = every scope. */
   botId: Schema.optional(PersonalBotId),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  /** When true, also include replaced ancestor entries along `superseded_by` chains. */
+  includeHistory: Schema.optional(Schema.Boolean),
 });
 export type PersonalMemorySearchInput = typeof PersonalMemorySearchInput.Type;
 

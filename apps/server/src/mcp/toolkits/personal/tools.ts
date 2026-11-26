@@ -196,9 +196,10 @@ export const SearchMemoryInput = Schema.Struct({
   query: TrimmedNonEmptyString.annotate({ description: "Words to look for in saved memory." }),
   limit: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).annotate({
-      description: "1 to 20, default 8. Rules scoped to an app the query names come on top.",
+      description: "1-20 (default 8).",
     }),
   ),
+  includeHistory: Schema.optional(Schema.Boolean),
 });
 
 export const SearchMemoryResult = Schema.Struct({
@@ -218,6 +219,9 @@ export const SearchMemoryResult = Schema.Struct({
       conflict: Schema.NullOr(Schema.String),
       /** App slugs a rule is limited to; absent for a global rule or a note. */
       apps: Schema.optional(Schema.Array(Schema.String)),
+      /** Present on replaced ancestor entries returned for temporal/history searches. */
+      supersededAt: Schema.optional(Schema.NullOr(Schema.String)),
+      supersededBy: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
   /**

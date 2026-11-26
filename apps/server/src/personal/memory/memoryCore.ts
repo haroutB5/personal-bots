@@ -26,6 +26,7 @@ import {
   escapeLike,
   isMemoryError,
   MEMORY_COLUMNS,
+  REPLACED_REASON,
   type PersonalMemoryScopeFilter,
 } from "./memoryShared.ts";
 import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
@@ -202,6 +203,63 @@ export const makeMemoryCore = () =>
         return entries.map((entry, index) => ({ entry, bm25: rows[index]!.score }));
       });
 
+    const SUPERSEDED_REPLACEMENT_REASONS = [
+      REPLACED_REASON,
+      "Replaced by a newer save you approved.",
+      "replaced",
+    ] as const;
+
+    /**
+     * Walks `superseded_by` links backward from `seedIds` (up to `maxHops` hops,
+     * capped at `maxAncestors` total) for entries superseded by replacement.
+     * Never returns deleted, forgotten, or undone entries, and enforces scope.
+     */
+    const supersededAncestors = (
+      seedIds: ReadonlyArray<PersonalMemoryId>,
+      filter: PersonalMemoryScopeFilter,
+      options?: { readonly maxHops?: number; readonly maxAncestors?: number },
+    ) =>
+      Effect.gen(function* () {
+        const maxHops = options?.maxHops ?? 2;
+        const maxAncestors = options?.maxAncestors ?? 4;
+        if (seedIds.length === 0 || maxHops <= 0 || maxAncestors <= 0) {
+          return [] as ReadonlyArray<PersonalMemoryEntry>;
+        }
+        const visited = new Set<string>(seedIds);
+        const collected: Array<PersonalMemoryEntry> = [];
+        let frontier: ReadonlyArray<string> = [...new Set(seedIds)];
+        for (
+          let hop = 0;
+          hop < maxHops && frontier.length > 0 && collected.length < maxAncestors;
+          hop += 1
+        ) {
+          const remaining = maxAncestors - collected.length;
+          const rows = yield* sql`
+            SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
+            WHERE m.deleted_at IS NULL
+              AND m.superseded_at IS NOT NULL
+              AND ${sql.in("m.superseded_by", frontier)}
+              AND ${sql.in("m.superseded_reason", SUPERSEDED_REPLACEMENT_REASONS)}
+              AND ${scopeCondition(filter)}
+              AND ${filter.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
+              AND ${filter.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
+              AND ${filter.onlyKind === undefined ? sql`1 = 1` : sql`m.kind = ${filter.onlyKind}`}
+            ORDER BY m.superseded_at DESC, m.seq DESC
+            LIMIT ${remaining}
+          `.pipe(Effect.flatMap(decodeAll));
+          const nextFrontier: Array<string> = [];
+          for (const entry of rows) {
+            if (visited.has(entry.memoryId)) continue;
+            visited.add(entry.memoryId);
+            collected.push(entry);
+            nextFrontier.push(entry.memoryId);
+            if (collected.length >= maxAncestors) break;
+          }
+          frontier = nextFrontier;
+        }
+        return collected as ReadonlyArray<PersonalMemoryEntry>;
+      });
+
     const teamOfBot: PersonalMemoryService["Service"]["teamOfBot"] = (botId) =>
       sql<{ readonly team: string | null }>`
       SELECT team FROM personal_bots WHERE bot_id = ${botId}
@@ -248,6 +306,7 @@ export const makeMemoryCore = () =>
       listConditions,
       documentFrequency,
       searchScored,
+      supersededAncestors,
       teamOfBot,
       botForThread,
       state,

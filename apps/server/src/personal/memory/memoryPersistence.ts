@@ -40,6 +40,7 @@ import {
   type PersonalMemorySaveInput,
 } from "./memoryShared.ts";
 import { entrySnapshotsJson, localDay } from "./memoryTidy.ts";
+import { groundRelativeDate } from "./memoryTemporal.ts";
 import { encodeTraceJson, TRACE_KEEP_DAYS, type MemoryTurnTrace } from "./memoryTurnTrace.ts";
 import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
 
@@ -214,24 +215,17 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         }
       }
       const now = yield* DateTime.now;
+      const nowMs = DateTime.toEpochMillis(now);
       for (const date of [input.observedAt, input.verifiedAt]) {
         if (
           date !== undefined &&
-          (date.length > 80 ||
-            !Number.isFinite(Date.parse(date)) ||
-            Date.parse(date) > DateTime.toEpochMillis(now))
+          (date.length > 80 || !Number.isFinite(Date.parse(date)) || Date.parse(date) > nowMs)
         ) {
           return yield* fail(
             "Observation and verification dates must be valid dates, not in the future.",
           );
         }
       }
-      const observedAt = input.observedAt
-        ? DateTime.formatIso(DateTime.makeUnsafe(Date.parse(input.observedAt)))
-        : null;
-      const verifiedAt = input.verifiedAt
-        ? DateTime.formatIso(DateTime.makeUnsafe(Date.parse(input.verifiedAt)))
-        : null;
       if (input.temporalKind === "changing" && (!input.observedAt || !input.evidence?.length)) {
         return yield* fail(
           "Changing facts need observedAt and evidence identifying a source to recheck.",
@@ -245,6 +239,22 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         Date.parse(input.verifiedAt) < Date.parse(input.observedAt)
       ) {
         return yield* fail("Verification cannot precede the observation.");
+      }
+      const verifiedAt = input.verifiedAt
+        ? DateTime.formatIso(DateTime.makeUnsafe(Date.parse(input.verifiedAt)))
+        : null;
+      let observedAt = input.observedAt
+        ? DateTime.formatIso(DateTime.makeUnsafe(Date.parse(input.observedAt)))
+        : null;
+      if (observedAt === null && input.kind === "note") {
+        const grounded = groundRelativeDate(content, nowMs);
+        if (
+          grounded !== null &&
+          Date.parse(grounded) <= nowMs &&
+          (verifiedAt === null || Date.parse(grounded) <= Date.parse(verifiedAt))
+        ) {
+          observedAt = grounded;
+        }
       }
       // Saving the same fact twice in one scope returns the first entry. What
       // "the same" means depends on the kind: a note is the same as any live

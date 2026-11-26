@@ -30,7 +30,13 @@ import {
   selectRules,
   type ActiveApp,
 } from "./memoryApps.ts";
-import { buildMemoryMatchQuery, formatMemoryBlock, memoryLine, memoryRef } from "./memoryBlock.ts";
+import {
+  buildMemoryMatchQuery,
+  formatMemoryBlock,
+  historyMemoryLine,
+  memoryLine,
+  memoryRef,
+} from "./memoryBlock.ts";
 import type { MemoryCore } from "./memoryCore.ts";
 import type { MemoryPersistence } from "./memoryPersistence.ts";
 import {
@@ -69,6 +75,7 @@ import {
   type PersonalMemoryScopeFilter,
 } from "./memoryShared.ts";
 import { memorySimilarity, SIMILAR_MEMORY_THRESHOLD } from "./memoryTidy.ts";
+import { classifyMemoryQueryIntent, sortChronologically } from "./memoryTemporal.ts";
 import {
   decodeTraceJson,
   snippetOf,
@@ -89,6 +96,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
     scopeCondition,
     documentFrequency,
     searchScored,
+    supersededAncestors,
     botForThread,
     state,
   } = core;
@@ -114,7 +122,18 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
         input.ranked === true
           ? scored.filter((row) => row.bm25 <= best * PERSONAL_MEMORY_SCORE_FLOOR)
           : scored;
-      return kept.map((row) => row.entry);
+      const current = kept.map((row) => row.entry);
+      const wantHistory =
+        input.includeHistory === true ||
+        (input.includeHistory !== false &&
+          contextualRetrievalEnabled() &&
+          classifyMemoryQueryIntent(input.query) === "temporal_history");
+      if (!wantHistory || current.length === 0) return current;
+      const ancestors = yield* supersededAncestors(
+        current.map((entry) => entry.memoryId),
+        input,
+      );
+      return sortChronologically([...current, ...ancestors]);
     }).pipe(storageFailure("search"));
 
   const similar: PersonalMemoryService["Service"]["similar"] = (input) =>
@@ -123,6 +142,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
         query: input.content.slice(0, 2_000) || " ",
         botId: input.botId,
         excludeTaskSummaries: true,
+        includeHistory: false,
         limit: 30,
       });
       const excluded = new Set<string>(input.excludeIds ?? []);
@@ -210,6 +230,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
     Effect.gen(function* () {
       const empty = {
         entries: [] as Array<PersonalMemoryEntry>,
+        history: [] as Array<PersonalMemoryEntry>,
         picked: [] as MemoryTurnTrace["picked"],
         leftOut: [] as MemoryTurnTrace["leftOut"],
         query: { terms: [] as ReadonlyArray<string>, followUp: false },
@@ -220,6 +241,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           ...input.scope,
           onlyKind: "note",
           ranked: true,
+          includeHistory: false,
           limit: PERSONAL_MEMORY_CONTEXT_NOTE_LIMIT,
         });
         const summaries = input.excludeTaskSummaries
@@ -229,6 +251,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
               ...input.scope,
               onlyKind: "task_summary",
               ranked: true,
+              includeHistory: false,
               limit: PERSONAL_MEMORY_CONTEXT_SUMMARY_LIMIT,
             });
         const entries = [...notes, ...summaries].filter((entry) => entry.demoted !== "outdated");
@@ -288,6 +311,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           }
         }
       }
+      const temporal = classifyMemoryQueryIntent(input.query) === "temporal_history";
       const rank =
         (limit: number) =>
         (
@@ -309,6 +333,7 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
               mentionsApp,
               knownApps,
               demoted,
+              ...(temporal ? { ageing: false } : {}),
               floor: chosen.followUp ? FOLLOW_UP_FLOOR : PERSONAL_MEMORY_SCORE_FLOOR,
               limit,
             },
@@ -344,11 +369,38 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
           provenance: memoryProvenanceLabel(row.entry, true),
         })),
       ].slice(0, TRACE_LEFT_OUT_MAX);
+      const currentEntries = capped.kept.map((row): PersonalMemoryEntry => {
+        const { updatedAtMs: _ignored, ...entry } = row.entry;
+        return entry;
+      });
+      const orderedEntries = temporal ? [...sortChronologically(currentEntries)] : currentEntries;
+      let history: Array<PersonalMemoryEntry> = [];
+      if (temporal && orderedEntries.length > 0) {
+        const rawAncestors = yield* supersededAncestors(
+          orderedEntries.map((entry) => entry.memoryId),
+          {
+            ...input.scope,
+            excludePreferences: true,
+            ...(input.excludeTaskSummaries ? { excludeTaskSummaries: true } : {}),
+          },
+        );
+        const validAncestors = sortChronologically(
+          rawAncestors.filter((entry) => entry.demoted !== "outdated"),
+        );
+        const currentChars = orderedEntries.reduce(
+          (total, entry) => total + memoryLine(entry).length,
+          0,
+        );
+        const historyCapped = capByChars(
+          validAncestors.map((entry) => ({ entry })),
+          (row) => historyMemoryLine(row.entry).length,
+          Math.max(1_000, RELEVANT_MAX_CHARS - currentChars),
+        );
+        history = historyCapped.kept.map((row) => row.entry);
+      }
       return {
-        entries: capped.kept.map((row): PersonalMemoryEntry => {
-          const { updatedAtMs: _ignored, ...entry } = row.entry;
-          return entry;
-        }),
+        entries: orderedEntries,
+        history,
         picked: capped.kept.map((row) => ({
           memoryId: row.entry.memoryId,
           kind: row.entry.kind,
@@ -558,10 +610,12 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
       } else pendingSent.delete(input.threadId);
 
       const sentPreferenceEntries = repeat || delta ? [] : listed;
+      const history = picks.history;
       const memoryIds = [
         ...sentPreferenceEntries,
         ...(delta ? [...updated, ...added] : []),
         ...notes,
+        ...history,
       ].map((entry) => entry.memoryId);
       const blockInput = {
         preferences: sentPreferenceEntries,
@@ -579,9 +633,10 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
         appIndex,
         leftOutRules,
       };
-      const block = formatMemoryBlock({ ...blockInput, relevant: notes });
+      const block = formatMemoryBlock({ ...blockInput, relevant: notes, history });
       const preferencesBlock =
-        notes.length > 0 && (sentPreferenceEntries.length > 0 || repeat || delta)
+        (notes.length > 0 || history.length > 0) &&
+        (sentPreferenceEntries.length > 0 || repeat || delta)
           ? formatMemoryBlock({ ...blockInput, relevant: [] })
           : null;
       const trace: MemoryTurnTrace = {

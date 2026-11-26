@@ -82,6 +82,17 @@ export const memoryLine = (entry: PersonalMemoryEntry) => {
   return `- [${KIND_LABEL[entry.kind]}] [${memoryDay(entry)} · ${memoryRef(entry)}${tag === null ? "" : ` · ${tag}`}] ${content.replace(/\s+/g, " ")}${provenance ? ` [${safeMemoryField(provenance, 5200)}]` : ""}`;
 };
 
+/**
+ * Renders a replaced ancestor entry explicitly labeled as historical so bots
+ * never confuse superseded values with current live facts.
+ */
+export const historyMemoryLine = (entry: PersonalMemoryEntry): string => {
+  const supersededDay =
+    entry.supersededAt != null ? localDay(DateTime.toEpochMillis(entry.supersededAt)) : "unknown";
+  const replacedByRef = entry.supersededBy != null ? entry.supersededBy.slice(0, 8) : "unknown";
+  return `${memoryLine(entry)} [superseded ${supersededDay} by ${replacedByRef}: historical, not current]`;
+};
+
 /** Left-out rules named in the block, at most this many with their words; the rest are counted. */
 const LEFT_OUT_NAMED = 8;
 
@@ -110,6 +121,8 @@ export function formatMemoryBlock(input: {
   readonly appIndex?: string | null | undefined;
   /** Rules of this turn's apps that did not fit the caps, named so none is unreachable. */
   readonly leftOutRules?: ReadonlyArray<PersonalMemoryEntry> | undefined;
+  /** Replaced ancestor entries surfaced for temporal/history queries, labeled as historical. */
+  readonly history?: ReadonlyArray<PersonalMemoryEntry> | undefined;
 }): string | null {
   const lines: Array<string> = [];
   if (input.preferencesRepeat !== undefined) {
@@ -170,6 +183,13 @@ export function formatMemoryBlock(input: {
       .filter((entry) => entry.demoted !== "outdated" && entry.supersededAt == null)
       .map(memoryLine),
   );
+  const history = (input.history ?? []).filter(
+    (entry) =>
+      entry.demoted !== "outdated" && entry.supersededAt != null && entry.supersededBy != null,
+  );
+  if (history.length > 0) {
+    lines.push(...history.map(historyMemoryLine));
+  }
   if (lines.length === 0) return null;
   return [MEMORY_BLOCK_HEADER, ...lines].join("\n");
 }
