@@ -856,6 +856,31 @@
       "name": "iobuffer",
       "license": "MIT",
       "sourceUrl": "https://github.com/image-js/iobuffer"
+    },
+    {
+      "repositoryUrl": "https://github.com/Microsoft/onnxruntime",
+      "license": "MIT",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Microsoft Corporation"]
+      }
+    },
+    {
+      "name": "guid-typescript",
+      "license": "ISC",
+      "sourceUrl": "https://github.com/NicolasDeveloper/guid-typescript",
+      "generatedNotice": {
+        "licenseId": "ISC",
+        "copyrights": ["Copyright (c) NicolasDeveloper"]
+      }
+    },
+    {
+      "repositoryUrl": "https://github.com/lovell/sharp-libvips",
+      "license": "LGPL-3.0-or-later",
+      "generatedNotice": {
+        "licenseId": "LGPL-3.0-or-later",
+        "copyrights": ["Copyright (c) Lovell Fuller and contributors"]
+      }
     }
   ]
 }
