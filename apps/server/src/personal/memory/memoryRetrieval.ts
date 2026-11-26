@@ -225,6 +225,8 @@ export function ageWeight(
 export interface Candidate<T extends RankEntry> {
   readonly entry: T;
   readonly bm25: number;
+  /** Optional match provenance (e.g. "matched by meaning" or "matched words & meaning"). */
+  readonly matchReason?: string | undefined;
 }
 
 export interface RankOptions {
@@ -278,8 +280,11 @@ export function rankCandidates<T extends RankEntry>(
 ): { readonly picked: ReadonlyArray<Ranked<T>>; readonly leftOut: ReadonlyArray<Ranked<T>> } {
   const active = options.activeApps ?? new Set<string>();
   const mentions = options.mentionsApp;
-  const scored = candidates.map(({ entry, bm25 }): Ranked<T> => {
+  const scored = candidates.map(({ entry, bm25, matchReason }): Ranked<T> => {
     const why: Array<string> = [];
+    if (matchReason !== undefined && matchReason !== MATCHED_WORDS) {
+      why.push(matchReason);
+    }
     let weight = 1;
     if (options.ageing !== false) {
       const age = ageWeight(entry, options.nowMs);

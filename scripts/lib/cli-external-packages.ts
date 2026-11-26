@@ -25,6 +25,50 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // failed with "__dirname is not defined in ES module scope". It has no
   // dependencies of its own, so the external closure is just itself.
   "playwright-core",
+  // Local CPU ONNX embeddings for hybrid semantic memory retrieval.
+  "@huggingface/transformers",
+  "@huggingface/jinja",
+  "@huggingface/tokenizers",
+  "onnxruntime-node",
+  "onnxruntime-common",
+  "onnxruntime-web",
+  "sharp",
+  "@img/",
+  "@protobufjs/",
+] as const;
+
+// Transitive runtime dependencies of @huggingface/transformers, onnxruntime-node, and sharp.
+const TRANSFORMERS_RUNTIME_DEPENDENCIES = [
+  "adm-zip",
+  "boolean",
+  "define-data-property",
+  "define-properties",
+  "detect-libc",
+  "detect-node",
+  "es-define-property",
+  "es-errors",
+  "es6-error",
+  "escape-string-regexp",
+  "flatbuffers",
+  "global-agent",
+  "globalthis",
+  "gopd",
+  "guid-typescript",
+  "has-property-descriptors",
+  "json-stringify-safe",
+  "long",
+  "matcher",
+  "object-keys",
+  "platform",
+  "protobufjs",
+  "roarr",
+  "semver",
+  "semver-compare",
+  "serialize-error",
+  "sprintf-js",
+  "type-fest",
+  "undici-types",
+  "@types/node",
 ] as const;
 
 // Match Cursor dependency boundaries so zod does not externalize zod-to-json-schema.
@@ -43,7 +87,8 @@ const CURSOR_RUNTIME_DEPENDENCIES = [
 export function isRuntimeExternalCliDependency(id: string): boolean {
   return (
     CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix)) ||
-    CURSOR_RUNTIME_DEPENDENCIES.some((name) => id === name || id.startsWith(`${name}/`))
+    CURSOR_RUNTIME_DEPENDENCIES.some((name) => id === name || id.startsWith(`${name}/`)) ||
+    TRANSFORMERS_RUNTIME_DEPENDENCIES.some((name) => id === name || id.startsWith(`${name}/`))
   );
 }
 

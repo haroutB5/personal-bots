@@ -96,6 +96,7 @@ export default mergeConfig(
           : [
               "src/bin.ts",
               "src/claude-history-worker.ts",
+              "src/memory-embedding-worker.ts",
               "src/usage-transcript-worker.ts",
               "src/perf-linux-helper.ts",
             ],

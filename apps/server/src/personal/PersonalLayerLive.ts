@@ -24,6 +24,7 @@ import * as PersonalBrowserLease from "./browser/BrowserLease.ts";
 import * as PersonalBrowserLeaseRepository from "./browser/PersonalBrowserLeaseRepository.ts";
 import * as PersonalBrowserProtectionRepository from "./browser/PersonalBrowserProtectionRepository.ts";
 import * as PersonalLeadBots from "./leadBots/PersonalLeadBotService.ts";
+import * as MemoryEmbedder from "./memory/MemoryEmbedder.ts";
 import * as PersonalMemoryService from "./memory/PersonalMemoryService.ts";
 import * as PersonalMemoryTidy from "./memory/PersonalMemoryTidyService.ts";
 import * as PersonalModelFallback from "./PersonalModelFallbackService.ts";
@@ -178,7 +179,7 @@ const PersonalLayerLive = PersonalReactorsLive.pipe(
       ),
     ),
   ),
-  Layer.provideMerge(PersonalMemoryService.layer),
+  Layer.provideMerge(PersonalMemoryService.layer.pipe(Layer.provide(MemoryEmbedder.layerWorker()))),
   Layer.provideMerge(PersonalMemoryTidy.layer.pipe(Layer.provide(PersonalMemoryTidy.judgeLayer))),
   Layer.provideMerge(PersonalRoutineService.layer),
   Layer.provideMerge(PersonalTasksDispatcherLive),

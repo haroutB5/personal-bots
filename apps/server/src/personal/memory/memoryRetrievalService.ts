@@ -38,6 +38,7 @@ import {
   memoryRef,
 } from "./memoryBlock.ts";
 import type { MemoryCore } from "./memoryCore.ts";
+import type { MemoryEmbeddingStore, SemanticHit } from "./memoryEmbeddingStore.ts";
 import type { MemoryPersistence } from "./memoryPersistence.ts";
 import {
   candidateQueryTerms,
@@ -75,6 +76,14 @@ import {
   type PersonalMemoryScopeFilter,
 } from "./memoryShared.ts";
 import { memorySimilarity, SIMILAR_MEMORY_THRESHOLD } from "./memoryTidy.ts";
+import {
+  fuseWithRrf,
+  SEMANTIC_MIN_COSINE,
+  SEMANTIC_RRF_K,
+  SEMANTIC_SIMILAR_THRESHOLD,
+  semanticMemoryEnabled,
+  type SemanticCandidate,
+} from "./memorySemantic.ts";
 import { classifyMemoryQueryIntent, sortChronologically } from "./memoryTemporal.ts";
 import {
   decodeTraceJson,
@@ -86,7 +95,11 @@ import {
 } from "./memoryTurnTrace.ts";
 import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
 
-export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersistence) => {
+export const makeMemoryRetrieval = (
+  core: MemoryCore,
+  persistence: MemoryPersistence,
+  embeddings?: MemoryEmbeddingStore,
+) => {
   const {
     sql,
     engine,
@@ -103,26 +116,92 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
   const { recordUsage } = persistence;
   const { sentPreferences, stickyApps, pendingSent } = state;
 
+  /**
+   * Hydrates semantic vector hits from SQLite with full scope, liveness, and
+   * kind filtering so semantic recall obeys the exact same visibility rules as FTS5.
+   */
+  const hydrateSemanticHits = (
+    hits: ReadonlyArray<SemanticHit>,
+    filter: PersonalMemoryScopeFilter,
+  ) => {
+    if (hits.length === 0) {
+      return Effect.succeed([] as ReadonlyArray<SemanticCandidate<PersonalMemoryEntry>>);
+    }
+    const cosineById = new Map(hits.map((hit) => [hit.memoryId, hit.cosine] as const));
+    const ids = [...cosineById.keys()];
+    return sql`
+      SELECT ${sql.literal(MEMORY_COLUMNS)} FROM personal_memory m
+      WHERE ${sql.in("m.memory_id", ids)}
+        AND m.deleted_at IS NULL
+        AND m.superseded_at IS NULL
+        AND ${scopeCondition(filter)}
+        AND ${filter.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
+        AND ${filter.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
+        AND ${filter.onlyKind === undefined ? sql`1 = 1` : sql`m.kind = ${filter.onlyKind}`}
+    `.pipe(
+      Effect.flatMap(decodeAll),
+      Effect.map((entries) =>
+        entries
+          .map((entry): SemanticCandidate<PersonalMemoryEntry> => ({
+            id: entry.memoryId as string,
+            entry,
+            cosine: cosineById.get(entry.memoryId) ?? 0,
+          }))
+          .filter((item) => item.cosine > 0),
+      ),
+    );
+  };
+
   const search: PersonalMemoryService["Service"]["search"] = (input) =>
     Effect.gen(function* () {
+      const limit = input.limit ?? PERSONAL_MEMORY_RETRIEVAL_LIMIT;
       const frequency =
         input.ranked === true
           ? yield* documentFrequency(memoryQueryTerms(input.query).slice(0, 200))
           : undefined;
       const match = buildMemoryMatchQuery(input.query, frequency);
-      if (match === null) return [];
-      const scored = yield* searchScored(
-        match,
-        input,
-        input.limit ?? PERSONAL_MEMORY_RETRIEVAL_LIMIT,
+      const useSemantic =
+        embeddings !== undefined && embeddings.isConfigured && semanticMemoryEnabled();
+      if (match === null && !useSemantic) return [];
+
+      const [scored, semanticHits] = yield* Effect.all(
+        [
+          match === null ? Effect.succeed([]) : searchScored(match, input, limit),
+          useSemantic
+            ? embeddings.searchSemantic(input.query, {
+                limit: Math.max(limit * 2, 20),
+                minCosine: SEMANTIC_MIN_COSINE,
+              })
+            : Effect.succeed([] as ReadonlyArray<SemanticHit>),
+        ],
+        { concurrency: "unbounded" },
       );
-      // bm25 is negative, best first: keep what scores within the floor of the best.
-      const best = scored[0]?.bm25 ?? 0;
-      const kept =
-        input.ranked === true
-          ? scored.filter((row) => row.bm25 <= best * PERSONAL_MEMORY_SCORE_FLOOR)
-          : scored;
-      const current = kept.map((row) => row.entry);
+
+      const semanticCandidates =
+        semanticHits.length > 0 ? yield* hydrateSemanticHits(semanticHits, input) : [];
+
+      let current: ReadonlyArray<PersonalMemoryEntry>;
+      if (semanticCandidates.length > 0) {
+        const fused = fuseWithRrf(
+          scored.map((row) => ({
+            id: row.entry.memoryId as string,
+            entry: row.entry,
+            bm25: row.bm25,
+          })),
+          semanticCandidates,
+          { k: SEMANTIC_RRF_K, minCosine: SEMANTIC_MIN_COSINE },
+        );
+        current = fused.slice(0, limit).map((row) => row.entry);
+      } else {
+        // bm25 is negative, best first: keep what scores within the floor of the best.
+        const best = scored[0]?.bm25 ?? 0;
+        const kept =
+          input.ranked === true
+            ? scored.filter((row) => row.bm25 <= best * PERSONAL_MEMORY_SCORE_FLOOR)
+            : scored;
+        current = kept.map((row) => row.entry);
+      }
+
       const wantHistory =
         input.includeHistory === true ||
         (input.includeHistory !== false &&
@@ -138,17 +217,56 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
 
   const similar: PersonalMemoryService["Service"]["similar"] = (input) =>
     Effect.gen(function* () {
-      const candidates = yield* search({
-        query: input.content.slice(0, 2_000) || " ",
-        botId: input.botId,
-        excludeTaskSummaries: true,
-        includeHistory: false,
-        limit: 30,
-      });
+      const content = input.content.slice(0, 2_000);
+      const useSemantic =
+        embeddings !== undefined && embeddings.isConfigured && semanticMemoryEnabled();
+      const [lexicalCandidates, semanticHits] = yield* Effect.all(
+        [
+          search({
+            query: content || " ",
+            botId: input.botId,
+            excludeTaskSummaries: true,
+            includeHistory: false,
+            limit: 30,
+          }),
+          useSemantic
+            ? embeddings.searchSemantic(content, {
+                limit: 20,
+                minCosine: SEMANTIC_SIMILAR_THRESHOLD,
+              })
+            : Effect.succeed([] as ReadonlyArray<SemanticHit>),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const semanticCandidates =
+        semanticHits.length > 0
+          ? yield* hydrateSemanticHits(semanticHits, {
+              botId: input.botId,
+              excludeTaskSummaries: true,
+            })
+          : [];
       const excluded = new Set<string>(input.excludeIds ?? []);
-      return candidates
-        .filter((entry) => !excluded.has(entry.memoryId) && entry.scope !== "project")
-        .map((entry) => ({ entry, similarity: memorySimilarity(input.content, entry.content) }))
+      const byId = new Map<
+        string,
+        { readonly entry: PersonalMemoryEntry; readonly semanticCosine: number }
+      >();
+      for (const entry of lexicalCandidates) {
+        if (excluded.has(entry.memoryId) || entry.scope === "project") continue;
+        byId.set(entry.memoryId, { entry, semanticCosine: 0 });
+      }
+      for (const hit of semanticCandidates) {
+        if (excluded.has(hit.entry.memoryId) || hit.entry.scope === "project") continue;
+        const existing = byId.get(hit.entry.memoryId);
+        byId.set(hit.entry.memoryId, {
+          entry: existing?.entry ?? hit.entry,
+          semanticCosine: Math.max(existing?.semanticCosine ?? 0, hit.cosine),
+        });
+      }
+      return [...byId.values()]
+        .map(({ entry, semanticCosine }) => ({
+          entry,
+          similarity: Math.max(memorySimilarity(input.content, entry.content), semanticCosine),
+        }))
         .filter((match) => match.similarity >= SIMILAR_MEMORY_THRESHOLD)
         .toSorted((a, b) => b.similarity - a.similarity)
         .slice(0, input.limit ?? 5);
@@ -282,21 +400,79 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
       const chosen = selectQueryTerms(queryInput, frequency, totals[0]?.n ?? 0);
       const match = termsToMatch(chosen.terms);
       const query = { terms: chosen.terms, followUp: chosen.followUp };
-      if (match === null) return { ...empty, query };
+      const useSemantic =
+        embeddings !== undefined && embeddings.isConfigured && semanticMemoryEnabled();
+      if (match === null && !useSemantic) return { ...empty, query };
       const activeSet = new Set(input.activeApps.map((app) => app.slug));
       const knownApps = [...new Set([...MEMORY_APPS.map((app) => app.slug), ...input.ruleApps])];
       // The candidates: the best keyword matches, plus the newest matches, so
       // that ageing can lift a recent entry the best-30 would have missed.
       const poolFor = (kind: "note" | "task_summary") =>
-        Effect.gen(function* () {
-          const filter = { ...input.scope, onlyKind: kind } as const;
-          const best = yield* searchScored(match, filter, CANDIDATES_PER_KIND);
-          const newest = yield* searchScored(match, filter, NEWEST_PER_KIND, "newest");
-          const seen = new Set(best.map((row) => row.entry.memoryId));
-          return [...best, ...newest.filter((row) => !seen.has(row.entry.memoryId))];
-        });
-      const notePool = yield* poolFor("note");
-      const summaryPool = input.excludeTaskSummaries ? [] : yield* poolFor("task_summary");
+        match === null
+          ? Effect.succeed(
+              [] as Array<{ readonly entry: PersonalMemoryEntry; readonly bm25: number }>,
+            )
+          : Effect.gen(function* () {
+              const filter = { ...input.scope, onlyKind: kind } as const;
+              const best = yield* searchScored(match, filter, CANDIDATES_PER_KIND);
+              const newest = yield* searchScored(match, filter, NEWEST_PER_KIND, "newest");
+              const seen = new Set(best.map((row) => row.entry.memoryId));
+              return [...best, ...newest.filter((row) => !seen.has(row.entry.memoryId))];
+            });
+      const semanticQuery =
+        chosen.followUp && input.signals.title.trim().length > 0
+          ? `${input.query} ${input.signals.title}`.trim()
+          : input.query;
+      const [rawNotePool, rawSummaryPool, semanticHits] = yield* Effect.all(
+        [
+          poolFor("note"),
+          input.excludeTaskSummaries ? Effect.succeed([]) : poolFor("task_summary"),
+          useSemantic
+            ? embeddings.searchSemantic(semanticQuery, {
+                limit: 40,
+                minCosine: SEMANTIC_MIN_COSINE,
+              })
+            : Effect.succeed([] as ReadonlyArray<SemanticHit>),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const [semanticNotes, semanticSummaries] =
+        semanticHits.length > 0
+          ? yield* Effect.all(
+              [
+                hydrateSemanticHits(semanticHits, { ...input.scope, onlyKind: "note" }),
+                input.excludeTaskSummaries
+                  ? Effect.succeed([] as ReadonlyArray<SemanticCandidate<PersonalMemoryEntry>>)
+                  : hydrateSemanticHits(semanticHits, { ...input.scope, onlyKind: "task_summary" }),
+              ],
+              { concurrency: "unbounded" },
+            )
+          : [[], []];
+      const mergePool = (
+        ftsPool: ReadonlyArray<{ readonly entry: PersonalMemoryEntry; readonly bm25: number }>,
+        semPool: ReadonlyArray<SemanticCandidate<PersonalMemoryEntry>>,
+      ): ReadonlyArray<{
+        readonly entry: PersonalMemoryEntry;
+        readonly bm25: number;
+        readonly matchReason?: string | undefined;
+      }> => {
+        if (semPool.length === 0) return ftsPool;
+        return fuseWithRrf(
+          ftsPool.map((row) => ({
+            id: row.entry.memoryId as string,
+            entry: row.entry,
+            bm25: row.bm25,
+          })),
+          semPool,
+          { k: SEMANTIC_RRF_K, minCosine: SEMANTIC_MIN_COSINE },
+        ).map((row) => ({
+          entry: row.entry,
+          bm25: row.bm25,
+          matchReason: row.matchReason,
+        }));
+      };
+      const notePool = mergePool(rawNotePool, semanticNotes);
+      const summaryPool = mergePool(rawSummaryPool, semanticSummaries);
       // What the owner marked outdated or not relevant ranks lower.
       const poolIds = [...notePool, ...summaryPool].map((row) => row.entry.memoryId);
       const demoted = new Map<string, DemotionSignal>();
@@ -315,7 +491,11 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
       const rank =
         (limit: number) =>
         (
-          candidates: ReadonlyArray<{ readonly entry: PersonalMemoryEntry; readonly bm25: number }>,
+          candidates: ReadonlyArray<{
+            readonly entry: PersonalMemoryEntry;
+            readonly bm25: number;
+            readonly matchReason?: string | undefined;
+          }>,
         ) =>
           rankCandidates(
             // An hourly routine writes dozens of summaries that read alike: keep two per title.
@@ -323,10 +503,14 @@ export const makeMemoryRetrieval = (core: MemoryCore, persistence: MemoryPersist
               candidates.map((row) => row.entry),
               undefined,
               (entry) => DateTime.toEpochMillis(entry.updatedAt),
-            ).map((entry) => ({
-              entry: entryWithTime(entry),
-              bm25: candidates.find((row) => row.entry === entry)!.bm25,
-            })),
+            ).map((entry) => {
+              const candidate = candidates.find((row) => row.entry === entry)!;
+              return {
+                entry: entryWithTime(entry),
+                bm25: candidate.bm25,
+                matchReason: candidate.matchReason,
+              };
+            }),
             {
               nowMs: input.nowMs,
               activeApps: activeSet,

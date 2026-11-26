@@ -23,6 +23,7 @@ import { rootExposureKey, threadExposureKey } from "../browser/sensitiveExposure
 import { looksLikeSecret, redactSecrets } from "../secretText.ts";
 import { appsToJson, normaliseApps } from "./memoryApps.ts";
 import type { MemoryCore } from "./memoryCore.ts";
+import type { MemoryEmbeddingStore } from "./memoryEmbeddingStore.ts";
 import { tracePruneDue } from "./memoryAgeingPolicy.ts";
 import { undoRoute } from "./memoryProvenancePolicy.ts";
 import { replaceRefusal, visibleTo } from "./memoryScopePolicy.ts";
@@ -46,7 +47,7 @@ import type { PersonalMemoryService } from "./PersonalMemoryService.ts";
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
-export const makeMemoryPersistence = (core: MemoryCore) => {
+export const makeMemoryPersistence = (core: MemoryCore, embeddings?: MemoryEmbeddingStore) => {
   const {
     sql,
     rel,
@@ -339,8 +340,15 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
       }).pipe(sql.withTransaction);
       // A save into an entry that was already there still changed these, so the
       // chat can offer their Undo.
+      const savedEntry = yield* readEntry(memoryId);
+      if (embeddings !== undefined) {
+        for (const archived of archivedEntries) {
+          embeddings.evict(archived.memoryId);
+        }
+        yield* embeddings.scheduleEmbed(savedEntry.memoryId, savedEntry.content);
+      }
       return {
-        ...(yield* readEntry(memoryId)),
+        ...savedEntry,
         created: existing === undefined,
         archived: archivedEntries,
       };
@@ -371,6 +379,7 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
           AND (superseded_at IS NULL OR superseded_reason = ${REPLACED_REASON})
       `;
+      embeddings?.evict(input.memoryId);
       return yield* readEntry(input.memoryId);
     }).pipe(storageFailure("forget"));
 
@@ -384,7 +393,11 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
             version = version + 1
         WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
       `;
-      return yield* readEntry(input.memoryId);
+      const restored = yield* readEntry(input.memoryId);
+      if (embeddings !== undefined) {
+        yield* embeddings.scheduleEmbed(restored.memoryId, restored.content);
+      }
+      return restored;
     }).pipe(storageFailure("restore"));
 
   /**
@@ -479,6 +492,9 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
           "That Undo is out of date: the entry changed after the save it belongs to.",
         );
       }
+      if (embeddings !== undefined) {
+        yield* embeddings.scheduleEmbed(now.memoryId, now.content);
+      }
       return now;
     });
 
@@ -512,7 +528,11 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
           }
           return now;
         }
-        return yield* readEntry(input.memoryId);
+        const restoredEntry = yield* readEntry(input.memoryId);
+        if (embeddings !== undefined && restoredEntry.supersededAt == null) {
+          yield* embeddings.scheduleEmbed(restoredEntry.memoryId, restoredEntry.content);
+        }
+        return restoredEntry;
       }
       if (current.supersededAt != null) return current;
       yield* Effect.gen(function* () {
@@ -536,6 +556,7 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
             AND superseded_reason = ${REPLACED_REASON} AND deleted_at IS NULL
         `;
       }).pipe(sql.withTransaction);
+      embeddings?.evict(input.memoryId);
       return yield* readEntry(input.memoryId);
     }).pipe(storageFailure("undo"));
 
@@ -562,7 +583,11 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
           WHERE memory_id = ${input.memoryId} AND kind = 'preference' AND deleted_at IS NULL
             AND superseded_at IS NOT NULL AND superseded_reason = ${RULE_FORGOTTEN_REASON}
         `;
-        return yield* readEntry(input.memoryId);
+        const restoredRule = yield* readEntry(input.memoryId);
+        if (embeddings !== undefined && restoredRule.supersededAt == null) {
+          yield* embeddings.scheduleEmbed(restoredRule.memoryId, restoredRule.content);
+        }
+        return restoredRule;
       }
       if (current.supersededAt != null) return current;
       yield* Effect.gen(function* () {
@@ -584,6 +609,7 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
             AND superseded_reason = ${REPLACED_REASON} AND deleted_at IS NULL
         `;
       }).pipe(sql.withTransaction);
+      embeddings?.evict(input.memoryId);
       return yield* readEntry(input.memoryId);
     });
 
@@ -607,7 +633,15 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
             version = version + 1
         WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
       `;
-      return yield* readEntry(input.memoryId);
+      const updated = yield* readEntry(input.memoryId);
+      if (embeddings !== undefined) {
+        if (updated.supersededAt == null) {
+          yield* embeddings.scheduleEmbed(updated.memoryId, updated.content);
+        } else {
+          embeddings.evict(updated.memoryId);
+        }
+      }
+      return updated;
     }).pipe(storageFailure("update"));
 
   // A tombstone: the text is blanked (so the FTS index drops it) and the row
@@ -622,6 +656,9 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
             deleted_at = ${nowIso}, updated_at = ${nowIso}, version = version + 1
         WHERE memory_id = ${input.memoryId} AND deleted_at IS NULL
       `;
+      if (embeddings !== undefined) {
+        yield* embeddings.removeEmbedding(input.memoryId);
+      }
     }).pipe(storageFailure("delete"));
 
   const recordUsage = (
@@ -713,17 +750,22 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
         );
       }
       const nowIso = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
+      const summaryId = NodeCrypto.randomUUID();
+      const inserted = yield* sql<{ readonly id: string }>`
         INSERT INTO personal_memory (
           memory_id, scope, scope_id, kind, content, source, sensitivity,
           created_at, updated_at, deleted_at, version
         )
         VALUES (
-          ${NodeCrypto.randomUUID()}, 'bot', ${task.botId}, 'task_summary', ${content},
+          ${summaryId}, 'bot', ${task.botId}, 'task_summary', ${content},
           ${`task:${task.taskId}`}, 'normal', ${nowIso}, ${nowIso}, NULL, 1
         )
         ON CONFLICT DO NOTHING
+        RETURNING memory_id AS "id"
       `;
+      if (inserted.length > 0 && embeddings !== undefined) {
+        yield* embeddings.scheduleEmbed(summaryId, content);
+      }
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -736,10 +778,13 @@ export const makeMemoryPersistence = (core: MemoryCore) => {
     );
 
   const start: PersonalMemoryService["Service"]["start"] = () =>
-    Option.match(tasks, {
-      onNone: () => Effect.void,
-      onSome: (service) =>
-        forkParked(Stream.runForEach(service.changes, saveTaskSummary)).pipe(Effect.asVoid),
+    Effect.gen(function* () {
+      if (Option.isSome(tasks)) {
+        yield* forkParked(Stream.runForEach(tasks.value.changes, saveTaskSummary));
+      }
+      if (embeddings !== undefined) {
+        yield* embeddings.startBackfill();
+      }
     });
 
   const asRead =

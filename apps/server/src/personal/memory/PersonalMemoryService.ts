@@ -23,6 +23,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { makeMemoryCore } from "./memoryCore.ts";
+import { makeMemoryEmbeddingStore } from "./memoryEmbeddingStore.ts";
 import { makeMemoryPersistence } from "./memoryPersistence.ts";
 import { makeMemoryProvenance } from "./memoryProvenance.ts";
 import { makeMemoryRetrieval } from "./memoryRetrievalService.ts";
@@ -283,9 +284,10 @@ export class PersonalMemoryService extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const core = yield* makeMemoryCore();
+  const embeddings = yield* makeMemoryEmbeddingStore(core.sql);
   const provenance = makeMemoryProvenance(core);
-  const persistence = makeMemoryPersistence(core);
-  const retrieval = makeMemoryRetrieval(core, persistence);
+  const persistence = makeMemoryPersistence(core, embeddings);
+  const retrieval = makeMemoryRetrieval(core, persistence, embeddings);
 
   return {
     list: persistence.list,
