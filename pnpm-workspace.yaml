@@ -78,12 +78,12 @@ catalog:
   react: 19.3.0
   react-dom: 19.3.0
   tailwindcss: 4.3.3
-  tldts: 7.4.2
-  undici: 8.12.4
+  tldts: 7.5.5
+  undici: 8.13.1
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: 1.4.0
-  ws: 8.22.0
-  yaml: ^2.9.0
+  ws: 8.23.0
+  yaml: ^2.9.1
   # Markdown pipeline: the server counts find matches with the same parser the
   # web renders with, so both must resolve to one version.
   mdast-util-directive: 3.1.0
@@ -215,6 +215,15 @@ overrides:
   # zod 3 has a high advisory (GHSA-mrhx-c7xc-m3w5) fixed only in 4.6.6. @vercel/config only
   # builds a z.object of z.string().regex() and calls parse, which zod 4 keeps unchanged.
   "@vercel/config>zod": 4.6.7
+
+  # Security advisories (26 Nov 2026 dependency sweep). None is in the server or the shipped
+  # phone app: build tooling (Expo, Electron), the marketing site and the parked web app.
+  "dbus-next>xml2js": 0.6.2
+  "xcode>uuid": 11.1.1
+  "glob@>=9.0.0 <14.0.2": 14.0.6
+  "minimatch@>=7.0.0 <11.0.1": 11.0.9
+  fast-xml-parser: 5.12.1
+  astro: 7.4.13
 
 packageExtensions:
   "@clerk/expo@*":
