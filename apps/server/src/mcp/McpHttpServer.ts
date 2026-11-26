@@ -1431,106 +1431,44 @@ const layerToolExposure = Layer.effect(
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
       () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+        server.tools.map(({ tool }) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+          inputSchema: tool.inputSchema,
+        })),
       () => server.notifications["notifications/tools/list_changed"]({}),
+      (name, args) =>
+        Effect.gen(function* () {
+          const clientOption = yield* Effect.serviceOption(McpSchema.McpServerClient);
+          if (Option.isNone(clientOption)) {
+            return yield* new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: "Missing MCP client context for tool_call dispatch.",
+            });
+          }
+          return yield* server.callTool({ name, arguments: args }).pipe(
+            Effect.provideService(McpSchema.McpServerClient, clientOption.value),
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: error.message,
+                }),
+            ),
+          );
+        }),
     );
   }),
 );
 
-/**
- * T3 desktop IDE tools that personal bots never call. Hiding them from personal-bot
- * `tools/list` keeps the advertised MCP schema set under eager-client size budgets
- * (such as Antigravity ACP's ~58 KB cap) so core personal tools like `save_memory`
- * stay registered. Calls remain unaffected (`tools/call` is never gated here).
- */
-const PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS: ReadonlySet<string> = new Set([
-  "orchestrator_capabilities",
-  "task_status",
-  "task_cancel",
-  "t3_workflow_stop",
-  "t3_background_wait",
-  "schedule_task",
-  "list_scheduled_tasks",
-  "delete_scheduled_task",
-  "run_scheduled_task_now",
-  "create_threads",
-  "t3_thread_list",
-  "t3_thread_read",
-  "t3_thread_update",
-  "t3_thread_send",
-  "t3_thread_wait",
-  "t3_thread_interrupt",
-  "t3_thread_search",
-  "t3_thread_configure",
-  "t3_thread_transfer",
-  "t3_thread_organize",
-  "t3_thread_launch",
-  "t3_pending_request",
-  "t3_queue",
-  "t3_attachment_prepare_upload",
-  "t3_attachment_discard",
-  "t3_thread_send_attachments",
-  "t3_project_list",
-  "t3_project_read",
-  "t3_project_create",
-  "t3_project_update",
-  "t3_project_delete",
-  "t3_project_clone",
-  "t3_environment_read",
-  "t3_environment_preferences_update",
-  "t3_environment_links",
-  "t3_environment_link",
-  "t3_environment_unlink",
-  "t3_preview_list",
-  "t3_preview_close",
-  "t3_worktree_handoff",
-  "t3_worktree_status",
-  "t3_worktree_list",
-  "link_pull_request",
-  "link_pull_requests",
-  "unlink_pull_request",
-  "unlink_pull_requests",
-  "list_thread_pull_requests",
-  "watch_pull_request",
-  "unwatch_pull_request",
-  "write_pull_request_guides",
-  "read_pull_request_guide",
-]);
-
-const TEAM_LEAD_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set([
-  "create_bot",
-  "update_bot",
-  "remove_bot",
-  "update_project",
-]);
-
-const GROUP_CHAT_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set(["call_vote", "cast_vote"]);
-
-const DEVICE_MCP_TOOLS: ReadonlySet<string> = new Set([
-  "device_list",
-  "device_open",
-  "device_close",
-  "device_screenshot",
-]);
-
-export const isToolListedForPersonalBot = (
-  toolName: string,
-  bot: McpInvocationContext.McpPersonalBotScope,
-  options?: { readonly hasDevice?: boolean },
-): boolean => {
-  if (PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS.has(toolName)) return false;
-  if (options?.hasDevice !== true && DEVICE_MCP_TOOLS.has(toolName)) return false;
-  if (!bot.isLead && TEAM_LEAD_ONLY_MCP_TOOLS.has(toolName)) return false;
-  if (!bot.isGroup && GROUP_CHAT_ONLY_MCP_TOOLS.has(toolName)) return false;
-  return true;
-};
+export const isToolListedForPersonalBot = McpToolExposure.isToolListedForPersonalBot;
 
 /**
  * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
  * the direct tools and what its `tool_search` calls loaded. Calls are never
- * gated, and every other client lists everything but `tool_search`. Personal bot
- * threads also omit T3 desktop IDE tools and inapplicable lead/group/device tools from
- * `tools/list` so eager MCP clients keep all personal and team-lead tools in budget.
+ * gated, and every other client lists everything except `tool_search` and `tool_call`.
+ * Personal bot threads also omit T3 desktop IDE tools and inapplicable lead/group/device
+ * tools from `tools/list` so eager MCP clients keep all personal and team-lead tools in budget.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
@@ -1552,9 +1490,9 @@ const layerDeferredListing = McpServer.visibility(
       }
       const providerSessionId = scope?.thread?.providerSessionId;
       if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
-        return target !== McpToolExposure.TOOL_SEARCH;
+        return target !== McpToolExposure.TOOL_SEARCH && target !== McpToolExposure.TOOL_CALL;
       }
-      return exposure.isListed(providerSessionId, target);
+      return exposure.isListed(providerSessionId, target, personalBot);
     });
   }),
   { global: true },

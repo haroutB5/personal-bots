@@ -47,10 +47,14 @@ import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReview
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { secretRedactor } from "../personal/secrets/secretRedaction.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { advertisedToolList } from "./advertisedTools.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import { guardedToolkit } from "./McpSecretGuard.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import * as McpToolExposure from "./McpToolExposure.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -58,6 +62,7 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -1862,12 +1867,341 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
 
       expect(
         (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
-      ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
+      ).toEqual({
+        tools: [
+          {
+            name: "preview_open",
+            description: "Opens a browser preview.",
+            inputSchema: expect.objectContaining({ type: "object" }),
+          },
+        ],
+      });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
       expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.effect(
+  "defers personal-bot tools, scope-filters tool_search with schemas, and dispatches tool_call with guards",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scopeFor = (
+          token: string,
+          personalBot: McpInvocationContext.McpPersonalBotScope,
+          capabilities: ReadonlyArray<McpInvocationContext.McpCapability> = ["bots", "personal"],
+        ): McpInvocationContext.McpThreadInvocationScope => ({
+          environmentId,
+          requestNamespace: token,
+          thread: {
+            threadId: ThreadId.make(`thread-${token}`),
+            providerSessionId: token,
+            providerInstanceId: ProviderInstanceId.make("antigravity"),
+          },
+          client: undefined,
+          capabilities: new Set(capabilities),
+          issuedAt: 1,
+          personalBot,
+        });
+        const scopes = new Map([
+          ["memberDeferred", scopeFor("memberDeferred", { isLead: false, isGroup: false })],
+          ["memberEager", scopeFor("memberEager", { isLead: false, isGroup: false })],
+          ["groupDeferred", scopeFor("groupDeferred", { isLead: false, isGroup: true })],
+          ["leadDeferred", scopeFor("leadDeferred", { isLead: true, isGroup: false })],
+        ]);
+        const seenNotes: Array<string> = [];
+        const PersonalSampleToolkit = Toolkit.make(
+          Tool.make("search_memory", {
+            description: "Search saved memory.",
+            parameters: Schema.Struct({ query: Schema.String }),
+            success: Schema.Struct({ hits: Schema.Array(Schema.String) }),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("preview_open", {
+            description: "Open a browser preview tab.",
+            parameters: Schema.Struct({ url: Schema.String }),
+            success: Schema.Struct({ opened: Schema.String }),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("create_routine", {
+            description: "Create a scheduled routine.",
+            parameters: Schema.Struct({ prompt: Schema.String }),
+            success: Schema.Struct({ saved: Schema.String }),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("call_vote", {
+            description: "Start a group vote.",
+            success: Schema.Struct({}),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("cast_vote", {
+            description: "Cast a ballot.",
+            success: Schema.Struct({}),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("update_project", {
+            description: "Update a team project.",
+            success: Schema.Struct({}),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("create_bot", {
+            description: "Create a new bot.",
+            success: Schema.Struct({}),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("t3_thread_list", {
+            description: "List desktop threads.",
+            success: Schema.Struct({}),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+        );
+        const secretValue = "sk-test-secret-token-9999";
+        secretRedactor.set("TEST_TOKEN", secretValue);
+        yield* Effect.addFinalizer(() => Effect.sync(() => secretRedactor.remove("TEST_TOKEN")));
+        const guardedPersonalRegistration = guardedToolkit(PersonalSampleToolkit).pipe(
+          Layer.provide(
+            McpToolAccess.HandlersLayer.layer(
+              McpToolAccess.toLayer(PersonalSampleToolkit, {
+                search_memory: McpToolAccess.reads(({ query }) =>
+                  Effect.succeed({ hits: [query] }),
+                ),
+                preview_open: McpToolAccess.reads(({ url }) => Effect.succeed({ opened: url })),
+                create_routine: McpToolAccess.reads(({ prompt }) =>
+                  Effect.sync(() => {
+                    seenNotes.push(prompt);
+                    return { saved: prompt };
+                  }),
+                ),
+                call_vote: McpToolAccess.reads(() => Effect.succeed({})),
+                cast_vote: McpToolAccess.reads(() => Effect.succeed({})),
+                update_project: McpToolAccess.reads(() => Effect.succeed({})),
+                create_bot: McpToolAccess.reads(() => Effect.succeed({})),
+                t3_thread_list: McpToolAccess.reads(() => Effect.succeed({})),
+              }),
+            ),
+          ),
+        );
+        const serverLayer = McpHttpServer.layerMcpTransport(
+          Layer.mergeAll(guardedPersonalRegistration, McpHttpServer.layerToolSearch),
+        ).pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+          Layer.provide(
+            Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+              resolve: (token) => Effect.succeed(scopes.get(token)),
+            }),
+          ),
+        );
+        yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.build,
+        );
+        const httpClient = yield* HttpClient.HttpClient;
+        const session = (token: string, deferred: boolean) =>
+          Effect.gen(function* () {
+            const headers = {
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${token}`,
+              ...(deferred ? { "t3-tool-exposure": "deferred" } : {}),
+            };
+            const initialize = yield* httpClient.post("/mcp", {
+              headers,
+              body: HttpBody.text(
+                `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+                "application/json",
+              ),
+            });
+            const rpc = (method: string, params: object) =>
+              httpClient
+                .post("/mcp", {
+                  headers: {
+                    ...headers,
+                    "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                    "mcp-protocol-version": "2025-06-18",
+                  },
+                  body: HttpBody.text(
+                    JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+                    "application/json",
+                  ),
+                })
+                .pipe(
+                  Effect.flatMap((response) => response.text),
+                  Effect.map((text): unknown =>
+                    text
+                      .split("\n")
+                      .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
+                      .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
+                      .find((message) => message.id === 2),
+                  ),
+                );
+            return {
+              listed: rpc("tools/list", {}).pipe(
+                Effect.map((body) =>
+                  (body as { result: { tools: ReadonlyArray<{ name: string }> } }).result.tools
+                    .map((listed) => listed.name)
+                    .sort(),
+                ),
+              ),
+              call: (name: string, args: object) =>
+                rpc("tools/call", { name, arguments: args }).pipe(
+                  Effect.map(
+                    (body) =>
+                      (
+                        body as {
+                          result: {
+                            content?: ReadonlyArray<{ type: string; text?: string }>;
+                            structuredContent?: unknown;
+                            isError?: boolean;
+                          };
+                        }
+                      ).result,
+                  ),
+                ),
+            };
+          });
+
+        const member = yield* session("memberDeferred", true);
+        const eager = yield* session("memberEager", false);
+        const group = yield* session("groupDeferred", true);
+        const lead = yield* session("leadDeferred", true);
+
+        expect(yield* member.listed).toEqual(["search_memory", "tool_call", "tool_search"]);
+        expect(yield* eager.listed).toEqual(["create_routine", "preview_open", "search_memory"]);
+        expect(yield* group.listed).toEqual([
+          "call_vote",
+          "cast_vote",
+          "search_memory",
+          "tool_call",
+          "tool_search",
+        ]);
+        expect(yield* lead.listed).toEqual([
+          "search_memory",
+          "tool_call",
+          "tool_search",
+          "update_project",
+        ]);
+
+        // Scope-filtered tool_search hides desktop, lead-only, and group-only tools from member bots.
+        expect(
+          (yield* member.call("tool_search", { query: "t3_thread_list create_bot call_vote" }))
+            .structuredContent,
+        ).toEqual({ tools: [] });
+
+        // Searching an eligible deferred tool returns its inputSchema and adds it to tools/list.
+        expect(
+          (yield* member.call("tool_search", { query: "browser preview" })).structuredContent,
+        ).toEqual({
+          tools: [
+            {
+              name: "preview_open",
+              description: "Open a browser preview tab.",
+              inputSchema: expect.objectContaining({
+                type: "object",
+                properties: expect.objectContaining({ url: expect.any(Object) }),
+              }),
+            },
+          ],
+        });
+        expect(yield* member.listed).toEqual([
+          "preview_open",
+          "search_memory",
+          "tool_call",
+          "tool_search",
+        ]);
+
+        // tool_call dispatches through McpServer.callTool and preserves structuredContent/text/isError.
+        const previewCall = yield* member.call("tool_call", {
+          name: "preview_open",
+          arguments: { url: "https://example.com" },
+        });
+        expect(previewCall.isError).toBe(false);
+        expect(previewCall.structuredContent).toEqual({
+          tool: "preview_open",
+          isError: false,
+          structuredContent: { opened: "https://example.com" },
+          text: JSON.stringify({ opened: "https://example.com" }),
+        });
+
+        // McpSecretGuard redaction runs on arguments dispatched via tool_call.
+        const guardedCall = yield* member.call("tool_call", {
+          name: "create_routine",
+          arguments: { prompt: `Use key ${secretValue}` },
+        });
+        expect(guardedCall.isError).toBe(false);
+        expect(seenNotes).toEqual(["Use key [secret TEST_TOKEN]"]);
+
+        // Recursive calls to tool_search / tool_call are refused.
+        const recursiveSearch = yield* member.call("tool_call", {
+          name: "tool_search",
+          arguments: { query: "browser" },
+        });
+        expect(recursiveSearch.isError).toBe(true);
+        expect(decodeJsonText(recursiveSearch.content?.[0]?.text ?? "")).toMatchObject({
+          code: "invalid_request",
+        });
+
+        const recursiveCall = yield* member.call("tool_call", {
+          name: "tool_call",
+          arguments: { name: "preview_open" },
+        });
+        expect(recursiveCall.isError).toBe(true);
+        expect(decodeJsonText(recursiveCall.content?.[0]?.text ?? "")).toMatchObject({
+          code: "invalid_request",
+        });
+
+        // Visibility guard blocks hidden desktop, lead-only, and group-only tools via tool_call.
+        for (const forbidden of ["t3_thread_list", "create_bot", "call_vote"]) {
+          const denied = yield* member.call("tool_call", { name: forbidden, arguments: {} });
+          expect(denied.isError).toBe(true);
+          expect(decodeJsonText(denied.content?.[0]?.text ?? "")).toMatchObject({
+            code: "capability_denied",
+          });
+        }
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it("personal-bot deferred tools/list significantly reduces tool count and JSON bytes vs eager", () => {
+  const member = { isLead: false, isGroup: false };
+  const eagerTools = advertisedToolList().filter((tool) =>
+    McpToolExposure.isToolListedForPersonalBot(tool.name, member),
+  );
+  const searchTools = Object.values(ToolSearchToolkit.tools).map((tool) => ({
+    name: tool.name,
+    description: Tool.getDescription(tool),
+    inputSchema: advertisedJsonSchema(tool),
+  }));
+  const deferredTools = [...eagerTools, ...searchTools].filter((tool) =>
+    McpToolExposure.isPersonalBotDirectTool(tool.name, member),
+  );
+  const eagerBytes = Buffer.byteLength(JSON.stringify(eagerTools), "utf8");
+  const deferredBytes = Buffer.byteLength(JSON.stringify(deferredTools), "utf8");
+  if (process.env.HBOTS_PRINT_DEFER_STATS === "1") {
+    console.log(
+      "PERSONAL_BOT_DEFER_STATS",
+      JSON.stringify({
+        eagerCount: eagerTools.length,
+        deferredCount: deferredTools.length,
+        eagerBytes,
+        deferredBytes,
+        bytesSaved: eagerBytes - deferredBytes,
+        pctSaved: Number(((1 - deferredBytes / eagerBytes) * 100).toFixed(1)),
+      }),
+    );
+  }
+
+  expect(deferredTools.length).toBe(McpToolExposure.PERSONAL_BOT_DIRECT_TOOLS.size);
+  expect(deferredTools.length).toBeLessThan(eagerTools.length / 3);
+  expect(deferredBytes).toBeLessThan(eagerBytes * 0.35);
+});
 
 it("isToolListedForPersonalBot hides T3 desktop IDE tools and inapplicable lead/group tools while keeping personal tools", () => {
   const member = { isLead: false, isGroup: false };

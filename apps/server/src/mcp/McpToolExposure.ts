@@ -1,15 +1,128 @@
+import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type { McpSchema } from "effect/ai";
+
+import type { McpPersonalBotScope } from "./McpInvocationContext.ts";
 
 export const TOOL_SEARCH = "tool_search";
+export const TOOL_CALL = "tool_call";
 
-/** What a deferring client lists before it searches. Pi's extension declares the same three. */
+/** What a deferring desktop client lists before it searches. Pi's extension declares the same three. */
 const DIRECT_TOOLS: ReadonlySet<string> = new Set([
   "orchestrator_capabilities",
   "delegate_task",
   "task_status",
   TOOL_SEARCH,
 ]);
+
+/** What a deferring personal-bot session lists before it searches. */
+export const PERSONAL_BOT_DIRECT_TOOLS: ReadonlySet<string> = new Set([
+  TOOL_SEARCH,
+  TOOL_CALL,
+  "search_memory",
+  "save_memory",
+  "forget_memory",
+  "search_web",
+  "read_pages",
+  "list_bots",
+  "delegate_task",
+  "steer_task",
+  "list_tasks",
+  "update_work_record",
+]);
+
+/**
+ * T3 desktop IDE tools that personal bots never call. Hiding them from personal-bot
+ * `tools/list`, `tool_search`, and `tool_call` keeps the advertised MCP schema set compact
+ * and prevents member bots from discovering or invoking desktop-only tools.
+ */
+const PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS: ReadonlySet<string> = new Set([
+  "orchestrator_capabilities",
+  "task_status",
+  "task_cancel",
+  "t3_workflow_stop",
+  "t3_background_wait",
+  "schedule_task",
+  "list_scheduled_tasks",
+  "delete_scheduled_task",
+  "run_scheduled_task_now",
+  "create_threads",
+  "t3_thread_list",
+  "t3_thread_read",
+  "t3_thread_update",
+  "t3_thread_send",
+  "t3_thread_wait",
+  "t3_thread_interrupt",
+  "t3_thread_search",
+  "t3_thread_configure",
+  "t3_thread_transfer",
+  "t3_thread_organize",
+  "t3_thread_launch",
+  "t3_pending_request",
+  "t3_queue",
+  "t3_attachment_prepare_upload",
+  "t3_attachment_discard",
+  "t3_thread_send_attachments",
+  "t3_project_list",
+  "t3_project_read",
+  "t3_project_create",
+  "t3_project_update",
+  "t3_project_delete",
+  "t3_project_clone",
+  "t3_environment_read",
+  "t3_environment_preferences_update",
+  "t3_environment_links",
+  "t3_environment_link",
+  "t3_environment_unlink",
+  "t3_preview_list",
+  "t3_preview_close",
+  "t3_worktree_handoff",
+  "t3_worktree_status",
+  "t3_worktree_list",
+  "link_pull_request",
+  "link_pull_requests",
+  "unlink_pull_request",
+  "unlink_pull_requests",
+  "list_thread_pull_requests",
+  "watch_pull_request",
+  "unwatch_pull_request",
+  "write_pull_request_guides",
+  "read_pull_request_guide",
+]);
+
+const TEAM_LEAD_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set([
+  "create_bot",
+  "update_bot",
+  "remove_bot",
+  "update_project",
+]);
+
+const GROUP_CHAT_ONLY_MCP_TOOLS: ReadonlySet<string> = new Set(["call_vote", "cast_vote"]);
+
+const DEVICE_MCP_TOOLS: ReadonlySet<string> = new Set([
+  "device_list",
+  "device_open",
+  "device_close",
+  "device_screenshot",
+]);
+
+export const isToolListedForPersonalBot = (
+  toolName: string,
+  bot: McpPersonalBotScope,
+  options?: { readonly hasDevice?: boolean },
+): boolean => {
+  if (PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS.has(toolName)) return false;
+  if (options?.hasDevice !== true && DEVICE_MCP_TOOLS.has(toolName)) return false;
+  if (!bot.isLead && TEAM_LEAD_ONLY_MCP_TOOLS.has(toolName)) return false;
+  if (!bot.isGroup && GROUP_CHAT_ONLY_MCP_TOOLS.has(toolName)) return false;
+  return true;
+};
+
+export const isPersonalBotDirectTool = (toolName: string, bot: McpPersonalBotScope): boolean =>
+  PERSONAL_BOT_DIRECT_TOOLS.has(toolName) ||
+  (bot.isGroup && GROUP_CHAT_ONLY_MCP_TOOLS.has(toolName)) ||
+  (bot.isLead && toolName === "update_project");
 
 const MAX_RESULTS = 10;
 // Sessions that ended are never reported here, so keep only the newest.
@@ -18,6 +131,7 @@ const MAX_SESSIONS = 256;
 export interface ListedTool {
   readonly name: string;
   readonly description: string;
+  readonly inputSchema: unknown;
 }
 
 export class McpToolExposure extends Context.Service<
@@ -27,8 +141,18 @@ export class McpToolExposure extends Context.Service<
     readonly search: (
       providerSessionId: string,
       query: string,
+      filter?: (toolName: string) => boolean,
     ) => Effect.Effect<ReadonlyArray<ListedTool>>;
-    readonly isListed: (providerSessionId: string, tool: string) => boolean;
+    readonly isListed: (
+      providerSessionId: string,
+      tool: string,
+      personalBot?: McpPersonalBotScope,
+    ) => boolean;
+    /** Dispatches a deferred tool call through the server under the active MCP client context. */
+    readonly callTool: (
+      name: string,
+      args: Record<string, unknown>,
+    ) => Effect.Effect<McpSchema.CallToolResult, OrchestratorMcpFailure>;
   }
 >()("t3/mcp/McpToolExposure") {}
 
@@ -47,6 +171,10 @@ const score = (tool: ListedTool, terms: ReadonlyArray<string>) => {
 export const make = (
   tools: () => ReadonlyArray<ListedTool>,
   announceListChanged: () => Effect.Effect<void>,
+  callTool: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Effect.Effect<McpSchema.CallToolResult, OrchestratorMcpFailure>,
 ) => {
   const loaded = new Map<string, Set<string>>();
   const load = (providerSessionId: string, names: ReadonlyArray<string>) => {
@@ -60,13 +188,18 @@ export const make = (
     }
   };
   return McpToolExposure.of({
-    search: Effect.fn("McpToolExposure.search")(function* (providerSessionId, query) {
+    search: Effect.fn("McpToolExposure.search")(function* (providerSessionId, query, filter) {
       const terms = query
         .toLowerCase()
         .split(/[^a-z0-9_]+/u)
         .filter(Boolean);
       const found = tools()
-        .filter((tool) => tool.name !== TOOL_SEARCH)
+        .filter(
+          (tool) =>
+            tool.name !== TOOL_SEARCH &&
+            tool.name !== TOOL_CALL &&
+            (filter === undefined || filter(tool.name)),
+        )
         .map((tool) => ({ tool, score: score(tool, terms) }))
         .filter((match) => match.score > 0)
         .sort((a, b) => b.score - a.score)
@@ -81,7 +214,11 @@ export const make = (
       }
       return found;
     }),
-    isListed: (providerSessionId, tool) =>
-      DIRECT_TOOLS.has(tool) || loaded.get(providerSessionId)?.has(tool) === true,
+    isListed: (providerSessionId, tool, personalBot) =>
+      (personalBot === undefined
+        ? DIRECT_TOOLS.has(tool)
+        : isPersonalBotDirectTool(tool, personalBot)) ||
+      loaded.get(providerSessionId)?.has(tool) === true,
+    callTool,
   });
 };

@@ -72,6 +72,22 @@ function permissionRequest(
 }
 
 describe("AntigravityAdapterV2 flavor", () => {
+  it("defers MCP tools by default and honors T3CODE_PERSONAL_MCP_DEFER=off", () => {
+    const previous = process.env.T3CODE_PERSONAL_MCP_DEFER;
+    try {
+      delete process.env.T3CODE_PERSONAL_MCP_DEFER;
+      assert.isTrue(flavor.deferMcpTools);
+      process.env.T3CODE_PERSONAL_MCP_DEFER = "off";
+      assert.isFalse(flavor.deferMcpTools);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.T3CODE_PERSONAL_MCP_DEFER;
+      } else {
+        process.env.T3CODE_PERSONAL_MCP_DEFER = previous;
+      }
+    }
+  });
+
   it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
     const batch = flavor.extractSubagentUpdate?.({
       toolCallId: "trajectory:4",

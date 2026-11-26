@@ -221,6 +221,10 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
+    // Antigravity has no native ToolSearch; defer optional tools unless the kill switch is set.
+    get deferMcpTools() {
+      return process.env.T3CODE_PERSONAL_MCP_DEFER !== "off";
+    },
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({

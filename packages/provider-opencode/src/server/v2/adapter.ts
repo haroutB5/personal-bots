@@ -68,6 +68,7 @@ import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import {
   buildRuntimeInstructions,
   withBotInstructions,
@@ -4267,6 +4268,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       let mcpAvailable = false;
       if (wanted !== undefined) {
         const fresh = state.mcp === undefined;
+        const deferMcpMode = yield* Config.String("T3CODE_PERSONAL_MCP_DEFER").pipe(
+          Config.withDefault("on"),
+          Effect.orElseSucceed(() => "on"),
+        );
         mcpAvailable = yield* client.mcp
           .add({
             server: name,
@@ -4274,7 +4279,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             config: new Mcp.RemoteConfig({
               type: "remote",
               url: mcpSession!.endpoint,
-              headers: { Authorization: wanted.credential },
+              headers: {
+                Authorization: wanted.credential,
+                ...(deferMcpMode !== "off" ? { [MCP_TOOL_EXPOSURE_HEADER]: "deferred" } : {}),
+              },
               oauth: false,
             }),
           })
