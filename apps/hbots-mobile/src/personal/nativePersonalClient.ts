@@ -26,6 +26,7 @@ import { createPersonalMemoryClient } from "@hbots/personal-client/memory/person
 import { createPersonalLoginsClient } from "@hbots/personal-client/logins/personalLogins";
 import { createPersonalSecretsClient } from "@hbots/personal-client/secrets/personalSecrets";
 import { createPersonalConnectionsClient } from "@hbots/personal-client/connections/personalConnections";
+import { createPersonalExternalMcpClient } from "@hbots/personal-client/connections/personalExternalMcp";
 import { createPersonalSettingsClient } from "@hbots/personal-client/settings/personalSettings";
 import { createProviderSetupClient } from "@hbots/personal-client/settings/providerSetup";
 import { createPersonalComputerClient } from "@hbots/personal-client/computer/personalComputer";
@@ -168,6 +169,7 @@ export interface NativePersonal {
   readonly logins: ReturnType<typeof createPersonalLoginsClient>;
   readonly secrets: ReturnType<typeof createPersonalSecretsClient>;
   readonly connections: ReturnType<typeof createPersonalConnectionsClient>;
+  readonly externalMcp: ReturnType<typeof createPersonalExternalMcpClient>;
   readonly computer: ReturnType<typeof createPersonalComputerClient>;
   readonly voice: ReturnType<typeof createVoiceCallApi>;
   readonly shell: ReturnType<typeof createEnvironmentShellAtoms>;
@@ -333,6 +335,7 @@ export function createNativePersonal(
   const logins = createPersonalLoginsClient(runtime, client);
   const secrets = createPersonalSecretsClient(runtime, client);
   const connections = createPersonalConnectionsClient(runtime, client);
+  const externalMcp = createPersonalExternalMcpClient(runtime, client);
   const computer = createPersonalComputerClient(runtime, client);
   const voice = createVoiceCallApi(runtime);
   const shell = createEnvironmentShellAtoms(runtime);
@@ -595,6 +598,7 @@ export function createNativePersonal(
     logins,
     secrets,
     connections,
+    externalMcp,
     computer,
     voice,
     shell,

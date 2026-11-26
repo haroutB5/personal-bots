@@ -37,6 +37,7 @@ export interface SettingsScreenProps {
   readonly onOpenPasswords: () => void;
   readonly onOpenApiKeys: () => void;
   readonly onOpenConnections: () => void;
+  readonly onOpenExternalMcp: () => void;
   readonly onOpenRoutines: () => void;
 }
 
@@ -250,6 +251,15 @@ export function SettingsScreen(props: SettingsScreenProps) {
             title="Integrations"
             hint="Email, GitHub, WhatsApp and other accounts bots can use"
             onPress={props.onOpenConnections}
+          />
+        );
+      case "integrations.externalMcp":
+        return (
+          <Row
+            key={id}
+            title="External MCP servers"
+            hint="Connect Executor or other MCP servers for your bots"
+            onPress={props.onOpenExternalMcp}
           />
         );
       case "privacy.passwords":

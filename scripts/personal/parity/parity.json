@@ -8,7 +8,7 @@
     "registry": "apps/hbots-mobile/src/parity.ts"
   },
   "totals": {
-    "items": 446,
+    "items": 451,
     "byKind": {
       "screen": 75,
       "sheet": 25,
@@ -16,22 +16,22 @@
       "card": 24,
       "setting": 105,
       "pref": 14,
-      "rpc": 139
+      "rpc": 144
     },
     "byStatus": {
-      "done": 392,
+      "done": 397,
       "planned": 0,
       "n/a": 54,
       "unassigned": 0
     },
-    "userActions": 161,
+    "userActions": 165,
     "byPr": {
       "A2": 18,
       "A4": 13,
       "A9": 37,
       "A10": 30,
       "A14": 45,
-      "A15": 58,
+      "A15": 63,
       "A11": 17,
       "A16": 22,
       "A13": 9,
@@ -11973,6 +11973,75 @@
       "pr": "A15",
       "status": "done",
       "check": "Android calls personalEmailStartThunderbird (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalExternalMcpList",
+      "kind": "rpc",
+      "title": "personalExternalMcpList (query)",
+      "web": "packages/personal-client/src/connections/personalExternalMcp.ts:21",
+      "rpcKind": "query",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalExternalMcpList (query) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalExternalMcpCreate",
+      "kind": "rpc",
+      "title": "personalExternalMcpCreate (command)",
+      "web": "packages/personal-client/src/connections/personalExternalMcp.ts:36",
+      "rpcKind": "command",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "userAction": true,
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalExternalMcpCreate (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalExternalMcpUpdate",
+      "kind": "rpc",
+      "title": "personalExternalMcpUpdate (command)",
+      "web": "packages/personal-client/src/connections/personalExternalMcp.ts:42",
+      "rpcKind": "command",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "userAction": true,
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalExternalMcpUpdate (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalExternalMcpDelete",
+      "kind": "rpc",
+      "title": "personalExternalMcpDelete (command)",
+      "web": "packages/personal-client/src/connections/personalExternalMcp.ts:48",
+      "rpcKind": "command",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "userAction": true,
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalExternalMcpDelete (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
+    },
+    {
+      "id": "rpc:personalExternalMcpTestConnection",
+      "kind": "rpc",
+      "title": "personalExternalMcpTestConnection (command)",
+      "web": "packages/personal-client/src/connections/personalExternalMcp.ts:54",
+      "rpcKind": "command",
+      "wire": null,
+      "contract": null,
+      "views": [],
+      "userAction": true,
+      "pr": "A15",
+      "status": "done",
+      "check": "Android calls personalExternalMcpTestConnection (command) from its screen with the same input as web. A contract test in packages/personal-client pins the input shape."
     },
     {
       "id": "rpc:personalVoiceCallsStart",

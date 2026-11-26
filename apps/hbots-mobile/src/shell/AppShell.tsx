@@ -61,6 +61,7 @@ import { PasswordsScreen } from "../settings/PasswordsScreen";
 import { ApiKeysScreen } from "../settings/ApiKeysScreen";
 import { ConnectionsScreen } from "../settings/ConnectionsScreen";
 import { EmailScreen } from "../settings/EmailScreen";
+import { ExternalMcpScreen } from "../settings/ExternalMcpScreen";
 import { RoutineDetailScreen } from "../tasks/RoutineDetailScreen";
 import { RoutineFormScreen } from "../tasks/RoutineFormScreen";
 import { TaskDetailScreen } from "../tasks/TaskDetailScreen";
@@ -107,6 +108,7 @@ export type RootStackParamList = {
   ApiKeys: undefined;
   Connections: undefined;
   ConnectionsEmail: undefined;
+  ExternalMcp: undefined;
   Stop: undefined;
 };
 
@@ -229,6 +231,8 @@ function toNavigationRoute(route: Route): { name: keyof RootStackParamList; para
       return { name: "Connections" };
     case "connectionsEmail":
       return { name: "ConnectionsEmail" };
+    case "externalMcp":
+      return { name: "ExternalMcp" };
     case "stop":
       return { name: "Stop" };
   }
@@ -575,6 +579,7 @@ function Shell({ props }: { readonly props: AppShellProps }) {
                 onOpenPasswords={() => navigation.navigate("Passwords")}
                 onOpenApiKeys={() => navigation.navigate("ApiKeys")}
                 onOpenConnections={() => navigation.navigate("Connections")}
+                onOpenExternalMcp={() => navigation.navigate("ExternalMcp")}
                 onOpenRoutines={() => undefined}
               />
             )}
@@ -640,6 +645,11 @@ function Shell({ props }: { readonly props: AppShellProps }) {
           <Stack.Screen name="ConnectionsEmail">
             {({ navigation }) => (
               <EmailScreen native={props.native} onBack={() => navigation.goBack()} />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="ExternalMcp">
+            {({ navigation }) => (
+              <ExternalMcpScreen native={props.native} onBack={() => navigation.goBack()} />
             )}
           </Stack.Screen>
           <Stack.Screen name="ThisPhone">

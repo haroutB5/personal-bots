@@ -43,6 +43,7 @@ export type Route =
   | { readonly kind: "apiKeys" }
   | { readonly kind: "connections" }
   | { readonly kind: "connectionsEmail" }
+  | { readonly kind: "externalMcp" }
   | { readonly kind: "stop" };
 
 export interface NavState {
@@ -204,6 +205,9 @@ export function parseDeepLink(raw: string): NavState | null {
         return second === "email"
           ? { stack: [BOTS, settings, connections, { kind: "connectionsEmail" }] }
           : { stack: [BOTS, settings, connections] };
+      }
+      if (first === "external-mcp") {
+        return { stack: [BOTS, settings, { kind: "externalMcp" }] };
       }
       if (first === "providers") {
         if (second === "add") {

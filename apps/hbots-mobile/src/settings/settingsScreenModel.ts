@@ -138,6 +138,12 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDefinition> = [
         keywords:
           "email gmail outlook mail thunderbird github vercel whatsapp accounts connections",
       },
+      {
+        id: "integrations.externalMcp",
+        title: "External MCP servers",
+        hint: "Connect Executor or other MCP servers for your bots",
+        keywords: "mcp executor tools server external",
+      },
     ],
   },
   {

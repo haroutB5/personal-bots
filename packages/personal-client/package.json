@@ -497,6 +497,10 @@
       "types": "./src/settings/connectionsModel.ts",
       "import": "./src/settings/connectionsModel.ts"
     },
+    "./settings/externalMcpModel": {
+      "types": "./src/settings/externalMcpModel.ts",
+      "import": "./src/settings/externalMcpModel.ts"
+    },
     "./memory/personalMemory": {
       "types": "./src/memory/personalMemory.ts",
       "import": "./src/memory/personalMemory.ts"
@@ -512,6 +516,10 @@
     "./connections/personalConnections": {
       "types": "./src/connections/personalConnections.ts",
       "import": "./src/connections/personalConnections.ts"
+    },
+    "./connections/personalExternalMcp": {
+      "types": "./src/connections/personalExternalMcp.ts",
+      "import": "./src/connections/personalExternalMcp.ts"
     },
     "./settings/personalSettings": {
       "types": "./src/settings/personalSettings.ts",

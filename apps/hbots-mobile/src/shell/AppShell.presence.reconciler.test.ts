@@ -118,6 +118,7 @@ vi.mock("../settings/ApiKeysScreen", () => ({ ApiKeysScreen: world.Null }));
 vi.mock("../settings/CatalogProviderScreen", () => ({ CatalogProviderScreen: world.Null }));
 vi.mock("../settings/ConnectionsScreen", () => ({ ConnectionsScreen: world.Null }));
 vi.mock("../settings/EmailScreen", () => ({ EmailScreen: world.Null }));
+vi.mock("../settings/ExternalMcpScreen", () => ({ ExternalMcpScreen: world.Null }));
 vi.mock("../settings/DevicesScreen", () => ({ DevicesScreen: world.Null }));
 vi.mock("../settings/MemoryScreen", () => ({ MemoryScreen: world.Null }));
 vi.mock("../settings/NotificationsScreen", () => ({ NotificationsScreen: world.Null }));

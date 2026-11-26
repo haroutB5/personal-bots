@@ -103,6 +103,8 @@ describe("settings registry", () => {
       ["provider", "providers.versions"],
       ["update", "providers.versions"],
       ["name", "you.name"],
+      ["mcp", "integrations.externalMcp"],
+      ["executor", "integrations.externalMcp"],
     ];
     for (const [query, rowId] of expected) {
       const rows = visibleSettingsSections(query).flatMap((entry) =>
