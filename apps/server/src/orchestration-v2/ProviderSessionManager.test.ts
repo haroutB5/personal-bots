@@ -874,6 +874,8 @@ function runBrowserAccessScenario(input: {
             : {
                 personalTurnContextLayer: Layer.mock(PersonalTurnContext)({
                   isPersonalBotThread: () => Effect.succeed(input.personalBot === true),
+                  // Layer.mock turns an unlisted optional method into a throwing stub.
+                  externalMcpServersForThread: () => Effect.succeed([]),
                 }),
               }),
           serverSettingsLayer: ServerSettings.layerTest({
