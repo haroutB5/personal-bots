@@ -75,7 +75,12 @@ export function ecoBuilderProblem(
   if (builder.model === planner.model) {
     return "The Eco builder must be a different model from the bot's own.";
   }
-  if (driver === "antigravity") {
+  if (
+    driver === "antigravity" ||
+    (driver === undefined &&
+      (planner.instanceId === "antigravity" ||
+        planner.model.toLocaleLowerCase().startsWith("gemini")))
+  ) {
     return undefined;
   }
   const live = compileClaudeModelSelection(planner, catalog);

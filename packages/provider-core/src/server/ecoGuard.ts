@@ -442,7 +442,7 @@ function extractShellCommand(rawInput: unknown): string | undefined {
     return undefined;
   }
   const record = rawInput as Record<string, unknown>;
-  for (const key of ["CommandLine", "command", "cmd"]) {
+  for (const key of ["CommandLine", "command_line", "commandLine", "command", "cmd"]) {
     const value = record[key];
     if (typeof value === "string" && value.trim().length > 0) return value;
   }

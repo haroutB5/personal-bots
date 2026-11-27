@@ -9339,6 +9339,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (context.finalized || context.interrupted) {
                       if (Exit.isSuccess(switchExit)) {
                         eco.switchedToBuilder = true;
+                        yield* restoreEcoPlanner(
+                          context,
+                          eco.planner,
+                          "orchestration-v2.acp-eco-late-switch-restore-failed",
+                        );
                       }
                       return;
                     }
@@ -9369,6 +9374,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     context.promptSettledStatus = null;
                     context.promptWireSettled = yield* Deferred.make<void, never>();
                     context.foregroundIdle = yield* Deferred.make<void>();
+                    context.promptSentAt = yield* Clock.currentTimeMillis;
+                    context.lastProgressAt = context.promptSentAt;
+                    const previousWatchdog = context.inactivityWatchdog;
+                    context.inactivityWatchdog = undefined;
+                    if (previousWatchdog !== undefined) {
+                      yield* Fiber.interrupt(previousWatchdog).pipe(
+                        Effect.forkDetach,
+                        Effect.asVoid,
+                      );
+                    }
+                    if (promptInactivityTimeoutMillis !== undefined) {
+                      context.inactivityWatchdog = yield* watchPromptInactivity(
+                        context,
+                        settle.generation,
+                        promptInactivityTimeoutMillis,
+                      ).pipe(Effect.forkIn(sessionScope));
+                    }
+                    const builderCheckPromptOutcome =
+                      flavor.watchPromptOutcome === undefined
+                        ? undefined
+                        : yield* flavor.watchPromptOutcome(context.nativeThreadId);
                     const builderDispatched = yield* Deferred.make<void, never>();
                     const builderPromptText = ecoAcpBuilderPrompt(eco.plan ?? "");
                     yield* followPrompt(
@@ -9385,7 +9411,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         ),
                       {
                         generation: settle.generation,
-                        checkPromptOutcome: settle.checkPromptOutcome,
+                        checkPromptOutcome: builderCheckPromptOutcome,
                         promptParts: null,
                         compactSession: undefined,
                       },
@@ -9532,7 +9558,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             let restartForEco = false;
             if (ecoAttach && !runtimeEcoCapable) {
               runtimeEcoCapable = true;
-              yield* restartAcpRuntime(turnInput.threadId);
+              yield* restartAcpRuntime(turnInput.threadId).pipe(
+                Effect.onError(() =>
+                  Effect.sync(() => {
+                    runtimeEcoCapable = false;
+                  }),
+                ),
+              );
               yield* Ref.set(runtimeRestartRequired, false);
               yield* Ref.set(activeSessionId, null);
               yield* Ref.set(activeSessionSetup, null);
