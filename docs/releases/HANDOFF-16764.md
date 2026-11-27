@@ -18,7 +18,11 @@ Bots can now use Eco mode: plan on the bot's own model and build on a cheaper on
 
 ## Verification
 
-Pending: stage, full gates and gate evidence on the staged release, arm64 APK, emulator QA.
+- **Review:** Fable, two rounds; final verdict SHIP (all fixes correct, no blocking regression). Rollback to 1.67.63 confirmed safe with migration 165 applied.
+- **Stage:** release `f091207b9f82` staged in 19 s (`externals=copied`, `/home/harout/.personal-bots/releases/f091207b9f82`, not activated). Log `dev-team/qa/hbots-16764/stage.log`.
+- **Gates:** full (untiered) `gates-linux.scoped.json` on `f091207b9f82`: 8 run (server-tests and e2e selected, 6 whole), 2 scope-skipped (hbots-mobile-kotlin, release-tools), all PASS in 858 s wall; gate evidence PASS (section below). Log `dev-team/qa/hbots-16764/gates.log`. The earlier gate run on `a863da926ed7` (stamped 1.67.63) is superseded by this one.
+- **Release APK (arm64):** built inside the gates in 269 s: `hbots-1.67.64-arm64-release.apk`, versionCode 1067064, 50,067,963 bytes, sha256 `a6319aa4a357f6444b88aac7f4421f33cf0f6cb6b7e3dae350915f023e19fbc1`, signer CN=hbots, O=haroutB5, certificate SHA-256 `bf2aaabe...af76f` (same as live).
+- **Emulator QA:** x86_64 QA APK of `f091207b9f82` (sha256 `81d0913c201ea2e7267bc7e5d047eb20dc04410b240f0d928e47adb15f542b65`) against a throwaway server on the staged release, all 14 flows, no tier. Run 1: 13 PASS, 1 FAIL (flow 11 restart-laptop dry run: the throwaway server logged `reboot: accepted` and `would reboot`, but the restarting text was not seen on screen in the flow's window; Eco touches neither that screen nor the reboot path). Run 2 (the one retry the runbook allows for a failed flow): **14/14 PASS** in 304 s. Evidence `dev-team/qa/hbots-16764/emulator/hbots-16764-release-qa-20261127T130443Z/` and `...-release-qa2-20261127T131019Z/`.
 
 ## Follow-ups (not blocking 1.67.64)
 
@@ -31,3 +35,40 @@ See `docs/eco/follow-ups.md`; the newest is Fable's round-2 note that saving an 
 ## Rollback
 
 Binary rollback to 1.67.63 (`43671862d41e`). The new columns, table and index are additive and ignored by 1.67.63 (confirmed by Fable).
+
+## Gate evidence
+
+<!-- gate-evidence:begin sha=f091207b9f82bc380c4c30e120d1c79c064e7c40 release=f091207b9f82 json-sha256=85bec6dab3d45c954f7f0f27d751fd3cca50216d94e81526565fde29d78fd776 result=PASS -->
+
+- server-tests: PASS, selected: server-tests inputs changed: apps/server/src/claudeModelOptions.ts, apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts, apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts, apps/server/src/orchestration-v2/ProviderTurnStartService.ts, ...; selected 444 test files
+- server-tsc: PASS, exit 0
+- web-tests: PASS, exit 0
+- web-tsc: PASS, exit 0
+- e2e: PASS, selected: e2e inputs changed: apps/server/src/claudeModelOptions.ts, apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts, apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts, apps/server/src/orchestration-v2/ProviderTurnStartService.ts, ...; selected 12 journeys
+- personal-client: PASS, exit 0
+- hbots-mobile: PASS, exit 0
+- hbots-mobile-kotlin: SKIPPED, skip: no changed path is an input of hbots-mobile-kotlin: apps/hbots-mobile/modules/_/android, apps/hbots-mobile/modules/_/expo-module.config.json, apps/hbots-mobile/plugins, apps/hbots-mobile/app.config.ts
+- parity: PASS, exit 0
+- release-tools: SKIPPED, skip: no changed path is an input of release-tools: scripts/personal/linux, scripts/personal/node, scripts/personal/migration-check.cjs, scripts/personal/sqlite-, scripts/personal/copy-externals.mjs, scripts/personal/idle-classification-, scripts/personal/dsh-runtime, scripts/personal/release-runner
+
+<!-- gate-evidence:end -->
+
+<!-- gate-timing:begin -->
+
+```
+gate timing: 858 s wall, 1422 s if serial; budget 5 of 12 cores, server lanes 4; min MemAvailable 12410 MB, swap growth 2186 MB, peak load 19.5
+  preflight            guards   start    0 s     21 s   1 job  PASS  |#
+  server-tests         selected start   21 s    721 s  12 jobs PASS  | ##################################################
+  server-tsc           whole    start    0 s     26 s   1 job  PASS  |##
+  web-tests            whole    start  589 s    163 s   1 job  PASS  |                                         ###########
+  web-tsc              whole    start  378 s     22 s   1 job  PASS  |                          ##
+  e2e                  selected start   21 s    305 s   1 job  PASS  | #####################
+  personal-client      whole    start  327 s     51 s   1 job  PASS  |                       ####
+  hbots-mobile         whole    start  489 s     99 s   1 job  PASS  |                                  #######
+  hbots-mobile-kotlin  skip     start    0 s      0 s   0 jobs SKIP  |
+  parity               whole    start  400 s     14 s   1 job  PASS  |                            #
+  release-tools        skip     start    0 s      0 s   0 jobs SKIP  |
+  arm64 build (bg)     android  start  589 s    269 s   1 job  PASS  |                                         ###################
+```
+
+<!-- gate-timing:end -->
