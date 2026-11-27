@@ -10,3 +10,7 @@ Also noted while fixing:
 
 - "Cheaper" in the bot form is the known Claude order (Opus > Sonnet > Haiku); the provider model list carries no prices. An unknown family (Fable, a custom model) is not checked.
 - The Bash guard is a hint for the planner, not a sandbox: `python -c` / `node -e` code is matched against common file-writing calls, and a `subprocess` / `os.system` call that runs another command is not inspected.
+
+From Fable's final review (round 2, SHIP), left for after 1.67.64:
+
+- **Saving an Eco-on bot before the providers list has loaded switches Eco off silently** (`packages/personal-client/src/bots/botDraft.ts:449`). `botOffersEco` gets `undefined` for the provider while the list is still loading, so the save sends `{ enabled: false }` for a bot whose saved Eco is on. Fix: send nothing for Eco when the provider is unknown (only switch Eco off when the provider is known and has no Eco).
