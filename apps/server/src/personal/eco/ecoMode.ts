@@ -146,6 +146,8 @@ export interface EcoTurnState {
    * at their own rates. The SDK's summed `modelUsage` merges the two.
    */
   readonly usage: Map<string, EcoCallUsage>;
+  /** The message in flight on each stream ("root" or a subagent's tool use id). */
+  readonly streams: Map<string, { readonly id: string; readonly model: string }>;
 }
 
 export function makeEcoTurnState(input: {
@@ -171,6 +173,7 @@ export function makeEcoTurnState(input: {
     handoffError: undefined,
     calls: new Map(),
     usage: new Map(),
+    streams: new Map(),
   };
 }
 
@@ -242,6 +245,30 @@ export function noteEcoUsage(turn: EcoTurnState, id: string, model: string, usag
           cacheWrite1hTokens: Math.max(was.cacheWrite1hTokens, next.cacheWrite1hTokens),
         },
   );
+}
+
+/**
+ * Notes a streamed API call's usage. The assistant snapshots carry the usage
+ * of `message_start`, whose output count is a few tokens; the final, cumulative
+ * output count arrives only in `message_delta`, which has no message id, so the
+ * id and model of the stream's last `message_start` are kept per stream (the
+ * root, or a subagent's tool use id).
+ */
+export function noteEcoStreamEvent(turn: EcoTurnState, stream: string, event: unknown): void {
+  if (typeof event !== "object" || event === null) return;
+  const fields = event as Record<string, unknown>;
+  if (fields.type === "message_start") {
+    const message = fields.message as Record<string, unknown> | undefined;
+    const id = typeof message?.id === "string" ? message.id : "";
+    const model = typeof message?.model === "string" ? message.model : "";
+    if (id.length === 0) return;
+    turn.streams.set(stream, { id, model });
+    noteEcoUsage(turn, id, model, message?.usage);
+  } else if (fields.type === "message_delta") {
+    const current = turn.streams.get(stream);
+    if (current === undefined) return;
+    noteEcoUsage(turn, current.id, current.model, fields.usage);
+  }
 }
 
 // ---------------------------------------------------------------------------

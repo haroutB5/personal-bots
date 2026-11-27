@@ -253,6 +253,7 @@ import {
   makeEcoPreToolUseHook,
   makeEcoTurnState,
   noteEcoCall,
+  noteEcoStreamEvent,
   noteEcoUsage,
   runEcoHandoff,
   withEcoInstructions,
@@ -10286,6 +10287,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
+          if (
+            message.type === "stream_event" &&
+            input.replayed !== true &&
+            ecoActive !== null &&
+            ecoActive.context === context
+          ) {
+            // The final output count of each call arrives only in its message_delta.
+            noteEcoStreamEvent(
+              ecoActive.state,
+              message.parent_tool_use_id ?? "root",
+              message.event,
+            );
+          }
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
             const event = message.event;
             const reasoning = context.reasoning;

@@ -15,6 +15,8 @@ import {
   makeEcoPreToolUseHook,
   makeEcoTurnState,
   noteEcoCall,
+  noteEcoStreamEvent,
+  noteEcoUsage,
   runEcoHandoff,
   withEcoInstructions,
 } from "./ecoMode.ts";
@@ -365,6 +367,46 @@ describe("Eco bookkeeping", () => {
       { id: "m1", model: "claude-opus-5-5", side: "planner" },
       { id: "m2", model: "claude-sonnet-5-5", side: "builder" },
     ]);
+  });
+
+  it("takes each call's final output count from its message_delta", () => {
+    const turn = newTurn();
+    const start = (id: string, model: string) => ({
+      type: "message_start",
+      message: {
+        id,
+        model,
+        usage: {
+          input_tokens: 2,
+          output_tokens: 9,
+          cache_read_input_tokens: 1000,
+          cache_creation_input_tokens: 500,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 500 },
+        },
+      },
+    });
+    noteEcoStreamEvent(turn, "root", start("m1", "claude-opus-5-5"));
+    noteEcoStreamEvent(turn, "tool-1", start("s1", "claude-sonnet-5-5"));
+    // The assistant snapshot repeats message_start's usage.
+    noteEcoUsage(turn, "m1", "claude-opus-5-5", start("m1", "claude-opus-5-5").message.usage);
+    noteEcoStreamEvent(turn, "root", {
+      type: "message_delta",
+      usage: { output_tokens: 4024, cache_read_input_tokens: null },
+    });
+    noteEcoStreamEvent(turn, "tool-1", { type: "message_delta", usage: { output_tokens: 300 } });
+    // A delta with no message_start on its stream is ignored.
+    noteEcoStreamEvent(turn, "tool-2", { type: "message_delta", usage: { output_tokens: 7 } });
+    expect(turn.usage.get("m1")).toEqual({
+      id: "m1",
+      model: "claude-opus-5-5",
+      inputTokens: 2,
+      outputTokens: 4024,
+      cacheReadTokens: 1000,
+      cacheWrite5mTokens: 0,
+      cacheWrite1hTokens: 500,
+    });
+    expect(turn.usage.get("s1")?.outputTokens).toBe(300);
+    expect(turn.usage.size).toBe(2);
   });
 
   it("splits the turn's usage by model, cache reads and writes apart", () => {
