@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type * as PersonalBotRepository from "../PersonalBotRepository.ts";
+import type * as PersonalExternalMcpService from "../externalMcp/PersonalExternalMcpService.ts";
 import type * as PersonalMemoryService from "../memory/PersonalMemoryService.ts";
 import type * as PersonalVoiceCallRepository from "../voiceCalls/PersonalVoiceCallRepository.ts";
 import { makePersonalTurnContext } from "./PersonalTurnContext.ts";
@@ -183,6 +184,39 @@ describe("PersonalTurnContext", () => {
     Effect.gen(function* () {
       expect(yield* harness({}).context.isPersonalBotThread(THREAD)).toBe(true);
       expect(yield* harness({ linked: false }).context.isPersonalBotThread(THREAD)).toBe(false);
+    }),
+  );
+
+  it.effect("externalMcpServersForThread lists enabled servers for the thread's bot", () =>
+    Effect.gen(function* () {
+      const seenBotIds: Array<string> = [];
+      const context = makePersonalTurnContext({
+        personalBots: {
+          getInstructionsForThread: () => Effect.succeed(Option.none()),
+          getThreadLink: () =>
+            Effect.succeed(Option.some({ threadId: THREAD, botId: "bot-neon" as never })),
+          getChatTitleScope: () => Effect.succeed(Option.none()),
+        } as unknown as PersonalBotRepository.PersonalBotRepository["Service"],
+        personalSessions: Option.none(),
+        personalMemory: Option.none(),
+        personalExternalMcp: Option.some({
+          forBot: (botId: string) =>
+            Effect.sync(() => {
+              seenBotIds.push(botId);
+              return [{ serverId: "srv-exec", slug: "executor" }];
+            }),
+        } as unknown as PersonalExternalMcpService.PersonalExternalMcpService["Service"]),
+        voiceCalls: {
+          summariesForTurn: () => Effect.succeed([]),
+          markSummariesDelivered: () => Effect.void,
+        } as unknown as PersonalVoiceCallRepository.PersonalVoiceCallRepository["Service"],
+        projectionStore: {
+          getThreadShell: () => Effect.succeed(null),
+        },
+      });
+      const servers = yield* context.externalMcpServersForThread!(THREAD);
+      expect(seenBotIds).toEqual(["bot-neon"]);
+      expect(servers).toEqual([{ serverId: "srv-exec", slug: "executor" }]);
     }),
   );
 });

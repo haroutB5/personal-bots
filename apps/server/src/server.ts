@@ -209,6 +209,7 @@ import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import { PersonalServerLayerLive } from "./personal/PersonalServerLayerLive.ts";
 import { layer as PersonalTurnContextLayer } from "./personal/turnContext/PersonalTurnContext.ts";
+import { layerLive as PersonalExternalMcpServiceLayer } from "./personal/externalMcp/PersonalExternalMcpService.ts";
 import { layerLive as PersonalSessionAccessLayer } from "./personal/secrets/PersonalSessionAccess.ts";
 import * as PersonalBotRepository from "./personal/PersonalBotRepository.ts";
 import * as PersonalVoiceCallRepository from "./personal/voiceCalls/PersonalVoiceCallRepository.ts";
@@ -589,6 +590,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 const layerPersonalTurnContext = PersonalTurnContextLayer.pipe(
   Layer.provide(ProjectionStoreV2.layer),
   Layer.provide(PersonalSessionAccessLayer),
+  Layer.provide(PersonalExternalMcpServiceLayer),
   Layer.provide(PersonalBotRepository.layer),
   Layer.provide(PersonalVoiceCallRepository.layer),
   Layer.provide(PersonalProjectRepository.layer),
