@@ -340,6 +340,18 @@ describe("Eco bookkeeping", () => {
   it("prepends the planner's instruction", () => {
     expect(withEcoInstructions("Fix the bug")).toBe(`${ECO_TURN_INSTRUCTIONS}\n\nFix the bug`);
     expect(ECO_TURN_INSTRUCTIONS).toMatch(/Goal, Scope, Where to change, Approach, Tests, Risks/);
+    // The planner checks what its plan names exists, and lists what it could not confirm.
+    expect(ECO_TURN_INSTRUCTIONS).toMatch(
+      /check that every file, function, option, flag and command your plan names really exists/,
+    );
+    expect(ECO_TURN_INSTRUCTIONS).toMatch(/could not confirm under Risks/);
+    // The builder follows the task, not a plan the code contradicts, and says so.
+    expect(ECO_HANDOFF_SUCCESS_TEXT).toMatch(/^Implement this plan now; you are the builder\./);
+    expect(ECO_HANDOFF_SUCCESS_TEXT).toMatch(/do not follow it blindly/);
+    expect(ECO_HANDOFF_SUCCESS_TEXT).toMatch(/Do what the task actually asks/);
+    expect(ECO_HANDOFF_SUCCESS_TEXT).toMatch(
+      /say in your final reply where you departed from the plan/,
+    );
   });
 
   it("puts each call on the side it ran on", () => {

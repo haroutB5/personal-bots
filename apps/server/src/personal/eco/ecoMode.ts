@@ -107,6 +107,7 @@ export function ecoTurnModels(input: {
 export const ECO_TURN_INSTRUCTIONS = `<eco_mode>
 This is an Eco turn and you are the planner. Investigate without editing: file edits, file-writing shell commands and git writes are blocked until you hand off. Keep the investigation short.
 If, and only if, the task needs a lasting code change, call the ${ECO_HANDOFF_TOOL_NAME} tool once with a markdown plan in six parts: Goal, Scope, Where to change, Approach, Tests, Risks. A cheaper builder model then takes over this same turn to implement and test it, so write the plan for a reader who has not seen your investigation.
+Before you hand off, check that every file, function, option, flag and command your plan names really exists, by reading the code or running it (for example its --help), not by assuming it from the task's wording. The task itself can be wrong about what exists. List anything you could not confirm under Risks, saying it is unconfirmed, and never present it as fact.
 Otherwise, do or answer the task yourself without handing off.
 </eco_mode>`;
 
@@ -114,6 +115,9 @@ export const withEcoInstructions = (text: string): string => `${ECO_TURN_INSTRUC
 
 // ---------------------------------------------------------------------------
 // Turn state
+
+const count = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 
 export interface EcoCall {
   readonly id: string;
@@ -136,6 +140,12 @@ export interface EcoTurnState {
   handoffError: string | undefined;
   /** Root assistant calls in order, by message id; the side is fixed when first seen. */
   readonly calls: Map<string, EcoCall>;
+  /**
+   * Each API call's own usage by message id (root and subagent calls alike),
+   * so the turn is priced call by call with 5-minute and 1-hour cache writes
+   * at their own rates. The SDK's summed `modelUsage` merges the two.
+   */
+  readonly usage: Map<string, EcoCallUsage>;
 }
 
 export function makeEcoTurnState(input: {
@@ -160,6 +170,7 @@ export function makeEcoTurnState(input: {
     plan: undefined,
     handoffError: undefined,
     calls: new Map(),
+    usage: new Map(),
   };
 }
 
@@ -167,6 +178,70 @@ export function makeEcoTurnState(input: {
 export function noteEcoCall(turn: EcoTurnState, id: string, model: string): void {
   if (turn.calls.has(id) || model.length === 0 || model === "<synthetic>") return;
   turn.calls.set(id, { id, model, side: turn.handedOff ? "builder" : "planner" });
+}
+
+/** One API call's usage, as its assistant message reports it. */
+export interface EcoCallUsage {
+  readonly id: string;
+  readonly model: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWrite5mTokens: number;
+  readonly cacheWrite1hTokens: number;
+}
+
+/**
+ * Reads an assistant message's API `usage`. Without the `cache_creation`
+ * breakdown every write counts as a 5-minute one, as the API bills it.
+ */
+export function ecoCallUsage(id: string, model: string, usage: unknown): EcoCallUsage | undefined {
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const fields = usage as Record<string, unknown>;
+  const breakdown =
+    typeof fields.cache_creation === "object" && fields.cache_creation !== null
+      ? (fields.cache_creation as Record<string, unknown>)
+      : undefined;
+  const written = count(fields.cache_creation_input_tokens);
+  const oneHour = breakdown === undefined ? 0 : count(breakdown.ephemeral_1h_input_tokens);
+  const fiveMinutes =
+    breakdown === undefined
+      ? written
+      : Math.max(count(breakdown.ephemeral_5m_input_tokens), written - oneHour);
+  return {
+    id,
+    model,
+    inputTokens: count(fields.input_tokens),
+    outputTokens: count(fields.output_tokens),
+    cacheReadTokens: count(fields.cache_read_input_tokens),
+    cacheWrite5mTokens: fiveMinutes,
+    cacheWrite1hTokens: oneHour,
+  };
+}
+
+/**
+ * Notes one API call's usage. Claude Code sends a message once per content
+ * block, all under one id, so each count keeps the largest value seen.
+ */
+export function noteEcoUsage(turn: EcoTurnState, id: string, model: string, usage: unknown): void {
+  if (id.length === 0 || model.length === 0 || model === "<synthetic>") return;
+  const next = ecoCallUsage(id, model, usage);
+  if (next === undefined) return;
+  const was = turn.usage.get(id);
+  turn.usage.set(
+    id,
+    was === undefined
+      ? next
+      : {
+          id,
+          model,
+          inputTokens: Math.max(was.inputTokens, next.inputTokens),
+          outputTokens: Math.max(was.outputTokens, next.outputTokens),
+          cacheReadTokens: Math.max(was.cacheReadTokens, next.cacheReadTokens),
+          cacheWrite5mTokens: Math.max(was.cacheWrite5mTokens, next.cacheWrite5mTokens),
+          cacheWrite1hTokens: Math.max(was.cacheWrite1hTokens, next.cacheWrite1hTokens),
+        },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -440,7 +515,8 @@ export interface EcoToolResult {
   readonly isError?: boolean;
 }
 
-export const ECO_HANDOFF_SUCCESS_TEXT = "Implement this plan now; you are the builder.";
+export const ECO_HANDOFF_SUCCESS_TEXT =
+  "Implement this plan now; you are the builder. The plan is a guide, not the task: if the code contradicts it, or a file, function, option or flag it relies on does not exist, do not follow it blindly. Do what the task actually asks, and say in your final reply where you departed from the plan and why.";
 
 const toolError = (text: string): EcoToolResult => ({
   content: [{ type: "text", text }],
@@ -562,9 +638,6 @@ export interface EcoModelUsage {
 
 /** Per model, from the SDK result's `modelUsage`, with cache reads and writes kept apart. */
 export type EcoModelLedger = ReadonlyMap<string, EcoModelUsage>;
-
-const count = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 
 export function ecoModelLedger(modelUsage: unknown): EcoModelLedger {
   const ledger = new Map<string, EcoModelUsage>();

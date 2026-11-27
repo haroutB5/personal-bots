@@ -253,6 +253,7 @@ import {
   makeEcoPreToolUseHook,
   makeEcoTurnState,
   noteEcoCall,
+  noteEcoUsage,
   runEcoHandoff,
   withEcoInstructions,
 } from "../../personal/eco/ecoMode.ts";
@@ -10474,6 +10475,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
+            // Every call's own usage (subagents too), so Eco prices each call at its own rates.
+            if (ecoActive !== null && ecoActive.context === context) {
+              noteEcoUsage(
+                ecoActive.state,
+                message.message.id,
+                message.message.model,
+                message.message.usage,
+              );
+            }
             if (message.parent_tool_use_id === null) {
               // CLI notices and API errors arrive as assistant messages from "<synthetic>".
               if (message.message.model && message.message.model !== "<synthetic>") {
@@ -12430,6 +12440,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               builder: side(active.state.builderApiModel, split.builder, "builder"),
               other: split.other.map((entry) => ({ model: entry.model, ...entry.usage })),
               calls,
+              callUsage: [...active.state.usage.values()],
             })
             // Pricing can fetch the rate table; the turn does not wait for it.
             .pipe(Effect.forkIn(sessionScope));

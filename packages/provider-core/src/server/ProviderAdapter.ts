@@ -534,6 +534,22 @@ export interface ProviderAdapterV2EcoOutcome {
     readonly model: string;
     readonly side: "planner" | "builder";
   }>;
+  /**
+   * Each API call's own usage (root and subagent calls), with 5-minute and
+   * 1-hour cache writes apart, so the turn is priced call by call.
+   */
+  readonly callUsage?: ReadonlyArray<ProviderAdapterV2EcoCallUsage>;
+}
+
+/** One API call's usage in an Eco turn. */
+export interface ProviderAdapterV2EcoCallUsage {
+  readonly id: string;
+  readonly model: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWrite5mTokens: number;
+  readonly cacheWrite1hTokens: number;
 }
 
 /** An Eco turn's models (Eco mode v1), and where its outcome goes. */
