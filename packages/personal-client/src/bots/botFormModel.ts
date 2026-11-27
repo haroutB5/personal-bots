@@ -337,14 +337,45 @@ export function ecoDraftFromBot(
   return { enabled, ...modelDraftFromSelection(modelSelection) };
 }
 
-/** Why the Eco builder can't be saved, or null. It must be another model on the bot's provider. */
+/**
+ * The price tier of a Claude model family (Opus > Sonnet > Haiku), or null for
+ * a family with no known place. The provider's model list carries no prices,
+ * so "cheaper" is this known ordering.
+ */
+function claudeCostTier(slug: string): number | null {
+  const name = slug.toLocaleLowerCase();
+  if (name.includes("opus")) return 3;
+  if (name.includes("sonnet")) return 2;
+  if (name.includes("haiku")) return 1;
+  return null;
+}
+
+/**
+ * Why the Eco builder can't be saved, or null. It must be another, cheaper
+ * model on the bot's provider, with an effort when the model offers one.
+ */
 export function ecoDraftProblem(
   main: Pick<ModelDraft, "instanceId" | "model">,
   draft: EcoDraft,
+  providers?: ReadonlyArray<ServerProvider>,
 ): string | null {
   if (!draft.enabled) return null;
   if (draft.model === "") return "Pick the model that builds the plan.";
   if (draft.model === main.model) return "Pick a cheaper model than the bot's own.";
+  const mainTier = claudeCostTier(main.model);
+  const builderTier = claudeCostTier(draft.model);
+  if (mainTier !== null && builderTier !== null && builderTier >= mainTier) {
+    return "Pick a cheaper model than the bot's own.";
+  }
+  const provider = providers?.find((candidate) => candidate.instanceId === main.instanceId);
+  if (provider !== undefined && draft.effort === "") {
+    const offersEffort = providerModelCapabilities(
+      provider.models,
+      draft.model,
+      provider.driver,
+    ).optionDescriptors?.some((descriptor) => EFFORT_OPTION_IDS.includes(descriptor.id));
+    if (offersEffort === true) return "Pick the builder's effort.";
+  }
   return null;
 }
 

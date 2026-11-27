@@ -22,7 +22,7 @@ export function BotEcoSection({
   readonly main: { readonly instanceId: string; readonly model: string };
   readonly openSheet: OpenSheet;
 }) {
-  const problem = ecoDraftProblem(main, draft);
+  const problem = ecoDraftProblem(main, draft, providers);
   return (
     <SectionCard accessibilityLabel="Eco mode">
       <SwitchRow

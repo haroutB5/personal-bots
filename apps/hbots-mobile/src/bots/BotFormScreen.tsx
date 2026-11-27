@@ -20,6 +20,7 @@ import {
   fallbackDraftOf,
   newBotDraft,
   planBotSave,
+  providerChangePatch,
   providerOptionsFor,
   scheduleDraftOf,
   selectableProviders as selectableProvidersOf,
@@ -40,7 +41,6 @@ import {
   botContextWindowDescriptor,
   botEffortDescriptor,
   botOffersEco,
-  defaultModelFor,
   noBotProviderMessage,
   usesModelSearch,
 } from "@hbots/personal-client/bots/botFormModel";
@@ -406,13 +406,7 @@ function BotForm({
                 title: "Provider",
                 choices: providerPicks,
                 value: draft.instanceId,
-                onSelect: (instanceId) =>
-                  update({
-                    instanceId,
-                    model: defaultModelFor(
-                      providers.find((provider) => provider.instanceId === instanceId),
-                    ),
-                  }),
+                onSelect: (instanceId) => update(providerChangePatch(instanceId, providers)),
               })
             }
           />

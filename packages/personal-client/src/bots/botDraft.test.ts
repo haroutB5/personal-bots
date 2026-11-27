@@ -17,6 +17,7 @@ import {
   firstSelectableProvider,
   newBotDraft,
   planBotSave,
+  providerChangePatch,
   providerOptionsFor,
   selectableProviders,
   withStartingProvider,
@@ -278,5 +279,43 @@ describe("delete confirm", () => {
     expect(deleteBotConfirmMessage("Scout")).toBe(
       "Delete Scout completely?\nIts chats, routines and memories are removed too. This can't be undone.",
     );
+  });
+});
+
+describe("changing the provider", () => {
+  it("switches Eco off when the new provider has no Eco, and sends that on save", () => {
+    expect(providerChangePatch("codex", [claude, codex])).toEqual({
+      instanceId: "codex",
+      model: "gpt-6",
+      ecoEnabled: false,
+    });
+    expect(providerChangePatch("claudeAgent", [claude, codex])).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-sonnet-5-5",
+    });
+
+    const ecoBot = {
+      ...savedBot,
+      modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+      eco: {
+        enabled: true,
+        modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+      },
+    } as unknown as PersonalBot;
+    const draft = {
+      ...draftFromBot(ecoBot, 1_000),
+      ...providerChangePatch("codex", [claude, codex]),
+    };
+    const assessment = assessBotDraft(draft, [claude, codex], ecoBot, false);
+    expect(assessment.canSave).toBe(true);
+    const plan = planBotSave({
+      botId,
+      saved: ecoBot,
+      draft,
+      baselineNotifications: "on",
+      providers: [claude, codex],
+      assessment,
+    });
+    expect(plan.kind === "update" ? plan.update.eco : undefined).toEqual({ enabled: false });
   });
 });

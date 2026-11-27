@@ -83,6 +83,38 @@ describe("Eco in the bot form", () => {
     });
   });
 
+  it("blocks a builder that is not cheaper than the bot's own model", () => {
+    const draft = { ...ecoDraftFromBot(null), enabled: true };
+    const main = (slug: string) => ({ instanceId: "claudeAgent", model: slug });
+    expect(ecoDraftProblem(main("claude-haiku-5-5"), draft)).toMatch(/cheaper model/);
+    expect(
+      ecoDraftProblem(main("claude-opus-5-5"), { ...draft, model: "claude-opus-4-1" }),
+    ).toMatch(/cheaper model/);
+    expect(ecoDraftProblem(main("claude-opus-5-5"), draft)).toBeNull();
+    expect(
+      ecoDraftProblem(main("claude-sonnet-5-5"), { ...draft, model: "claude-haiku-5-5" }),
+    ).toBeNull();
+    // A family with no known price order is left to the owner.
+    expect(ecoDraftProblem(main("claude-fable-5-2"), draft)).toBeNull();
+  });
+
+  it("asks for the builder's effort when the model offers one", () => {
+    const main = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    const draft = { ...ecoDraftFromBot(null), enabled: true, effort: "" };
+    expect(ecoDraftProblem(main, draft, [claude])).toMatch(/effort/);
+    expect(ecoDraftProblem(main, { ...draft, effort: "high" }, [claude])).toBeNull();
+    const noEffort = {
+      ...claude,
+      models: [
+        {
+          ...model("claude-sonnet-5-5"),
+          capabilities: createModelCapabilities({ optionDescriptors: [] }),
+        },
+      ],
+    } as unknown as ServerProvider;
+    expect(ecoDraftProblem(main, draft, [noEffort])).toBeNull();
+  });
+
   it("blocks the bot's own model as the builder", () => {
     const draft = { ...ecoDraftFromBot(null), enabled: true, model: "claude-opus-5-5" };
     expect(ecoDraftProblem({ instanceId: "claudeAgent", model: "claude-opus-5-5" }, draft)).toMatch(
