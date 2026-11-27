@@ -12,6 +12,7 @@ Reviewed by Opusito (`dev-team/qa/hbots-16762/REVIEW.md`, approve after round-1 
 - **External MCP server registry** (`54fd6c71d9`, `5aa0bec7fd`): register outside MCP servers, guarded secret-sealed reverse proxy, provider wiring passes only the proxy URL and a session token; Android Settings screen. Migration 164 adds `personal_external_mcp_servers`. Kill switch `T3CODE_PERSONAL_EXTERNAL_MCP`.
 - **Licenses** (`a44f9614f7`): third-party license overrides for ONNX Runtime and sharp-libvips.
 - **Round-1 review fixes** (`6611f10b13`): the per-turn query embed waits at most 2.5 s, then falls back to FTS5 only without degrading the embedder (M1); a failed embed degrades semantic search for 10 minutes instead of until restart (S1); ONNX intra-op threads capped at 2 (S2).
+- **Gate fix** (`759039c557`, round 1 of the release gates): the `ProviderSessionManager.test.ts` mock of `PersonalTurnContext` now implements `externalMcpServersForThread`. `Layer.mock` turned the missing optional method into a throwing stub, so the personal-bot capability test failed in the whole server-tests run. Test-only.
 - **Version:** `scripts/personal/app-version.txt` and `apps/hbots-mobile/package.json` bumped to `1.67.62`.
 
 ## Release notes for the phone
