@@ -20,6 +20,7 @@ export default Effect.gen(function* () {
       planner_model TEXT NOT NULL,
       builder_model TEXT NOT NULL,
       handed_off INTEGER NOT NULL,
+      eco_skipped TEXT,
       handoff_error TEXT,
       plan_markdown TEXT,
       status TEXT NOT NULL,

@@ -518,6 +518,8 @@ export interface ProviderAdapterV2EcoOutcome {
   readonly runId: string;
   readonly status: string;
   readonly handedOff: boolean;
+  /** Why the turn ran as an ordinary one (no handoff tool), e.g. "background_work". */
+  readonly ecoSkipped?: string;
   readonly handoffError?: string;
   readonly plan?: string;
   readonly startedAt: Date;

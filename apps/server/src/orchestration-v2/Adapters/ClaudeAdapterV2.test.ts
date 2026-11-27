@@ -6562,15 +6562,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       model: "claude-sonnet-5-5",
       options: [{ id: "effort", value: "high" }],
     } satisfies ModelSelection;
-    const ecoHarness = (eco: boolean) => {
+    const ecoHarness = (eco: boolean | (() => boolean), freshQueueOnReopen = false) => {
       const outcomes: Array<ProviderAdapter.ProviderAdapterV2EcoOutcome> = [];
+      const ecoNow = typeof eco === "function" ? eco : () => eco;
       return makeWakeHarnessWithOptions({
         personal: {
           personalBot: false,
           personalTaskChat: true,
           ecoForTurn: () =>
             Effect.succeed(
-              eco
+              ecoNow()
                 ? {
                     planner: opusSelection,
                     builder: sonnetSelection,
@@ -6579,6 +6580,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 : undefined,
             ),
         },
+        freshQueueOnReopen,
       }).pipe(Effect.map((harness) => ({ harness, outcomes })));
     };
     const ecoTurn = (
@@ -6737,6 +6739,114 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               permissionDecisionReason: ECO_EDIT_DENIED_REASON,
             },
           });
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    const ecoServerOf = (options: unknown) =>
+      (options as { readonly mcpServers?: Record<string, unknown> } | undefined)?.mcpServers?.[
+        "eco"
+      ];
+
+    it.effect(
+      "opens an Eco process for an Eco turn after an ordinary one, and an ordinary one after it",
+      () =>
+        Effect.gen(function* () {
+          let eco = false;
+          const { harness, outcomes } = yield* ecoHarness(() => eco, true);
+          const now = yield* DateTime.now;
+          const settle = Effect.gen(function* () {
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          });
+
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const ordinary = harness.getOpenedOptions();
+          assert.isUndefined(ecoServerOf(ordinary));
+          yield* settle;
+
+          eco = true;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 2, now));
+          const ecoOptions = harness.getOpenedOptions();
+          assert.notStrictEqual(ecoOptions, ordinary);
+          assert.isDefined(ecoServerOf(ecoOptions));
+          assert.include(JSON.stringify(harness.offeredMessages.at(-1)), "<eco_mode>");
+          yield* settle;
+          yield* harness.until(() => outcomes.length === 1);
+          assert.isUndefined(outcomes[0]!.ecoSkipped);
+
+          eco = false;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 3, now));
+          const ordinaryAgain = harness.getOpenedOptions();
+          assert.notStrictEqual(ordinaryAgain, ecoOptions);
+          assert.isUndefined(ecoServerOf(ordinaryAgain));
+          assert.notInclude(JSON.stringify(harness.offeredMessages.at(-1)), "<eco_mode>");
+          yield* settle;
+          assert.equal(outcomes.length, 1);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect(
+      "runs an Eco turn as an ordinary one, recording eco_skipped, when background work keeps the ordinary process",
+      () =>
+        Effect.gen(function* () {
+          let eco = false;
+          const { harness, outcomes } = yield* ecoHarness(() => eco);
+          const now = yield* DateTime.now;
+          const settle = Effect.gen(function* () {
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          });
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const ordinary = harness.getOpenedOptions();
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* settle;
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          eco = true;
+          // Not refused: the turn runs on the same process, without the handoff or its prompt.
+          yield* harness.runtime.startTurn(ecoTurn(harness, 2, now));
+          assert.strictEqual(harness.getOpenedOptions(), ordinary);
+          assert.isUndefined(ecoServerOf(ordinary));
+          assert.lengthOf(harness.offeredMessages, 2);
+          assert.notInclude(JSON.stringify(harness.offeredMessages.at(-1)), "<eco_mode>");
+          yield* settle;
+          yield* harness.until(() => outcomes.length === 1);
+          assert.equal(outcomes[0]!.ecoSkipped, "background_work");
+          assert.isFalse(outcomes[0]!.handedOff);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect(
+      "keeps an Eco process running background work for an ordinary turn, with the guard off",
+      () =>
+        Effect.gen(function* () {
+          let eco = true;
+          const { harness, outcomes } = yield* ecoHarness(() => eco);
+          const now = yield* DateTime.now;
+          const settle = Effect.gen(function* () {
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          });
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const ecoOptions = harness.getOpenedOptions();
+          assert.isDefined(ecoServerOf(ecoOptions));
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* settle;
+          yield* harness.until(() => outcomes.length === 1);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          eco = false;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 2, now));
+          assert.strictEqual(harness.getOpenedOptions(), ecoOptions);
+          assert.notInclude(JSON.stringify(harness.offeredMessages.at(-1)), "<eco_mode>");
+          // An ordinary turn: edits allowed, and the handoff refuses.
+          assert.deepEqual(yield* preToolUse(ecoOptions, "Edit"), {});
+          const handoff = ecoHandoffHandlerOf(ecoServerOf(ecoOptions));
+          if (handoff === undefined) throw new Error("no eco_handoff handler");
+          assert.isTrue((yield* Effect.promise(() => handoff("## Goal\nNo"))).isError);
+          yield* settle;
+          assert.equal(outcomes.length, 1);
         }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 

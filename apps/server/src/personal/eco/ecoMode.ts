@@ -34,6 +34,8 @@ export const ECO_HANDOFF_TOOL_NAME = "eco_handoff";
 export const ECO_HANDOFF_TOOL = `mcp__${ECO_MCP_SERVER_NAME}__${ECO_HANDOFF_TOOL_NAME}`;
 /** How long the handler waits for the model switch before it gives up. */
 export const ECO_SWITCH_TIMEOUT_MS = 20_000;
+/** eco_skipped: the thread's ordinary process runs background work, so it is not replaced. */
+export const ECO_SKIPPED_BACKGROUND_WORK = "background_work";
 
 // ---------------------------------------------------------------------------
 // Settings

@@ -68,7 +68,7 @@ export const makeEcoTurnRecorder =
       yield* sql`
         INSERT INTO personal_eco_turns (
           eco_turn_id, bot_id, thread_id, run_id, planner_model, builder_model,
-          handed_off, handoff_error, plan_markdown, status,
+          handed_off, eco_skipped, handoff_error, plan_markdown, status,
           planner_calls, planner_input_tokens, planner_output_tokens,
           planner_cache_read_tokens, planner_cache_write_tokens, planner_cost_usd,
           builder_calls, builder_input_tokens, builder_output_tokens,
@@ -77,7 +77,8 @@ export const makeEcoTurnRecorder =
         ) VALUES (
           ${deps.newId()}, ${botId ?? null}, ${outcome.threadId}, ${outcome.runId},
           ${outcome.planner.model}, ${outcome.builder.model},
-          ${outcome.handedOff ? 1 : 0}, ${outcome.handoffError ?? null}, ${outcome.plan ?? null},
+          ${outcome.handedOff ? 1 : 0}, ${outcome.ecoSkipped ?? null},
+          ${outcome.handoffError ?? null}, ${outcome.plan ?? null},
           ${outcome.status},
           ${outcome.planner.calls}, ${outcome.planner.inputTokens}, ${outcome.planner.outputTokens},
           ${outcome.planner.cacheReadTokens}, ${outcome.planner.cacheWriteTokens}, ${plannerCost},

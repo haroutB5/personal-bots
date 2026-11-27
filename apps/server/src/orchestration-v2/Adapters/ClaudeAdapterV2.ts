@@ -240,6 +240,7 @@ import {
 import {
   ECO_HANDOFF_TOOL,
   ECO_MCP_SERVER_NAME,
+  ECO_SKIPPED_BACKGROUND_WORK,
   ECO_SWITCH_TIMEOUT_MS,
   type EcoModelLedger,
   type EcoTurnState,
@@ -6140,6 +6141,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly builder: CompiledClaudeModelSelection;
           readonly ledgerAtStart: EcoModelLedger;
           readonly context: ActiveClaudeTurnContext;
+          /** Set when the turn runs as an ordinary one (no handoff tool, no guard). */
+          readonly skipped: string | undefined;
         } | null = null;
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
@@ -12335,7 +12338,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         const handleEcoHandoff = async (plan: string) => {
-          const active = ecoActive;
+          const active = ecoActive?.skipped === undefined ? ecoActive : null;
           const result = await runEcoHandoff({
             turn: active?.state ?? null,
             plan,
@@ -12413,6 +12416,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               runId: active.state.runId,
               status: input.status,
               handedOff: active.state.handedOff,
+              ...(active.skipped === undefined ? {} : { ecoSkipped: active.skipped }),
               ...(active.state.handoffError === undefined
                 ? {}
                 : { handoffError: active.state.handoffError }),
@@ -12474,13 +12478,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             yield* applySelectionLive(existing, compiledSelection);
           }
-          if (
+          // Reusable except, perhaps, for Eco: an Eco turn needs a process opened with
+          // eco_handoff and the edit guard, and an ordinary turn needs one without.
+          const reusableIgnoringEco =
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
-            existing.selection.queryIdentity === compiledSelection.queryIdentity
-          ) {
+            existing.selection.queryIdentity === compiledSelection.queryIdentity;
+          const reuseExisting = Effect.fnUntraced(function* (existing: ClaudeLiveQueryContext) {
             // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
             // Auto/default may reflect a policy restriction that forbids restoring bypass.
             if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
@@ -12499,6 +12505,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 );
             }
             return existing;
+          });
+          if (existing !== null && reusableIgnoringEco && existing.ecoCapable === eco) {
+            return yield* reuseExisting(existing);
           }
 
           // Replacing this thread's process kills its background work, even with a new native identity.
@@ -12509,6 +12518,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             (yield* liveProcessRunsBackgroundWork(existing))
           ) {
+            // Only Eco differs: keep the process. The caller runs an Eco turn on an
+            // ordinary process as an ordinary turn (eco_skipped); an ordinary turn on an
+            // Eco process is unaffected, since the handoff and the guard act per Eco turn.
+            if (reusableIgnoringEco) return yield* reuseExisting(existing);
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
@@ -12654,7 +12667,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...baseOptions.hooks,
               PreToolUse: [
                 ...(baseOptions.hooks?.PreToolUse ?? []),
-                { hooks: [makeEcoPreToolUseHook(() => ecoActive?.state ?? null)] },
+                {
+                  hooks: [
+                    makeEcoPreToolUseHook(() =>
+                      ecoActive?.skipped === undefined ? (ecoActive?.state ?? null) : null,
+                    ),
+                  ],
+                },
               ],
             };
           }
@@ -12926,10 +12945,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               canApplyClaudeSelectionLive(ecoPlanner, ecoBuilder)
                 ? { turn: ecoTurn, planner: ecoPlanner, builder: ecoBuilder }
                 : undefined;
+            // An Eco turn needs a process with eco_handoff. Background work on this
+            // thread's ordinary process blocks replacing it, so the turn runs as an
+            // ordinary one and records why (eco_skipped) instead of failing.
+            let ecoBlockedByBackgroundWork = false;
+            if (ecoModels !== undefined) {
+              const live = yield* Ref.get(queryContext);
+              if (
+                live !== null &&
+                !live.ecoCapable &&
+                !live.stopping &&
+                (live.nativeThreadId === nativeThreadId ||
+                  live.lastTurn?.input.threadId === turnInput.threadId)
+              ) {
+                ecoBlockedByBackgroundWork = yield* liveProcessRunsBackgroundWork(live);
+              }
+            }
+            const ecoAttach = ecoModels !== undefined && !ecoBlockedByBackgroundWork;
             const promptText = applyClaudePromptEffortPrefix(
-              ecoModels === undefined
-                ? turnInput.message.text
-                : withEcoInstructions(turnInput.message.text),
+              !ecoAttach ? turnInput.message.text : withEcoInstructions(turnInput.message.text),
               compileClaudeModelSelection(turnInput.modelSelection, modelCatalog).promptEffort,
             );
             const userMessage =
@@ -12956,11 +12990,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
-            const querySession = yield* openQuery(
-              turnInput,
-              nativeThreadId,
-              ecoModels !== undefined,
-            );
+            const querySession = yield* openQuery(turnInput, nativeThreadId, ecoAttach);
             // A bot session runs with its own window, so the meter reads that one.
             const autoCompactWindow =
               querySession.personalAutoCompactWindow === undefined
@@ -13028,14 +13058,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               steerUuids: new Set(),
               executedModel: undefined,
             };
-            if (ecoModels !== undefined && !querySession.ecoCapable) {
-              // A process opened by an ordinary turn has no eco_handoff; this turn runs as one too.
+            const ecoSkipped =
+              ecoModels !== undefined && (!ecoAttach || !querySession.ecoCapable)
+                ? ECO_SKIPPED_BACKGROUND_WORK
+                : undefined;
+            if (ecoSkipped !== undefined) {
+              // Kept on the process that runs background work; this turn runs as an ordinary one.
               yield* Effect.logInfo("orchestration-v2.claude-eco-skipped-live-process", {
                 threadId: turnInput.threadId,
+                reason: ecoSkipped,
               });
             }
             ecoActive =
-              ecoModels === undefined || !querySession.ecoCapable
+              ecoModels === undefined
                 ? null
                 : {
                     providerTurnId,
@@ -13053,6 +13088,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     builder: ecoModels.builder,
                     ledgerAtStart: querySession.ecoLedger,
                     context,
+                    skipped: ecoSkipped,
                   };
             const attachTurn = Effect.gen(function* () {
               // Set before claiming: a query that exits after the claim finalizes this turn; one that exits before it fails the start.
