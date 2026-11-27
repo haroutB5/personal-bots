@@ -266,8 +266,11 @@ export function noteEcoStreamEvent(turn: EcoTurnState, stream: string, event: un
     noteEcoUsage(turn, id, model, message?.usage);
   } else if (fields.type === "message_delta") {
     const current = turn.streams.get(stream);
-    if (current === undefined) return;
-    noteEcoUsage(turn, current.id, current.model, fields.usage);
+    const usage = fields.usage as Record<string, unknown> | undefined;
+    if (current === undefined || usage === undefined) return;
+    // Only the output count: the delta repeats the cache writes without the
+    // 5m/1h breakdown, which would count 1-hour writes again as 5-minute ones.
+    noteEcoUsage(turn, current.id, current.model, { output_tokens: usage.output_tokens });
   }
 }
 

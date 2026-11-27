@@ -391,7 +391,12 @@ describe("Eco bookkeeping", () => {
     noteEcoUsage(turn, "m1", "claude-opus-5-5", start("m1", "claude-opus-5-5").message.usage);
     noteEcoStreamEvent(turn, "root", {
       type: "message_delta",
-      usage: { output_tokens: 4024, cache_read_input_tokens: null },
+      // Cache writes repeated without the 5m/1h breakdown must not count again.
+      usage: {
+        output_tokens: 4024,
+        cache_read_input_tokens: null,
+        cache_creation_input_tokens: 500,
+      },
     });
     noteEcoStreamEvent(turn, "tool-1", { type: "message_delta", usage: { output_tokens: 300 } });
     // A delta with no message_start on its stream is ignored.
