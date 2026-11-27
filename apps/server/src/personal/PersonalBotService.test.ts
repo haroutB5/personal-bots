@@ -1147,6 +1147,35 @@ it.effect("Eco mode is off by default, validates its builder, and follows a new 
       enabled: true,
       modelSelection: { model: "claude-sonnet-5-5" },
     });
+
+    // Antigravity bots default to Gemini 4 Hydrogen High and skip Claude live-switch checks.
+    const agBot = yield* service.create({
+      ...botInput("bot-eco-ag"),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("antigravity"),
+        model: "gemini-4-neon",
+        options: [{ id: "effort", value: "high" }],
+      },
+    });
+    expect(agBot.eco).toEqual({
+      enabled: false,
+      modelSelection: {
+        instanceId: "antigravity",
+        model: "gemini-4-hydrogen",
+        options: [{ id: "effort", value: "high" }],
+      },
+    });
+    const agOn = yield* service.update({ botId: agBot.botId, eco: { enabled: true } });
+    expect(agOn.eco?.enabled).toBe(true);
+    expect(agOn.eco?.modelSelection.model).toBe("gemini-4-hydrogen");
+
+    const agSame = yield* service
+      .update({
+        botId: agBot.botId,
+        eco: { enabled: true, modelSelection: agBot.modelSelection },
+      })
+      .pipe(Effect.flip);
+    expect(agSame.message).toMatch(/different model/);
   }).pipe(Effect.provide(makeTestLayer(context)));
 });
 

@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -33,6 +34,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { ECO_ACP_HANDOFF_PLANNER_ACK } from "@t3tools/provider-core/server/ecoGuard";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
@@ -2319,5 +2321,954 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           assert.include(sent, "<pull_request_linking>");
         }
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 Eco mode", () => {
+  type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+  type PermissionHandler = Parameters<RuntimeService["handleRequestPermission"]>[0];
+  type SessionUpdateHandler = Parameters<RuntimeService["handleSessionUpdate"]>[0];
+
+  const ecoPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+
+  const makeEcoTurnInput = (input: {
+    readonly threadId: ThreadId;
+    readonly providerThread: Parameters<typeof makeTurnInput>[0]["providerThread"];
+    readonly instanceId: ProviderInstanceId;
+    readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+    readonly modelSelection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"];
+    readonly now: DateTime.Utc;
+    readonly messageId: MessageId;
+    readonly text: string;
+    readonly runId?: RunId;
+    readonly runOrdinal?: number;
+    readonly providerTurnOrdinal?: number;
+  }): ProviderAdapter.ProviderAdapterV2TurnInput => {
+    const base = makeTurnInput({
+      threadId: input.threadId,
+      providerThread: input.providerThread,
+      instanceId: input.instanceId,
+      runtimePolicy: input.runtimePolicy,
+      modelSelection: input.modelSelection,
+      now: input.now,
+      messageText: input.text,
+      ...(input.runId === undefined ? {} : { runId: input.runId }),
+      ...(input.runOrdinal === undefined ? {} : { runOrdinal: input.runOrdinal }),
+      ...(input.providerTurnOrdinal === undefined
+        ? {}
+        : { providerTurnOrdinal: input.providerTurnOrdinal }),
+    });
+    return {
+      ...base,
+      message: { ...base.message, messageId: input.messageId },
+    };
+  };
+
+  const makeEcoHarness = (opts: {
+    readonly onPrompt: (input: {
+      readonly promptIndex: number;
+      readonly text: string;
+      readonly currentModel: string;
+      readonly threadId: ThreadId;
+      readonly mcpSessions: McpProviderSessions.McpProviderSessions["Service"];
+      readonly requestPermission: (
+        req: EffectAcpSchema.RequestPermissionRequest,
+      ) => Effect.Effect<EffectAcpSchema.RequestPermissionResponse, EffectAcpErrors.AcpError>;
+      readonly emitUpdate: (
+        notification: EffectAcpSchema.SessionNotification,
+      ) => Effect.Effect<void>;
+    }) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+    readonly onSetConfigOption?: (
+      id: string,
+      value: unknown,
+    ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+    readonly onCancel?: () => Effect.Effect<void>;
+  }) =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("antigravity");
+      const threadId = ThreadId.make("thread-antigravity-eco");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("env-eco"),
+        threadId,
+        providerSessionId: "provider-session-antigravity-eco",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:4321/mcp",
+        authorizationHeader: "Bearer test-token",
+        browserToolsAvailable: false,
+      });
+
+      const runtimeHttpHeaders: Array<
+        ReadonlyArray<{ readonly name: string; readonly value: string }>
+      > = [];
+      const configChanges: Array<{ readonly id: string; readonly value: unknown }> = [];
+      const promptsSeen: Array<{ readonly text: string; readonly model: string }> = [];
+      let currentModel = "gemini-4-neon";
+      let currentEffort = "high";
+      let promptIndex = 0;
+
+      const makeFakeRuntime = (
+        input: AntigravityAdapterV2RuntimeInput,
+      ): Effect.Effect<RuntimeService, EffectAcpErrors.AcpError> =>
+        Effect.sync(() => {
+          const t3Http = input.httpMcpServers?.find(
+            (server): server is Extract<EffectAcpSchema.McpServer, { readonly type: "http" }> =>
+              "type" in server && server.type === "http" && server.name === "t3-code",
+          );
+          runtimeHttpHeaders.push(t3Http?.headers ?? []);
+
+          let permissionHandler: PermissionHandler | undefined;
+          let sessionUpdateHandler: SessionUpdateHandler | undefined;
+          let activeSessionId = "acp-eco-session-1";
+
+          const currentConfigOptions = (): ReadonlyArray<EffectAcpSchema.SessionConfigOption> => [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: currentModel,
+              options: [
+                { value: "gemini-4-neon", name: "Gemini 4 Neon" },
+                { value: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen" },
+              ],
+            },
+            {
+              id: "thought_level",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: currentEffort,
+              options: [
+                { value: "low", name: "Low" },
+                { value: "medium", name: "Medium" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ];
+
+          const startResult = (
+            sessionId: string,
+          ): AcpSessionRuntime.AcpSessionRuntimeStartResult => ({
+            sessionId,
+            modelConfigId: "model",
+            initializeResult: {
+              protocolVersion: 1,
+              agentInfo: { name: "antigravity", version: "1.5.18" },
+              agentCapabilities: { loadSession: true },
+            },
+            sessionSetupResult: {
+              configOptions: [...currentConfigOptions()],
+              modes: {
+                currentModeId: "default",
+                availableModes: [{ id: "default", name: "Default" }],
+              },
+            },
+          });
+
+          const runtime = {
+            initialize: () => Effect.succeed(startResult(activeSessionId).initializeResult),
+            start: () => Effect.succeed(startResult(activeSessionId)),
+            getEvents: () => Stream.empty,
+            drainEvents: Effect.void,
+            configOptionChanges: Stream.empty,
+            createSession: () => Effect.succeed(startResult(activeSessionId)),
+            activateSession: (sessionId: string) =>
+              Effect.sync(() => {
+                activeSessionId = sessionId;
+                return startResult(sessionId);
+              }),
+            loadSession: (sessionId: string) =>
+              Effect.sync(() => {
+                activeSessionId = sessionId;
+                return startResult(sessionId);
+              }),
+            resumeSession: (sessionId: string) =>
+              Effect.sync(() => {
+                activeSessionId = sessionId;
+                return startResult(sessionId);
+              }),
+            forkSession: () => Effect.succeed(startResult("acp-eco-session-fork")),
+            closeSession: () => Effect.void,
+            prompt: (
+              payload: Parameters<RuntimeService["prompt"]>[0],
+              promptOptions?: Parameters<RuntimeService["prompt"]>[1],
+            ) =>
+              Effect.gen(function* () {
+                const idx = ++promptIndex;
+                const text = payload.prompt
+                  .map((block) => (block.type === "text" ? block.text : ""))
+                  .join("\n");
+                promptsSeen.push({ text, model: currentModel });
+                if (promptOptions?.dispatched !== undefined) {
+                  yield* Deferred.succeed(promptOptions.dispatched, undefined).pipe(Effect.ignore);
+                }
+                return yield* opts.onPrompt({
+                  promptIndex: idx,
+                  text,
+                  currentModel,
+                  threadId,
+                  mcpSessions,
+                  requestPermission: (req) =>
+                    permissionHandler === undefined
+                      ? Effect.succeed({ outcome: { outcome: "cancelled" } } as const)
+                      : permissionHandler(req, {
+                          method: "session/request_permission",
+                          requestId: `perm-${idx}-${Math.random()}`,
+                        }),
+                  emitUpdate: (notification) =>
+                    sessionUpdateHandler === undefined
+                      ? Effect.void
+                      : sessionUpdateHandler(notification).pipe(Effect.ignore),
+                });
+              }),
+            cancel: Effect.suspend(() => opts.onCancel?.() ?? Effect.void),
+            setMode: () => Effect.void,
+            setModel: (modelId: string) =>
+              Effect.gen(function* () {
+                configChanges.push({ id: "model", value: modelId });
+                if (opts.onSetConfigOption !== undefined) {
+                  yield* opts.onSetConfigOption("model", modelId);
+                }
+                currentModel = modelId;
+              }),
+            setSessionModel: (modelId: string) =>
+              Effect.sync(() => {
+                currentModel = modelId;
+              }),
+            setConfigOption: (configId: string, value: unknown) =>
+              Effect.gen(function* () {
+                configChanges.push({ id: configId, value });
+                if (opts.onSetConfigOption !== undefined) {
+                  yield* opts.onSetConfigOption(configId, value);
+                }
+                if (configId === "model" && typeof value === "string") currentModel = value;
+                if (configId === "thought_level" && typeof value === "string")
+                  currentEffort = value;
+                return [...currentConfigOptions()];
+              }),
+            getConfigOptions: Effect.sync(() => [...currentConfigOptions()]),
+            getModeState: Effect.succeed({
+              currentModeId: "default",
+              availableModes: [{ id: "default", name: "Default" }],
+            }),
+            handleSessionUpdate: (handler: SessionUpdateHandler) =>
+              Effect.sync(() => {
+                sessionUpdateHandler = handler;
+              }),
+            handleRequestPermission: (handler: PermissionHandler) =>
+              Effect.sync(() => {
+                permissionHandler = handler;
+              }),
+            handleElicitation: () => Effect.void,
+            handleElicitationComplete: () => Effect.void,
+            handleMcpConnect: () => Effect.void,
+            handleMcpMessage: () => Effect.void,
+            handleMcpDisconnect: () => Effect.void,
+            handleMcpNotification: () => Effect.void,
+            handleReadTextFile: () => Effect.void,
+            handleWriteTextFile: () => Effect.void,
+            handleCreateTerminal: () => Effect.void,
+            handleTerminalOutput: () => Effect.void,
+            handleTerminalWaitForExit: () => Effect.void,
+            handleTerminalKill: () => Effect.void,
+            handleTerminalRelease: () => Effect.void,
+            handleExtRequest: () => Effect.void,
+            handleExtNotification: () => Effect.void,
+            handleUnknownExtRequest: () => Effect.void,
+            handleUnknownExtNotification: () => Effect.void,
+          } as unknown as RuntimeService;
+          return runtime;
+        });
+
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: makeFakeRuntime,
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+
+      const planner: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"] = {
+        instanceId,
+        model: "gemini-4-neon",
+        options: [{ id: "effort", value: "high" }],
+      };
+      const builder: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"] = {
+        instanceId,
+        model: "gemini-4-hydrogen",
+        options: [{ id: "effort", value: "high" }],
+      };
+
+      const outcomes: Array<ProviderAdapter.ProviderAdapterV2EcoOutcome> = [];
+      const outcomeRecorded = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2EcoOutcome>();
+
+      return {
+        adapter,
+        instanceId,
+        threadId,
+        mcpSessions,
+        planner,
+        builder,
+        runtimeHttpHeaders,
+        configChanges,
+        promptsSeen,
+        getCurrentModel: () => currentModel,
+        outcomes,
+        outcomeRecorded,
+        recordOutcome: (outcome: ProviderAdapter.ProviderAdapterV2EcoOutcome) =>
+          Effect.sync(() => {
+            outcomes.push(outcome);
+          }).pipe(Effect.andThen(Deferred.succeed(outcomeRecorded, outcome).pipe(Effect.ignore))),
+      };
+    });
+
+  const permOptions: ReadonlyArray<EffectAcpSchema.PermissionOption> = [
+    { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+    { optionId: "reject_once", name: "Reject once", kind: "reject_once" },
+  ];
+
+  it.effect(
+    "runs happy-path Neon -> Hydrogen two-prompt handoff, enforces edit guard, emits plan/notice, restores planner, and records split usage",
+    () =>
+      Effect.gen(function* () {
+        const permDecisions: Array<unknown> = [];
+        let handoffReply: { readonly ok: boolean; readonly message: string } | undefined;
+        let duplicateHandoffReply: { readonly ok: boolean; readonly message: string } | undefined;
+
+        const harness = yield* makeEcoHarness({
+          onPrompt: ({ promptIndex, requestPermission, threadId, mcpSessions }) =>
+            Effect.gen(function* () {
+              if (promptIndex === 1) {
+                // Planner edit guard denies edit & write shell, allows read-only shell.
+                const editRes = yield* requestPermission({
+                  sessionId: "acp-eco-session-1",
+                  options: permOptions,
+                  toolCall: { toolCallId: "tc-edit-1", kind: "edit", title: "edit_file" },
+                });
+                permDecisions.push(
+                  editRes.outcome.outcome === "selected" ? editRes.outcome.optionId : "cancelled",
+                );
+                const rmRes = yield* requestPermission({
+                  sessionId: "acp-eco-session-1",
+                  options: permOptions,
+                  toolCall: {
+                    toolCallId: "tc-rm-1",
+                    kind: "execute",
+                    title: "Run command",
+                    rawInput: { CommandLine: "rm -rf dist" },
+                  },
+                });
+                permDecisions.push(
+                  rmRes.outcome.outcome === "selected" ? rmRes.outcome.optionId : "cancelled",
+                );
+                const statusRes = yield* requestPermission({
+                  sessionId: "acp-eco-session-1",
+                  options: permOptions,
+                  toolCall: {
+                    toolCallId: "tc-git-1",
+                    kind: "execute",
+                    title: "Run command",
+                    rawInput: { CommandLine: "git status" },
+                  },
+                });
+                permDecisions.push(
+                  statusRes.outcome.outcome === "selected"
+                    ? statusRes.outcome.optionId
+                    : "cancelled",
+                );
+
+                // Call eco_handoff once; second call is refused; edits remain blocked until Prompt #1 ends.
+                handoffReply = yield* mcpSessions.callEcoHandoff(
+                  threadId,
+                  "## Goal\nShip Gemini Eco",
+                );
+                duplicateHandoffReply = yield* mcpSessions.callEcoHandoff(
+                  threadId,
+                  "## Goal\nSecond plan",
+                );
+                const postHandoffEdit = yield* requestPermission({
+                  sessionId: "acp-eco-session-1",
+                  options: permOptions,
+                  toolCall: { toolCallId: "tc-edit-2", kind: "edit", title: "edit_file" },
+                });
+                permDecisions.push(
+                  postHandoffEdit.outcome.outcome === "selected"
+                    ? postHandoffEdit.outcome.optionId
+                    : "cancelled",
+                );
+                return {
+                  stopReason: "end_turn",
+                  usage: {
+                    totalTokens: 500,
+                    inputTokens: 100,
+                    cachedReadTokens: 300,
+                    cachedWriteTokens: 50,
+                    outputTokens: 50,
+                  },
+                };
+              }
+              // Prompt #2 (builder): edits are now unlocked!
+              const builderEdit = yield* requestPermission({
+                sessionId: "acp-eco-session-1",
+                options: permOptions,
+                toolCall: { toolCallId: "tc-edit-3", kind: "edit", title: "edit_file" },
+              });
+              permDecisions.push(
+                builderEdit.outcome.outcome === "selected"
+                  ? builderEdit.outcome.optionId
+                  : "cancelled",
+              );
+              return {
+                stopReason: "end_turn",
+                usage: {
+                  totalTokens: 1200,
+                  inputTokens: 200,
+                  cachedReadTokens: 800,
+                  cachedWriteTokens: 0,
+                  outputTokens: 200,
+                },
+              };
+            }),
+        });
+
+        const session = yield* harness.adapter.openSession({
+          threadId: harness.threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-eco"),
+          modelSelection: harness.planner,
+          runtimePolicy: ecoPolicy,
+          personal: {
+            personalBot: true,
+            personalTaskChat: true,
+            ecoForTurn: () =>
+              Effect.succeed({
+                planner: harness.planner,
+                builder: harness.builder,
+                record: harness.recordOutcome,
+              }),
+          },
+        });
+        const collectedEvents: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const terminalSeen = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              collectedEvents.push(event);
+            }).pipe(
+              Effect.andThen(
+                event.type === "turn.terminal"
+                  ? Deferred.succeed(terminalSeen, event).pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+            ),
+          ),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* session.ensureThread({
+          threadId: harness.threadId,
+          modelSelection: harness.planner,
+          runtimePolicy: ecoPolicy,
+        });
+        yield* session.startTurn(
+          makeEcoTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            instanceId: harness.instanceId,
+            runtimePolicy: ecoPolicy,
+            modelSelection: harness.planner,
+            now: yield* DateTime.now,
+            messageId: MessageId.make("personal-task-eco-1"),
+            text: "Implement feature X",
+          }),
+        );
+        const terminal = yield* Deferred.await(terminalSeen);
+        const outcome = yield* Deferred.await(harness.outcomeRecorded);
+
+        assert.equal(terminal.type === "turn.terminal" ? terminal.status : null, "completed");
+        // Initial runtime had no t3-eco header; restarted Eco runtime has t3-eco: 1.
+        assert.isFalse(
+          harness.runtimeHttpHeaders[0]?.some((h) => h.name === "t3-eco" && h.value === "1"),
+        );
+        assert.isTrue(
+          harness.runtimeHttpHeaders[1]?.some((h) => h.name === "t3-eco" && h.value === "1"),
+        );
+        assert.deepEqual(handoffReply, { ok: true, message: ECO_ACP_HANDOFF_PLANNER_ACK });
+        assert.isFalse(duplicateHandoffReply?.ok);
+        // Edit, rm -rf, and post-handoff-in-prompt-1 edit were denied; git status and builder edit were allowed.
+        assert.deepEqual(permDecisions, [
+          "reject_once",
+          "reject_once",
+          "allow_once",
+          "reject_once",
+          "allow_once",
+        ]);
+        // Prompt #1 ran on Neon with <eco_mode>; Prompt #2 ran on Hydrogen with <eco_builder>.
+        assert.equal(harness.promptsSeen.length, 2);
+        assert.equal(harness.promptsSeen[0]?.model, "gemini-4-neon");
+        assert.include(harness.promptsSeen[0]?.text ?? "", "<eco_mode>");
+        assert.equal(harness.promptsSeen[1]?.model, "gemini-4-hydrogen");
+        assert.include(harness.promptsSeen[1]?.text ?? "", "<eco_builder>");
+        assert.include(harness.promptsSeen[1]?.text ?? "", "## Goal\nShip Gemini Eco");
+        // Planner model was restored on turn end.
+        assert.equal(harness.getCurrentModel(), "gemini-4-neon");
+        // Emitted proposed_plan and system_notice.
+        assert.isTrue(
+          collectedEvents.some(
+            (e) =>
+              e.type === "turn_item.updated" &&
+              e.turnItem.type === "proposed_plan" &&
+              e.turnItem.status === "completed" &&
+              e.turnItem.markdown.includes("**Handed off to gemini-4-hydrogen**"),
+          ),
+        );
+        assert.isTrue(
+          collectedEvents.some(
+            (e) =>
+              e.type === "turn_item.updated" &&
+              e.turnItem.type === "system_notice" &&
+              e.turnItem.title === "Handed off to gemini-4-hydrogen",
+          ),
+        );
+        // Outcome recorded with provider: "antigravity" and exact planner vs builder split.
+        assert.equal(outcome.provider, "antigravity");
+        assert.isTrue(outcome.handedOff);
+        assert.equal(outcome.status, "completed");
+        assert.equal(outcome.plan, "## Goal\nShip Gemini Eco");
+        assert.equal(outcome.planner.model, "gemini-4-neon");
+        assert.equal(outcome.planner.inputTokens, 100);
+        assert.equal(outcome.planner.cacheReadTokens, 300);
+        assert.equal(outcome.planner.outputTokens, 50);
+        assert.equal(outcome.planner.calls, 1);
+        assert.equal(outcome.builder.model, "gemini-4-hydrogen");
+        assert.equal(outcome.builder.inputTokens, 200);
+        assert.equal(outcome.builder.cacheReadTokens, 800);
+        assert.equal(outcome.builder.outputTokens, 200);
+        assert.equal(outcome.builder.calls, 1);
+        // Handler is unregistered after turn ends.
+        const lateHandoff = yield* harness.mcpSessions.callEcoHandoff(harness.threadId, "late");
+        assert.isFalse(lateHandoff.ok);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect("completes a no-handoff read-only Eco turn without switching to builder", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeEcoHarness({
+        onPrompt: () =>
+          Effect.succeed({
+            stopReason: "end_turn",
+            usage: { totalTokens: 300, inputTokens: 150, cachedReadTokens: 100, outputTokens: 50 },
+          }),
+      });
+      const session = yield* harness.adapter.openSession({
+        threadId: harness.threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-eco"),
+        modelSelection: harness.planner,
+        runtimePolicy: ecoPolicy,
+        personal: {
+          personalBot: true,
+          personalTaskChat: true,
+          ecoForTurn: () =>
+            Effect.succeed({
+              planner: harness.planner,
+              builder: harness.builder,
+              record: harness.recordOutcome,
+            }),
+        },
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId: harness.threadId,
+        modelSelection: harness.planner,
+        runtimePolicy: ecoPolicy,
+      });
+      yield* session.startTurn(
+        makeEcoTurnInput({
+          threadId: harness.threadId,
+          providerThread,
+          instanceId: harness.instanceId,
+          runtimePolicy: ecoPolicy,
+          modelSelection: harness.planner,
+          now: yield* DateTime.now,
+          messageId: MessageId.make("personal-task-eco-ro"),
+          text: "Summarize README",
+        }),
+      );
+      const outcome = yield* Deferred.await(harness.outcomeRecorded);
+      assert.equal(harness.promptsSeen.length, 1);
+      assert.isFalse(outcome.handedOff);
+      assert.equal(outcome.status, "completed");
+      assert.equal(outcome.planner.inputTokens, 150);
+      assert.equal(outcome.builder.inputTokens, 0);
+      assert.equal(outcome.builder.calls, 0);
+      assert.equal(harness.getCurrentModel(), "gemini-4-neon");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect("reverts to planner and records handoffError when builder switch fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeEcoHarness({
+        onPrompt: ({ threadId, mcpSessions }) =>
+          Effect.gen(function* () {
+            yield* mcpSessions.callEcoHandoff(threadId, "## Goal\nBuild it");
+            return {
+              stopReason: "end_turn",
+              usage: { totalTokens: 200, inputTokens: 100, outputTokens: 100 },
+            };
+          }),
+        onSetConfigOption: (id, value) =>
+          id === "model" && value === "gemini-4-hydrogen"
+            ? Effect.fail(EffectAcpErrors.AcpRequestError.internalError("builder unavailable"))
+            : Effect.void,
+      });
+      const session = yield* harness.adapter.openSession({
+        threadId: harness.threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-eco"),
+        modelSelection: harness.planner,
+        runtimePolicy: ecoPolicy,
+        personal: {
+          personalBot: true,
+          personalTaskChat: true,
+          ecoForTurn: () =>
+            Effect.succeed({
+              planner: harness.planner,
+              builder: harness.builder,
+              record: harness.recordOutcome,
+            }),
+        },
+      });
+      const collectedEvents: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      yield* session.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            collectedEvents.push(event);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* session.ensureThread({
+        threadId: harness.threadId,
+        modelSelection: harness.planner,
+        runtimePolicy: ecoPolicy,
+      });
+      yield* session.startTurn(
+        makeEcoTurnInput({
+          threadId: harness.threadId,
+          providerThread,
+          instanceId: harness.instanceId,
+          runtimePolicy: ecoPolicy,
+          modelSelection: harness.planner,
+          now: yield* DateTime.now,
+          messageId: MessageId.make("personal-task-eco-fail-switch"),
+          text: "Build feature",
+        }),
+      );
+      const outcome = yield* Deferred.await(harness.outcomeRecorded);
+      assert.equal(harness.promptsSeen.length, 1);
+      assert.isFalse(outcome.handedOff);
+      assert.include(outcome.handoffError ?? "", "builder unavailable");
+      assert.equal(harness.getCurrentModel(), "gemini-4-neon");
+      assert.isTrue(
+        collectedEvents.some(
+          (e) =>
+            e.type === "turn_item.updated" &&
+            e.turnItem.type === "system_notice" &&
+            e.turnItem.title?.includes("Eco handoff to gemini-4-hydrogen failed"),
+        ),
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect(
+    "handles interrupt before handoff and after handoff, restoring planner and unregistering handler",
+    () =>
+      Effect.gen(function* () {
+        // Part 1: interrupt before handoff (during Prompt #1)
+        const prompt1Started = yield* Deferred.make<void>();
+        const prompt1Cancel = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const harness1 = yield* makeEcoHarness({
+          onPrompt: () =>
+            Deferred.succeed(prompt1Started, undefined).pipe(
+              Effect.andThen(Deferred.await(prompt1Cancel)),
+            ),
+          onCancel: () =>
+            Deferred.succeed(prompt1Cancel, { stopReason: "cancelled" }).pipe(Effect.asVoid),
+        });
+        const session1 = yield* harness1.adapter.openSession({
+          threadId: harness1.threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-eco-int1"),
+          modelSelection: harness1.planner,
+          runtimePolicy: ecoPolicy,
+          personal: {
+            personalBot: true,
+            personalTaskChat: true,
+            ecoForTurn: () =>
+              Effect.succeed({
+                planner: harness1.planner,
+                builder: harness1.builder,
+                record: harness1.recordOutcome,
+              }),
+          },
+        });
+        const turnStarted1 = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session1.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+              ? Deferred.succeed(turnStarted1, event).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        const thread1 = yield* session1.ensureThread({
+          threadId: harness1.threadId,
+          modelSelection: harness1.planner,
+          runtimePolicy: ecoPolicy,
+        });
+        yield* session1.startTurn(
+          makeEcoTurnInput({
+            threadId: harness1.threadId,
+            providerThread: thread1,
+            instanceId: harness1.instanceId,
+            runtimePolicy: ecoPolicy,
+            modelSelection: harness1.planner,
+            now: yield* DateTime.now,
+            messageId: MessageId.make("personal-task-eco-int1"),
+            text: "Investigate",
+          }),
+        );
+        const startedEvt1 = yield* Deferred.await(turnStarted1);
+        yield* Deferred.await(prompt1Started);
+        yield* session1.interruptTurn({
+          providerThread: thread1,
+          providerTurnId:
+            startedEvt1.type === "provider_turn.updated"
+              ? startedEvt1.providerTurn.id
+              : ("" as never),
+        });
+        const outcome1 = yield* Deferred.await(harness1.outcomeRecorded);
+        assert.equal(outcome1.status, "interrupted");
+        assert.isFalse(outcome1.handedOff);
+        assert.isFalse((yield* harness1.mcpSessions.callEcoHandoff(harness1.threadId, "x")).ok);
+
+        // Part 2: interrupt after handoff (during Prompt #2 on builder)
+        const prompt2Started = yield* Deferred.make<void>();
+        const prompt2Cancel = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+        const harness2 = yield* makeEcoHarness({
+          onPrompt: ({ promptIndex, threadId, mcpSessions }) =>
+            promptIndex === 1
+              ? mcpSessions
+                  .callEcoHandoff(threadId, "## Goal\nDo work")
+                  .pipe(Effect.as({ stopReason: "end_turn" as const }))
+              : Deferred.succeed(prompt2Started, undefined).pipe(
+                  Effect.andThen(Deferred.await(prompt2Cancel)),
+                ),
+          onCancel: () =>
+            Deferred.succeed(prompt2Cancel, { stopReason: "cancelled" }).pipe(Effect.asVoid),
+        });
+        const session2 = yield* harness2.adapter.openSession({
+          threadId: harness2.threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-eco-int2"),
+          modelSelection: harness2.planner,
+          runtimePolicy: ecoPolicy,
+          personal: {
+            personalBot: true,
+            personalTaskChat: true,
+            ecoForTurn: () =>
+              Effect.succeed({
+                planner: harness2.planner,
+                builder: harness2.builder,
+                record: harness2.recordOutcome,
+              }),
+          },
+        });
+        const turnStarted2 = yield* Deferred.make<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session2.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+              ? Deferred.succeed(turnStarted2, event).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        const thread2 = yield* session2.ensureThread({
+          threadId: harness2.threadId,
+          modelSelection: harness2.planner,
+          runtimePolicy: ecoPolicy,
+        });
+        yield* session2.startTurn(
+          makeEcoTurnInput({
+            threadId: harness2.threadId,
+            providerThread: thread2,
+            instanceId: harness2.instanceId,
+            runtimePolicy: ecoPolicy,
+            modelSelection: harness2.planner,
+            now: yield* DateTime.now,
+            messageId: MessageId.make("personal-task-eco-int2"),
+            text: "Build feature",
+          }),
+        );
+        const startedEvt2 = yield* Deferred.await(turnStarted2);
+        yield* Deferred.await(prompt2Started);
+        assert.equal(harness2.getCurrentModel(), "gemini-4-hydrogen");
+        yield* session2.interruptTurn({
+          providerThread: thread2,
+          providerTurnId:
+            startedEvt2.type === "provider_turn.updated"
+              ? startedEvt2.providerTurn.id
+              : ("" as never),
+        });
+        const outcome2 = yield* Deferred.await(harness2.outcomeRecorded);
+        assert.equal(outcome2.status, "interrupted");
+        assert.isTrue(outcome2.handedOff);
+        assert.equal(harness2.getCurrentModel(), "gemini-4-neon");
+        assert.isFalse((yield* harness2.mcpSessions.callEcoHandoff(harness2.threadId, "x")).ok);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect(
+    "skips Eco with eco_skipped when builder is unfit, and leaves non-Eco chat turns unaffected",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeEcoHarness({
+          onPrompt: () => Effect.succeed({ stopReason: "end_turn" }),
+        });
+        let turnKind: "chat" | "unfit" = "chat";
+        const session = yield* harness.adapter.openSession({
+          threadId: harness.threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-eco"),
+          modelSelection: harness.planner,
+          runtimePolicy: ecoPolicy,
+          personal: {
+            personalBot: true,
+            personalTaskChat: false,
+            ecoForTurn: () =>
+              turnKind === "chat"
+                ? Effect.undefined
+                : Effect.succeed({
+                    planner: harness.planner,
+                    builder: harness.planner,
+                    record: harness.recordOutcome,
+                  }),
+          },
+        });
+        const terminals = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* session.ensureThread({
+          threadId: harness.threadId,
+          modelSelection: harness.planner,
+          runtimePolicy: ecoPolicy,
+        });
+
+        // Turn 1: non-Eco chat turn -> no runtime restart, no t3-eco header, no <eco_mode>, no outcome.
+        yield* session.startTurn(
+          makeEcoTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            instanceId: harness.instanceId,
+            runtimePolicy: ecoPolicy,
+            modelSelection: harness.planner,
+            now: yield* DateTime.now,
+            messageId: MessageId.make("msg-chat-1"),
+            text: "Hello chat",
+          }),
+        );
+        yield* Queue.take(terminals);
+        assert.equal(harness.runtimeHttpHeaders.length, 1);
+        assert.notInclude(harness.promptsSeen[0]?.text ?? "", "<eco_mode>");
+        assert.equal(harness.outcomes.length, 0);
+
+        // Turn 2: unfit builder (same model) -> skips Eco without restarting runtime and records eco_skipped.
+        turnKind = "unfit";
+        yield* session.startTurn(
+          makeEcoTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            instanceId: harness.instanceId,
+            runtimePolicy: ecoPolicy,
+            modelSelection: harness.planner,
+            now: yield* DateTime.now,
+            messageId: MessageId.make("personal-task-unfit"),
+            text: "Unfit builder task",
+            runId: RunId.make("run-unfit"),
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* Queue.take(terminals);
+        const outcome = yield* Deferred.await(harness.outcomeRecorded);
+        assert.equal(harness.runtimeHttpHeaders.length, 1);
+        assert.notInclude(harness.promptsSeen[1]?.text ?? "", "<eco_mode>");
+        assert.equal(outcome.ecoSkipped, "builder_same_model");
+        assert.isFalse(outcome.handedOff);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect(
+    "blocks runtime restart and skips Eco with background_work when background work is active",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeEcoHarness({
+          onPrompt: () => Effect.succeed({ stopReason: "end_turn" }),
+        });
+        yield* harness.mcpSessions.set({
+          environmentId: EnvironmentId.make("env-eco"),
+          threadId: harness.threadId,
+          providerSessionId: "provider-session-antigravity-eco",
+          providerInstanceId: harness.instanceId,
+          endpoint: "http://127.0.0.1:4321/mcp",
+          authorizationHeader: "Bearer test-token",
+          browserToolsAvailable: false,
+          hasPendingWake: Effect.succeed(true),
+        });
+        const session = yield* harness.adapter.openSession({
+          threadId: harness.threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-eco"),
+          modelSelection: harness.planner,
+          runtimePolicy: ecoPolicy,
+          personal: {
+            personalBot: true,
+            personalTaskChat: true,
+            ecoForTurn: () =>
+              Effect.succeed({
+                planner: harness.planner,
+                builder: harness.builder,
+                record: harness.recordOutcome,
+              }),
+          },
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId: harness.threadId,
+          modelSelection: harness.planner,
+          runtimePolicy: ecoPolicy,
+        });
+        yield* session.startTurn(
+          makeEcoTurnInput({
+            threadId: harness.threadId,
+            providerThread,
+            instanceId: harness.instanceId,
+            runtimePolicy: ecoPolicy,
+            modelSelection: harness.planner,
+            now: yield* DateTime.now,
+            messageId: MessageId.make("personal-task-eco-bg"),
+            text: "Task with background work",
+          }),
+        );
+        const outcome = yield* Deferred.await(harness.outcomeRecorded);
+        // Runtime was NOT restarted (still 1 runtime, no t3-eco header).
+        assert.equal(harness.runtimeHttpHeaders.length, 1);
+        assert.isFalse(
+          harness.runtimeHttpHeaders[0]?.some((h) => h.name === "t3-eco" && h.value === "1"),
+        );
+        assert.notInclude(harness.promptsSeen[0]?.text ?? "", "<eco_mode>");
+        assert.equal(outcome.ecoSkipped, "background_work");
+        assert.isFalse(outcome.handedOff);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

@@ -39,6 +39,10 @@
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
     },
+    "./server/ecoGuard": {
+      "types": "./src/server/ecoGuard.ts",
+      "import": "./src/server/ecoGuard.ts"
+    },
     "./server/errors": {
       "types": "./src/server/errors.ts",
       "import": "./src/server/errors.ts"

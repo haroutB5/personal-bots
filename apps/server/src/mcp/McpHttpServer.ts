@@ -47,7 +47,7 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
-import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
+import { MCP_ECO_HEADER, MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -1485,6 +1485,9 @@ const layerDeferredListing = McpServer.visibility(
         yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
       );
       const personalBot = scope?.personalBot;
+      if (target === McpToolExposure.ECO_HANDOFF_TOOL_NAME) {
+        return personalBot !== undefined && headers[MCP_ECO_HEADER] === "1";
+      }
       if (
         personalBot !== undefined &&
         !isToolListedForPersonalBot(target, personalBot, {

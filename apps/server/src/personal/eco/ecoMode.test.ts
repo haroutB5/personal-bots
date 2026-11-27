@@ -1,4 +1,5 @@
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import { ecoAcpPermissionDenied } from "@t3tools/provider-core/server/ecoGuard";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -115,6 +116,50 @@ describe("ecoTurnModels", () => {
 describe("ecoBuilderProblem (settings validation)", () => {
   it("accepts Sonnet with an effort under Opus", () => {
     expect(ecoBuilderProblem(opus, sonnet)).toBe(undefined);
+  });
+  it("accepts Antigravity builders on the same instance with a different model without Claude live-switch checks", () => {
+    const ag = ProviderInstanceId.make("antigravity");
+    const neon: ModelSelection = {
+      instanceId: ag,
+      model: "gemini-4-neon",
+      options: [{ id: "effort", value: "high" }],
+    };
+    const hydrogen: ModelSelection = {
+      instanceId: ag,
+      model: "gemini-4-hydrogen",
+      options: [{ id: "effort", value: "medium" }],
+    };
+    expect(ecoBuilderProblem(neon, hydrogen, undefined, "antigravity")).toBe(undefined);
+    expect(ecoBuilderProblem(neon, neon, undefined, "antigravity")).toMatch(/different model/);
+    expect(ecoBuilderProblem(neon, sonnet, undefined, "antigravity")).toMatch(/own provider/);
+  });
+  it("blocks edits, file-mutation titles, and write shell commands in ecoAcpPermissionDenied", () => {
+    expect(ecoAcpPermissionDenied({ toolCall: { kind: "edit", title: "Edit file" } })).toBe(true);
+    expect(ecoAcpPermissionDenied({ toolCall: { kind: "delete", title: "Delete file" } })).toBe(
+      true,
+    );
+    expect(ecoAcpPermissionDenied({ toolCall: { kind: "move", title: "Move file" } })).toBe(true);
+    expect(
+      ecoAcpPermissionDenied({ toolCall: { kind: "other", title: "Run replace_file_content" } }),
+    ).toBe(true);
+    expect(
+      ecoAcpPermissionDenied({
+        toolCall: {
+          kind: "execute",
+          title: "Run command",
+          rawInput: { CommandLine: "rm -rf dist" },
+        },
+      }),
+    ).toBe(true);
+    expect(
+      ecoAcpPermissionDenied({
+        toolCall: { kind: "execute", title: "Run command", rawInput: { command: "git status" } },
+      }),
+    ).toBe(false);
+    expect(ecoAcpPermissionDenied({ toolCall: { kind: "read", title: "read_file" } })).toBe(false);
+    expect(
+      ecoAcpPermissionDenied({ toolCall: { kind: "other", title: "mcp__t3-code__eco_handoff" } }),
+    ).toBe(false);
   });
   it("rejects another provider instance", () => {
     expect(

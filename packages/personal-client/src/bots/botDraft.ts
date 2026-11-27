@@ -265,7 +265,7 @@ export function newBotDraft(selectable: ReadonlyArray<ServerProvider>): BotDraft
     contextWindow: "",
     agentMode: "",
     ...fallbackFields(fallbackDraftFromBot(null)),
-    ...ecoFields(ecoDraftFromBot(null)),
+    ...ecoFields(ecoDraftFromBot(null, first)),
     ...scheduleFields(scheduleDraftFromBot(null)),
     team: DEFAULT_PERSONAL_BOT_TEAM,
     lead: false,
@@ -289,23 +289,43 @@ export function withStartingProvider(
   if (!isNew || draft.instanceId !== "") return draft;
   const first = firstSelectableProvider(selectable);
   if (first === undefined) return draft;
-  return { ...draft, instanceId: first.instanceId, model: defaultModelFor(first) };
+  const defaultEco = ecoDraftFromBot(null, first);
+  return {
+    ...draft,
+    instanceId: first.instanceId,
+    model: defaultModelFor(first),
+    ecoModel: defaultEco.model,
+    ecoEffort: defaultEco.effort,
+    ecoContextWindow: defaultEco.contextWindow,
+  };
 }
 
 /**
- * The draft change for picking another provider: its default model, and Eco
- * switched off when the provider has no Eco (Claude Code only), so a hidden,
- * still-enabled Eco setting is not saved with a provider that cannot run it.
+ * The draft change for picking another provider: its default model, its default
+ * Eco builder when the provider offers Eco, or Eco switched off when it does
+ * not, so a hidden still-enabled Eco setting is never saved with a provider
+ * that cannot run it.
  */
 export function providerChangePatch(
   instanceId: string,
   providers: ReadonlyArray<ServerProvider>,
-): Pick<BotDraft, "instanceId" | "model"> & Partial<Pick<BotDraft, "ecoEnabled">> {
+): Pick<BotDraft, "instanceId" | "model"> &
+  Partial<Pick<BotDraft, "ecoEnabled" | "ecoModel" | "ecoEffort" | "ecoContextWindow">> {
   const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  if (!botOffersEco(provider)) {
+    return {
+      instanceId,
+      model: defaultModelFor(provider),
+      ecoEnabled: false,
+    };
+  }
+  const defaultEco = ecoDraftFromBot(null, provider);
   return {
     instanceId,
     model: defaultModelFor(provider),
-    ...(botOffersEco(provider) ? {} : { ecoEnabled: false }),
+    ecoModel: defaultEco.model,
+    ecoEffort: defaultEco.effort,
+    ecoContextWindow: defaultEco.contextWindow,
   };
 }
 
@@ -443,14 +463,19 @@ export function planBotSave(options: {
     fallbackDraftOf(draft),
     providers,
   );
-  // Only what differs from the saved (or default) Eco setting. A provider without
-  // Eco keeps the saved builder and only switches Eco off.
+  // Only what differs from the saved (or default) Eco setting. A provider known
+  // not to offer Eco keeps the saved builder and only switches Eco off; an
+  // unknown provider (still loading) sends nothing so Eco is not silently lost.
   const savedEco = saved === null ? null : botEco(saved);
-  const eco = botOffersEco(providers.find((provider) => provider.instanceId === draft.instanceId))
-    ? ecoInput(savedEco, ecoDraftOf(draft), draft.instanceId, providers)
-    : savedEco?.enabled === true
-      ? { enabled: false }
-      : undefined;
+  const selectedProvider = providers.find((provider) => provider.instanceId === draft.instanceId);
+  const eco =
+    selectedProvider === undefined
+      ? undefined
+      : botOffersEco(selectedProvider)
+        ? ecoInput(savedEco, ecoDraftOf(draft), draft.instanceId, providers)
+        : savedEco?.enabled === true
+          ? { enabled: false }
+          : undefined;
   // Create sends the whole schedule when it is on; edit only what changed.
   const schedule = scheduleInput(
     saved?.schedule ?? null,

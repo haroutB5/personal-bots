@@ -667,18 +667,26 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const currentEco = current === undefined ? undefined : botEco(current);
       const enabled = ecoInput?.enabled ?? currentEco?.enabled ?? false;
+      const providerList = yield* providers.getProviders;
+      const driverOf = (instanceId: string) =>
+        providerList.find((candidate) => candidate.instanceId === instanceId)?.driver;
+      const plannerDriver = driverOf(planner.instanceId);
+      const currentDriver =
+        current === undefined ? undefined : driverOf(current.modelSelection.instanceId);
       const currentIsDefault =
         current === undefined ||
         currentEco === undefined ||
         JSON.stringify(currentEco.modelSelection) ===
-          JSON.stringify(defaultEcoBuilderModel(current.modelSelection));
+          JSON.stringify(defaultEcoBuilderModel(current.modelSelection, currentDriver));
       const builder =
         ecoInput?.modelSelection ??
-        (currentIsDefault ? defaultEcoBuilderModel(planner) : currentEco!.modelSelection);
+        (currentIsDefault
+          ? defaultEcoBuilderModel(planner, plannerDriver)
+          : currentEco!.modelSelection);
       // Checked when the request sets Eco; a main-model change alone never fails on it
       // (a turn whose builder no longer fits runs without Eco and records eco_skipped).
       if (enabled && ecoInput !== undefined) {
-        const problem = ecoBuilderProblem(planner, builder);
+        const problem = ecoBuilderProblem(planner, builder, undefined, plannerDriver);
         if (problem !== undefined) return yield* new PersonalBotsError({ message: problem });
       }
       return {

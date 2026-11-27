@@ -14,6 +14,7 @@ import {
   botEco,
   botFallback,
   driverCarriesBotInstructions,
+  PERSONAL_BOT_DEFAULT_ANTIGRAVITY_ECO_MODEL,
   PERSONAL_BOT_DEFAULT_ECO_MODEL,
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   safeDefaultBotModelSlug,
@@ -323,30 +324,50 @@ export interface EcoDraft extends ModelDraft {
   readonly enabled: boolean;
 }
 
-/** Eco mode is Claude Code only: the builder takes over inside the running Claude process. */
+/** Eco mode is offered for Claude Code and Antigravity bots. */
 export function botOffersEco(provider: ServerProvider | undefined): boolean {
-  return provider?.driver === "claudeAgent";
+  return provider?.driver === "claudeAgent" || provider?.driver === "antigravity";
 }
 
-/** The Eco setting a bot has now (off, with Sonnet 5.5 as the builder, when never set). */
+/** The Eco setting a bot has now (off, with the provider's default builder when never set). */
 export function ecoDraftFromBot(
   bot: { readonly eco?: PersonalBotEco; readonly modelSelection: ModelSelection } | null,
+  provider?: ServerProvider,
 ): EcoDraft {
+  const defaultModel =
+    provider?.driver === "antigravity"
+      ? {
+          ...PERSONAL_BOT_DEFAULT_ANTIGRAVITY_ECO_MODEL,
+          instanceId: provider.instanceId,
+        }
+      : PERSONAL_BOT_DEFAULT_ECO_MODEL;
   const { enabled, modelSelection } =
-    bot === null ? { enabled: false, modelSelection: PERSONAL_BOT_DEFAULT_ECO_MODEL } : botEco(bot);
+    bot === null ? { enabled: false, modelSelection: defaultModel } : botEco(bot);
   return { enabled, ...modelDraftFromSelection(modelSelection) };
 }
 
 /**
- * The price tier of a Claude model family (Opus > Sonnet > Haiku), or null for
- * a family with no known place. The provider's model list carries no prices,
- * so "cheaper" is this known ordering.
+ * Known price tiers within a provider family, or null for an unknown family.
+ * The provider's model list carries no prices, so "cheaper" is this known ordering:
+ * - Claude: Opus (3) > Sonnet (2) > Haiku (1)
+ * - Gemini: Neon / Orchestrator-Neon (4) > Carbon / Argon / Pro (3) > Hydrogen (2) > Flash (1) > Flash-Lite (0)
  */
-function claudeCostTier(slug: string): number | null {
+function modelCostTier(
+  slug: string,
+): { readonly family: "claude" | "gemini"; readonly tier: number } | null {
   const name = slug.toLocaleLowerCase();
-  if (name.includes("opus")) return 3;
-  if (name.includes("sonnet")) return 2;
-  if (name.includes("haiku")) return 1;
+  if (name.includes("opus")) return { family: "claude", tier: 3 };
+  if (name.includes("sonnet")) return { family: "claude", tier: 2 };
+  if (name.includes("haiku")) return { family: "claude", tier: 1 };
+  if (name.includes("gemini")) {
+    if (name.includes("neon")) return { family: "gemini", tier: 4 };
+    if (name.includes("hydrogen")) return { family: "gemini", tier: 2 };
+    if (name.includes("flash-lite")) return { family: "gemini", tier: 0 };
+    if (name.includes("flash")) return { family: "gemini", tier: 1 };
+    if (name.includes("carbon") || name.includes("argon") || name.includes("pro")) {
+      return { family: "gemini", tier: 3 };
+    }
+  }
   return null;
 }
 
@@ -362,9 +383,14 @@ export function ecoDraftProblem(
   if (!draft.enabled) return null;
   if (draft.model === "") return "Pick the model that builds the plan.";
   if (draft.model === main.model) return "Pick a cheaper model than the bot's own.";
-  const mainTier = claudeCostTier(main.model);
-  const builderTier = claudeCostTier(draft.model);
-  if (mainTier !== null && builderTier !== null && builderTier >= mainTier) {
+  const mainTier = modelCostTier(main.model);
+  const builderTier = modelCostTier(draft.model);
+  if (
+    mainTier !== null &&
+    builderTier !== null &&
+    mainTier.family === builderTier.family &&
+    builderTier.tier >= mainTier.tier
+  ) {
     return "Pick a cheaper model than the bot's own.";
   }
   const provider = providers?.find((candidate) => candidate.instanceId === main.instanceId);
@@ -390,9 +416,10 @@ export function ecoInput(
   mainInstanceId: string,
   providers: ReadonlyArray<ServerProvider>,
 ): PersonalBotEcoInput | undefined {
+  const provider = providers.find((candidate) => candidate.instanceId === mainInstanceId);
   const baselineSelection =
     saved?.modelSelection ??
-    ecoDraftSelection(ecoDraftFromBot(null), mainInstanceId, providers, null);
+    ecoDraftSelection(ecoDraftFromBot(null, provider), mainInstanceId, providers, null);
   const selection =
     draft.model === "" || mainInstanceId === ""
       ? null

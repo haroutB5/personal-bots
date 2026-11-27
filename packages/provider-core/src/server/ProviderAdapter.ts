@@ -514,6 +514,7 @@ export interface ProviderAdapterV2EcoUsage {
 
 /** What an Eco turn did, for the personal layer to price and store. */
 export interface ProviderAdapterV2EcoOutcome {
+  readonly provider?: "claude" | "antigravity";
   readonly threadId: string;
   readonly runId: string;
   readonly status: string;

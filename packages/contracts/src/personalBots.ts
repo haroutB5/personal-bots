@@ -188,9 +188,9 @@ export const PersonalBotScheduleInput = Schema.Struct({
 export type PersonalBotScheduleInput = typeof PersonalBotScheduleInput.Type;
 
 /**
- * Eco mode (v1): the bot's own model investigates a delegated task or routine
+ * Eco mode: the bot's own model investigates a delegated task or routine
  * run without editing, and hands a plan to this cheaper builder model, which
- * implements it in the same turn. Claude only. Default: Sonnet 5.5, effort high.
+ * implements it in the same turn. Default for Claude: Sonnet 5.5, effort high.
  */
 export const PERSONAL_BOT_DEFAULT_ECO_MODEL: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -198,12 +198,37 @@ export const PERSONAL_BOT_DEFAULT_ECO_MODEL: ModelSelection = {
   options: [{ id: "effort", value: "high" }],
 };
 
+/** Default Eco builder for Antigravity / Gemini bots: Gemini 4 Hydrogen, effort high. */
+export const PERSONAL_BOT_DEFAULT_ANTIGRAVITY_ECO_MODEL: ModelSelection = {
+  instanceId: ProviderInstanceId.make("antigravity"),
+  model: "gemini-4-hydrogen",
+  options: [{ id: "effort", value: "high" }],
+};
+
+const isAntigravityEcoPlanner = (planner: ModelSelection, driver?: string): boolean => {
+  if (driver !== undefined) return driver === "antigravity";
+  return (
+    planner.instanceId === "antigravity" || planner.model.toLocaleLowerCase().startsWith("gemini")
+  );
+};
+
 /**
- * The builder a bot gets when the owner picked none: Sonnet 5.5 on the bot's
- * own provider instance, carrying the bot's thinking switch so the handoff can
- * switch the running process without a restart.
+ * The builder a bot gets when the owner picked none: Gemini 4 Hydrogen High
+ * for Antigravity/Gemini planners, or Sonnet 5.5 High for Claude planners
+ * (carrying Claude's thinking switch so the handoff can switch live without a
+ * restart), always on the bot's own provider instance.
  */
-export const defaultEcoBuilderModel = (planner: ModelSelection): ModelSelection => {
+export const defaultEcoBuilderModel = (
+  planner: ModelSelection,
+  driver?: string,
+): ModelSelection => {
+  if (isAntigravityEcoPlanner(planner, driver)) {
+    return {
+      instanceId: planner.instanceId,
+      model: PERSONAL_BOT_DEFAULT_ANTIGRAVITY_ECO_MODEL.model,
+      options: [...(PERSONAL_BOT_DEFAULT_ANTIGRAVITY_ECO_MODEL.options ?? [])],
+    };
+  }
   const thinking = planner.options?.find((option) => option.id === "thinking");
   return {
     instanceId: planner.instanceId,

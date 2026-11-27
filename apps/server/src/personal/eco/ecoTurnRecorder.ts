@@ -32,12 +32,13 @@ export const priceEcoSide = (
   priceUsage: Pricer | undefined,
   side: ProviderAdapterV2EcoUsage,
   timestampMs: number,
+  provider: "claude" | "antigravity" = "claude",
 ): Effect.Effect<number | null> => {
   if (priceUsage === undefined || side.model.length === 0) return Effect.succeed(null);
   const used = side.inputTokens + side.outputTokens + side.cacheReadTokens + side.cacheWriteTokens;
   if (used === 0) return Effect.succeed(0);
   return priceUsage({
-    provider: "claude",
+    provider,
     timestampMs,
     model: side.model,
     totals: {
@@ -58,6 +59,7 @@ export const priceEcoCall = (
   priceUsage: Pricer | undefined,
   call: ProviderAdapterV2EcoCallUsage,
   timestampMs: number,
+  provider: "claude" | "antigravity" = "claude",
 ): Effect.Effect<number | null> => {
   if (priceUsage === undefined || call.model.length === 0) return Effect.succeed(null);
   const written = call.cacheWrite5mTokens + call.cacheWrite1hTokens;
@@ -65,7 +67,7 @@ export const priceEcoCall = (
     return Effect.succeed(0);
   }
   return priceUsage({
-    provider: "claude",
+    provider,
     timestampMs,
     model: call.model,
     totals: {
@@ -101,10 +103,11 @@ const priceSide = (
     readonly costUsd: number | null;
   }>,
   timestampMs: number,
+  provider: "claude" | "antigravity" = "claude",
 ): Effect.Effect<PricedSide> => {
   const own = calls.filter((entry) => ledgerKeyMatches(entry.call.model, side.model));
   if (own.length === 0) {
-    return priceEcoSide(priceUsage, side, timestampMs).pipe(
+    return priceEcoSide(priceUsage, side, timestampMs, provider).pipe(
       Effect.map((costUsd) => ({
         inputTokens: side.inputTokens,
         outputTokens: side.outputTokens,
@@ -145,11 +148,14 @@ export const makeEcoTurnRecorder =
       }
       const sql = deps.sql.value;
       const at = outcome.completedAt.getTime();
+      const provider = outcome.provider ?? "claude";
       const pricedCalls = yield* Effect.forEach(outcome.callUsage ?? [], (call) =>
-        priceEcoCall(deps.priceUsage, call, at).pipe(Effect.map((costUsd) => ({ call, costUsd }))),
+        priceEcoCall(deps.priceUsage, call, at, provider).pipe(
+          Effect.map((costUsd) => ({ call, costUsd })),
+        ),
       );
-      const planner = yield* priceSide(deps.priceUsage, outcome.planner, pricedCalls, at);
-      const builder = yield* priceSide(deps.priceUsage, outcome.builder, pricedCalls, at);
+      const planner = yield* priceSide(deps.priceUsage, outcome.planner, pricedCalls, at, provider);
+      const builder = yield* priceSide(deps.priceUsage, outcome.builder, pricedCalls, at, provider);
       const sdkCost = {
         planner: outcome.planner.sdkCostUsd,
         builder: outcome.builder.sdkCostUsd,

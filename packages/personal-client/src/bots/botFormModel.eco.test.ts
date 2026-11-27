@@ -28,20 +28,38 @@ const claude = {
   driver: ProviderDriverKind.make("claudeAgent"),
   models: [model("claude-opus-5-5"), model("claude-sonnet-5-5"), model("claude-haiku-5-5")],
 } as unknown as ServerProvider;
+const antigravity = {
+  instanceId: ProviderInstanceId.make("antigravity"),
+  driver: ProviderDriverKind.make("antigravity"),
+  models: [
+    model("gemini-4-neon"),
+    model("gemini-pro-orchestrator-neon"),
+    model("gemini-4-carbon"),
+    model("gemini-4-hydrogen"),
+    model("gemini-2.5-flash"),
+    model("gemini-2.5-flash-lite"),
+  ],
+} as unknown as ServerProvider;
 const opus: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5-5",
   options: [{ id: "effort", value: "high" }],
 };
+const neon: ModelSelection = {
+  instanceId: ProviderInstanceId.make("antigravity"),
+  model: "gemini-4-neon",
+  options: [{ id: "effort", value: "high" }],
+};
 
 describe("Eco in the bot form", () => {
-  it("is offered for Claude Code bots only", () => {
+  it("is offered for Claude Code and Antigravity bots", () => {
     expect(botOffersEco(claude)).toBe(true);
+    expect(botOffersEco(antigravity)).toBe(true);
     expect(botOffersEco({ ...claude, driver: ProviderDriverKind.make("codex") })).toBe(false);
     expect(botOffersEco(undefined)).toBe(false);
   });
 
-  it("starts off with Sonnet 5.5 High as the builder", () => {
+  it("starts off with Sonnet 5.5 High for Claude and Gemini 4 Hydrogen High for Antigravity", () => {
     expect(ecoDraftFromBot(null)).toMatchObject({
       enabled: false,
       model: "claude-sonnet-5-5",
@@ -52,11 +70,35 @@ describe("Eco in the bot form", () => {
       instanceId: "claudeAgent",
       model: "claude-sonnet-5-5",
     });
+    expect(ecoDraftFromBot(null, antigravity)).toMatchObject({
+      enabled: false,
+      instanceId: "antigravity",
+      model: "gemini-4-hydrogen",
+      effort: "high",
+    });
+    expect(ecoDraftFromBot({ modelSelection: neon })).toMatchObject({
+      enabled: false,
+      instanceId: "antigravity",
+      model: "gemini-4-hydrogen",
+      effort: "high",
+    });
   });
 
-  it("sends only the switch when the default builder is kept", () => {
+  it("sends only the switch when the default builder is kept (Claude and Antigravity)", () => {
     const draft = { ...ecoDraftFromBot(null), enabled: true };
     expect(ecoInput(null, draft, "claudeAgent", [claude])).toEqual({ enabled: true });
+    const agDraft = { ...ecoDraftFromBot(null, antigravity), enabled: true };
+    expect(ecoInput(null, agDraft, "antigravity", [antigravity])).toEqual({ enabled: true });
+    expect(
+      ecoInput(null, { ...agDraft, model: "gemini-2.5-flash" }, "antigravity", [antigravity]),
+    ).toEqual({
+      enabled: true,
+      modelSelection: {
+        instanceId: "antigravity",
+        model: "gemini-2.5-flash",
+        options: [{ id: "effort", value: "high" }],
+      },
+    });
     const saved = ecoDraftFromBot({ modelSelection: opus });
     expect(
       ecoInput(
@@ -96,6 +138,28 @@ describe("Eco in the bot form", () => {
     ).toBeNull();
     // A family with no known price order is left to the owner.
     expect(ecoDraftProblem(main("claude-fable-5-2"), draft)).toBeNull();
+
+    // Gemini cost tiers: neon (4) > carbon/argon/pro (3) > hydrogen (2) > flash (1) > flash-lite (0).
+    const agMain = (slug: string) => ({ instanceId: "antigravity", model: slug });
+    const agDraft = { ...ecoDraftFromBot(null, antigravity), enabled: true };
+    expect(ecoDraftProblem(agMain("gemini-4-neon"), agDraft)).toBeNull();
+    expect(ecoDraftProblem(agMain("gemini-pro-orchestrator-neon"), agDraft)).toBeNull();
+    expect(ecoDraftProblem(agMain("gemini-4-carbon"), agDraft)).toBeNull();
+    expect(
+      ecoDraftProblem(agMain("gemini-4-hydrogen"), { ...agDraft, model: "gemini-2.5-flash" }),
+    ).toBeNull();
+    expect(
+      ecoDraftProblem(agMain("gemini-2.5-flash"), { ...agDraft, model: "gemini-2.5-flash-lite" }),
+    ).toBeNull();
+    expect(
+      ecoDraftProblem(agMain("gemini-4-hydrogen"), { ...agDraft, model: "gemini-4-neon" }),
+    ).toMatch(/cheaper model/);
+    expect(
+      ecoDraftProblem(agMain("gemini-4-carbon"), { ...agDraft, model: "gemini-4-argon" }),
+    ).toMatch(/cheaper model/);
+    expect(
+      ecoDraftProblem(agMain("gemini-2.5-flash-lite"), { ...agDraft, model: "gemini-2.5-flash" }),
+    ).toMatch(/cheaper model/);
   });
 
   it("asks for the builder's effort when the model offers one", () => {

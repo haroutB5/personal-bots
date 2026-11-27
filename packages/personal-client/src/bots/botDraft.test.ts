@@ -54,6 +54,10 @@ const provider = (
   }) as unknown as ServerProvider;
 
 const claude = provider("claudeAgent", [model("claude-sonnet-5-5", true)]);
+const antigravity = provider("antigravity", [
+  model("gemini-4-neon", true),
+  model("gemini-4-hydrogen"),
+]);
 const codex = provider("codex", [model("gpt-6", true)]);
 
 const savedBot = {
@@ -283,16 +287,34 @@ describe("delete confirm", () => {
 });
 
 describe("changing the provider", () => {
-  it("switches Eco off when the new provider has no Eco, and sends that on save", () => {
-    expect(providerChangePatch("codex", [claude, codex])).toEqual({
+  it("switches Eco off when the new provider has no Eco, picks default builder when it does, and sends that on save", () => {
+    expect(providerChangePatch("codex", [claude, antigravity, codex])).toEqual({
       instanceId: "codex",
       model: "gpt-6",
       ecoEnabled: false,
     });
-    expect(providerChangePatch("claudeAgent", [claude, codex])).toEqual({
+    expect(providerChangePatch("claudeAgent", [claude, antigravity, codex])).toEqual({
       instanceId: "claudeAgent",
       model: "claude-sonnet-5-5",
+      ecoModel: "claude-sonnet-5-5",
+      ecoEffort: "high",
+      ecoContextWindow: "",
     });
+    expect(providerChangePatch("antigravity", [claude, antigravity, codex])).toEqual({
+      instanceId: "antigravity",
+      model: "gemini-4-neon",
+      ecoModel: "gemini-4-hydrogen",
+      ecoEffort: "high",
+      ecoContextWindow: "",
+    });
+
+    // Starting on Antigravity (directly or via cold open) defaults Eco builder to Gemini 4 Hydrogen.
+    const agNew = newBotDraft([antigravity]);
+    expect(agNew.ecoModel).toBe("gemini-4-hydrogen");
+    expect(agNew.ecoEffort).toBe("high");
+    const agArrived = withStartingProvider(newBotDraft([]), true, [antigravity]);
+    expect(agArrived.ecoModel).toBe("gemini-4-hydrogen");
+    expect(agArrived.ecoEffort).toBe("high");
 
     const ecoBot = {
       ...savedBot,
@@ -317,5 +339,27 @@ describe("changing the provider", () => {
       assessment,
     });
     expect(plan.kind === "update" ? plan.update.eco : undefined).toEqual({ enabled: false });
+  });
+
+  it("does not silently turn Eco off when saving an Eco-on bot before providers have loaded", () => {
+    const ecoBot = {
+      ...savedBot,
+      modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+      eco: {
+        enabled: true,
+        modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+      },
+    } as unknown as PersonalBot;
+    const draft = draftFromBot(ecoBot, 1_000);
+    const assessment = assessBotDraft(draft, [], ecoBot, false);
+    const plan = planBotSave({
+      botId,
+      saved: ecoBot,
+      draft,
+      baselineNotifications: "on",
+      providers: [],
+      assessment,
+    });
+    expect(plan.kind === "update" ? plan.update.eco : "wrong").toBeUndefined();
   });
 });

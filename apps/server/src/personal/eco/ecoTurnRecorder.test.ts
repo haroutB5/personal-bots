@@ -98,6 +98,45 @@ it.effect("stores an Eco turn's planner and builder usage and priced cost (migra
   }).pipe(Effect.provide(personalTestDatabase)),
 );
 
+it.effect("passes outcome.provider to priceUsage (defaulting to claude)", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const seenProviders: Array<string> = [];
+    const spyingPricer = (record: {
+      readonly provider: string;
+      readonly model: string;
+      readonly totals: Record<string, number>;
+    }) => {
+      seenProviders.push(record.provider);
+      return flatPricer(record);
+    };
+    const record = makeEcoTurnRecorder({
+      sql: Option.some(sql),
+      priceUsage: spyingPricer as never,
+      newId: () => "eco-ag-1",
+    });
+    yield* record("bot-ag", {
+      provider: "antigravity",
+      threadId: "thread-ag",
+      runId: "run-ag",
+      status: "completed",
+      handedOff: true,
+      plan: "## Goal\nShip it",
+      startedAt: new Date(0),
+      handedOffAt: new Date(1_000),
+      completedAt: new Date(2_000),
+      planner: side("gemini-4-neon", 200),
+      builder: side("gemini-4-hydrogen", 800),
+      other: [],
+      calls: [
+        { id: "prompt-1", model: "gemini-4-neon", side: "planner" },
+        { id: "prompt-2", model: "gemini-4-hydrogen", side: "builder" },
+      ],
+    });
+    expect(seenProviders).toEqual(["antigravity", "antigravity"]);
+  }).pipe(Effect.provide(personalTestDatabase)),
+);
+
 it.effect("prices an unpriced model as null and an unused side as zero", () =>
   Effect.gen(function* () {
     expect(yield* priceEcoSide(flatPricer as never, side("unknown-model", 5), 0)).toBe(null);
