@@ -6984,6 +6984,40 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
+    it.effect(
+      "runs the next Eco turn as eco_skipped while a background agent from the last one is alive",
+      () =>
+        Effect.gen(function* () {
+          const { harness, outcomes } = yield* ecoHarness(true);
+          const now = yield* DateTime.now;
+          const settle = Effect.gen(function* () {
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          });
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const ecoOptions = harness.getOpenedOptions();
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* settle;
+          yield* harness.until(() => outcomes.length === 1);
+          assert.isUndefined(outcomes[0]!.ecoSkipped);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          yield* harness.runtime.startTurn(ecoTurn(harness, 2, now));
+          assert.strictEqual(harness.getOpenedOptions(), ecoOptions);
+          assert.notInclude(JSON.stringify(harness.offeredMessages.at(-1)), "<eco_mode>");
+          // The earlier turn's background agent can still edit.
+          assert.deepEqual(yield* preToolUse(ecoOptions, "Edit"), {});
+          const handoff = ecoHandoffHandlerOf(ecoServerOf(ecoOptions));
+          if (handoff === undefined) throw new Error("no eco_handoff handler");
+          assert.isTrue((yield* Effect.promise(() => handoff("## Goal\nNo"))).isError);
+          yield* settle;
+          yield* harness.until(() => outcomes.length === 2);
+          assert.equal(outcomes[1]!.ecoSkipped, "background_work");
+          assert.isFalse(outcomes[1]!.handedOff);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
     it.effect("leaves an ordinary turn alone: no eco_handoff, no guard, no instruction", () =>
       Effect.gen(function* () {
         const { harness, outcomes } = yield* ecoHarness(false);

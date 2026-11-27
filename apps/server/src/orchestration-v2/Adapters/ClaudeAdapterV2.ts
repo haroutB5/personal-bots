@@ -12989,15 +12989,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               canApplyClaudeSelectionLive(ecoPlanner, ecoBuilder)
                 ? { turn: ecoTurn, planner: ecoPlanner, builder: ecoBuilder }
                 : undefined;
-            // An Eco turn needs a process with eco_handoff. Background work on this
-            // thread's ordinary process blocks replacing it, so the turn runs as an
-            // ordinary one and records why (eco_skipped) instead of failing.
+            // Live background work runs an Eco turn as an ordinary one (eco_skipped): it
+            // blocks replacing an ordinary process, and on an Eco process the guard (which
+            // reads the turn running when a call fires) would block an earlier turn's agent.
             let ecoBlockedByBackgroundWork = false;
             if (ecoModels !== undefined) {
               const live = yield* Ref.get(queryContext);
               if (
                 live !== null &&
-                !live.ecoCapable &&
                 !live.stopping &&
                 (live.nativeThreadId === nativeThreadId ||
                   live.lastTurn?.input.threadId === turnInput.threadId)
