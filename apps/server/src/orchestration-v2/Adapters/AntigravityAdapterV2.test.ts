@@ -2424,7 +2424,7 @@ describe("AntigravityAdapterV2 Eco mode", () => {
               "type" in server && server.type === "http" && server.name === "t3-code",
           );
           runtimeHttpHeaders.push(t3Http?.headers ?? []);
-          const t3Stdio = input.mcpServers.find(
+          const t3Stdio = input.mcpServers?.find(
             (server): server is Extract<EffectAcpSchema.McpServer, { readonly command: string }> =>
               "command" in server && server.name === "t3-code",
           );
