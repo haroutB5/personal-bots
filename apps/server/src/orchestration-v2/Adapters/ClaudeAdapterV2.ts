@@ -12293,6 +12293,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           live.selection = selection;
         });
 
+        // Eco mode: put the planner back. A timed-out switch is not cancelled (the
+        // SDK's setModel cannot be), so the builder can still land after the timeout
+        // while live.selection says planner; clearing the identity first makes
+        // applySelectionLive always send setModel(planner), queued after the builder's.
+        const revertEcoToPlanner = (
+          live: ClaudeLiveQueryContext,
+          planner: CompiledClaudeModelSelection,
+        ) =>
+          Effect.suspend(() => {
+            live.selection = { ...live.selection, queryIdentity: "" };
+            return applySelectionLive(live, planner);
+          });
+
         // Eco mode: the handoff lands the builder on the running process before
         // eco_handoff returns. A failed or late switch puts the planner back; if
         // even that fails, the cleared identity makes the next turn reapply its own.
@@ -12300,7 +12313,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           applySelectionLive(active.live, active.builder).pipe(
             Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS)),
             Effect.catchCause((cause) =>
-              applySelectionLive(active.live, active.planner).pipe(
+              revertEcoToPlanner(active.live, active.planner).pipe(
                 Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS)),
                 Effect.catchCause(() =>
                   Effect.sync(() => {
@@ -12403,7 +12416,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             live.query === active.live.query &&
             !live.stopping
           ) {
-            yield* applySelectionLive(live, active.planner).pipe(
+            yield* revertEcoToPlanner(live, active.planner).pipe(
               Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS)),
               Effect.catchCause((cause) =>
                 Effect.sync(() => {

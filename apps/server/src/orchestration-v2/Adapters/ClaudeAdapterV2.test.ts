@@ -3386,6 +3386,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly setPermissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setPermissionMode"];
     readonly applyFlagSettings?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"];
+    readonly setModel?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setModel"];
     readonly stopTask?: (
       taskId: string,
     ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
@@ -3547,7 +3548,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setModel: (model) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push({ model });
-                  }),
+                  }).pipe(Effect.andThen(() => options?.setModel?.(model) ?? Effect.void)),
                 applyFlagSettings: (settings) =>
                   Effect.sync(() => {
                     liveSelectionChanges.push(settings);
@@ -6562,7 +6563,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       model: "claude-sonnet-5-5",
       options: [{ id: "effort", value: "high" }],
     } satisfies ModelSelection;
-    const ecoHarness = (eco: boolean | (() => boolean), freshQueueOnReopen = false) => {
+    const ecoHarness = (
+      eco: boolean | (() => boolean),
+      freshQueueOnReopen = false,
+      extra?: {
+        readonly planner?: ModelSelection;
+        readonly builder?: ModelSelection;
+        readonly setModel?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setModel"];
+      },
+    ) => {
       const outcomes: Array<ProviderAdapter.ProviderAdapterV2EcoOutcome> = [];
       const ecoNow = typeof eco === "function" ? eco : () => eco;
       return makeWakeHarnessWithOptions({
@@ -6573,16 +6582,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Effect.succeed(
               ecoNow()
                 ? {
-                    planner: opusSelection,
-                    builder: sonnetSelection,
+                    planner: extra?.planner ?? opusSelection,
+                    builder: extra?.builder ?? sonnetSelection,
                     record: (outcome) => Effect.sync(() => void outcomes.push(outcome)),
                   }
                 : undefined,
             ),
         },
         freshQueueOnReopen,
+        ...(extra?.setModel === undefined ? {} : { setModel: extra.setModel }),
       }).pipe(Effect.map((harness) => ({ harness, outcomes })));
     };
+    const modelsSent = (changes: ReadonlyArray<unknown>) =>
+      changes.flatMap((change) =>
+        typeof change === "object" && change !== null && "model" in change
+          ? [(change as { model: string }).model]
+          : [],
+      );
     const ecoTurn = (
       harness: Effect.Success<ReturnType<typeof ecoHarness>>["harness"],
       ordinal: number,
@@ -6847,6 +6863,82 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isTrue((yield* Effect.promise(() => handoff("## Goal\nNo"))).isError);
           yield* settle;
           assert.equal(outcomes.length, 1);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect(
+      "puts the planner back with setModel when the builder switch times out, even if it lands late",
+      () =>
+        Effect.gen(function* () {
+          const switching = yield* Deferred.make<void>();
+          const { harness, outcomes } = yield* ecoHarness(true, false, {
+            // The SDK cannot cancel setModel: the builder's request is sent, then never answers.
+            setModel: (model) =>
+              model === "claude-sonnet-5-5"
+                ? Deferred.succeed(switching, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.void,
+          });
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const opened = harness.getOpenedOptions();
+          const handoff = ecoHandoffHandlerOf(ecoServerOf(opened));
+          if (handoff === undefined) throw new Error("no eco_handoff handler");
+          const pending = yield* Effect.promise(() => handoff("## Goal\nFix it")).pipe(
+            Effect.forkChild,
+          );
+          yield* Deferred.await(switching);
+          yield* TestClock.adjust("21 seconds");
+          const result = yield* Fiber.join(pending);
+          assert.isTrue(result.isError);
+          // The planner's setModel is sent after the builder's, so it wins when both land.
+          assert.deepEqual(modelsSent(harness.liveSelectionChanges), [
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+          ]);
+          assert.deepInclude(yield* preToolUse(opened, "Edit"), {
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: ECO_EDIT_DENIED_REASON,
+            },
+          });
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.until(() => outcomes.length === 1);
+          assert.isFalse(outcomes[0]!.handedOff);
+          assert.isDefined(outcomes[0]!.handoffError);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect(
+      "sends setModel for the planner at turn end when the turn ends with the builder switch in flight",
+      () =>
+        Effect.gen(function* () {
+          const switching = yield* Deferred.make<void>();
+          const { harness, outcomes } = yield* ecoHarness(true, false, {
+            setModel: (model) =>
+              model === "claude-sonnet-5-5"
+                ? Deferred.succeed(switching, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.void,
+          });
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const handoff = ecoHandoffHandlerOf(ecoServerOf(harness.getOpenedOptions()));
+          if (handoff === undefined) throw new Error("no eco_handoff handler");
+          const pending = yield* Effect.promise(() => handoff("## Goal\nFix it")).pipe(
+            Effect.forkChild,
+          );
+          yield* Deferred.await(switching);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.until(() => outcomes.length === 1);
+          assert.deepEqual(modelsSent(harness.liveSelectionChanges), [
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+          ]);
+          yield* TestClock.adjust("21 seconds");
+          assert.isTrue((yield* Fiber.join(pending)).isError);
+          assert.equal(modelsSent(harness.liveSelectionChanges).at(-1), "claude-opus-5-5");
         }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
