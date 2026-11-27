@@ -6569,6 +6569,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       extra?: {
         readonly planner?: ModelSelection;
         readonly builder?: ModelSelection;
+        readonly skipped?: string;
         readonly setModel?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setModel"];
       },
     ) => {
@@ -6584,6 +6585,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 ? {
                     planner: extra?.planner ?? opusSelection,
                     builder: extra?.builder ?? sonnetSelection,
+                    ...(extra?.skipped === undefined ? {} : { skipped: extra.skipped }),
                     record: (outcome) => Effect.sync(() => void outcomes.push(outcome)),
                   }
                 : undefined,
@@ -7015,6 +7017,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(outcomes[1]!.ecoSkipped, "background_work");
           assert.isFalse(outcomes[1]!.handedOff);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect.each([
+      ["builder_same_model", { builder: opusSelection }],
+      [
+        "builder_not_switchable",
+        {
+          // Haiku 4.5 has a thinking switch and no effort: Opus cannot switch to it live.
+          builder: {
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            model: "claude-haiku-4-5",
+            options: [{ id: "thinking", value: true }],
+          } satisfies ModelSelection,
+        },
+      ],
+      ["builder_other_provider", { skipped: "builder_other_provider" }],
+    ] as const)(
+      "runs without Eco and records eco_skipped=%s when the builder no longer fits",
+      ([reason, extra]) =>
+        Effect.gen(function* () {
+          const { harness, outcomes } = yield* ecoHarness(true, false, extra);
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const opened = harness.getOpenedOptions();
+          assert.isUndefined(ecoServerOf(opened));
+          assert.notInclude(JSON.stringify(harness.offeredMessages.at(-1)), "<eco_mode>");
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.until(() => outcomes.length === 1);
+          assert.equal(outcomes[0]!.ecoSkipped, reason);
+          assert.isFalse(outcomes[0]!.handedOff);
+          assert.deepEqual(modelsSent(harness.liveSelectionChanges), []);
         }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 

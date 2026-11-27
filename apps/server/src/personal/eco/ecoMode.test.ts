@@ -92,7 +92,7 @@ describe("ecoTurnModels", () => {
     ).toBe(undefined);
   });
 
-  it("skips a bot on another provider", () => {
+  it("records why it skips a builder that no longer fits the bot's model", () => {
     const codex: ModelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
     expect(
       ecoTurnModels({
@@ -100,7 +100,15 @@ describe("ecoTurnModels", () => {
         messageId: "personal-task-1",
         modelSelection: codex,
       }),
-    ).toBe(undefined);
+    ).toEqual({ planner: codex, builder: sonnet, skipped: "builder_other_provider" });
+    // The main model was changed to the saved builder.
+    expect(
+      ecoTurnModels({
+        bot: { modelSelection: sonnet, eco: { enabled: true, modelSelection: sonnet } },
+        messageId: "personal-task-1",
+        modelSelection: sonnet,
+      }),
+    ).toEqual({ planner: sonnet, builder: sonnet, skipped: "builder_same_model" });
   });
 });
 

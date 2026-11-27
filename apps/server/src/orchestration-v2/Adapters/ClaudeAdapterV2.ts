@@ -241,6 +241,8 @@ import {
   ECO_HANDOFF_TOOL,
   ECO_MCP_SERVER_NAME,
   ECO_SKIPPED_BACKGROUND_WORK,
+  ECO_SKIPPED_BUILDER_NOT_SWITCHABLE,
+  ECO_SKIPPED_BUILDER_SAME_MODEL,
   ECO_SWITCH_TIMEOUT_MS,
   type EcoModelLedger,
   type EcoTurnState,
@@ -12982,18 +12984,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? undefined
                 : compileClaudeModelSelection(ecoTurn.builder, modelCatalog);
             const ecoModels =
-              ecoTurn !== undefined &&
-              ecoPlanner !== undefined &&
-              ecoBuilder !== undefined &&
-              ecoPlanner.apiModelId !== ecoBuilder.apiModelId &&
-              canApplyClaudeSelectionLive(ecoPlanner, ecoBuilder)
+              ecoTurn !== undefined && ecoPlanner !== undefined && ecoBuilder !== undefined
                 ? { turn: ecoTurn, planner: ecoPlanner, builder: ecoBuilder }
                 : undefined;
+            // A builder that no longer fits runs the turn without Eco, recording why.
+            const ecoUnfit =
+              ecoModels === undefined
+                ? undefined
+                : (ecoModels.turn.skipped ??
+                  (ecoModels.planner.apiModelId === ecoModels.builder.apiModelId
+                    ? ECO_SKIPPED_BUILDER_SAME_MODEL
+                    : !canApplyClaudeSelectionLive(ecoModels.planner, ecoModels.builder)
+                      ? ECO_SKIPPED_BUILDER_NOT_SWITCHABLE
+                      : undefined));
             // Live background work runs an Eco turn as an ordinary one (eco_skipped): it
             // blocks replacing an ordinary process, and on an Eco process the guard (which
             // reads the turn running when a call fires) would block an earlier turn's agent.
             let ecoBlockedByBackgroundWork = false;
-            if (ecoModels !== undefined) {
+            if (ecoModels !== undefined && ecoUnfit === undefined) {
               const live = yield* Ref.get(queryContext);
               if (
                 live !== null &&
@@ -13004,7 +13012,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ecoBlockedByBackgroundWork = yield* liveProcessRunsBackgroundWork(live);
               }
             }
-            const ecoAttach = ecoModels !== undefined && !ecoBlockedByBackgroundWork;
+            const ecoAttach =
+              ecoModels !== undefined && ecoUnfit === undefined && !ecoBlockedByBackgroundWork;
             const promptText = applyClaudePromptEffortPrefix(
               !ecoAttach ? turnInput.message.text : withEcoInstructions(turnInput.message.text),
               compileClaudeModelSelection(turnInput.modelSelection, modelCatalog).promptEffort,
@@ -13102,11 +13111,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               executedModel: undefined,
             };
             const ecoSkipped =
-              ecoModels !== undefined && (!ecoAttach || !querySession.ecoCapable)
-                ? ECO_SKIPPED_BACKGROUND_WORK
-                : undefined;
+              ecoModels === undefined
+                ? undefined
+                : (ecoUnfit ??
+                  (!ecoAttach || !querySession.ecoCapable
+                    ? ECO_SKIPPED_BACKGROUND_WORK
+                    : undefined));
             if (ecoSkipped !== undefined) {
-              // Kept on the process that runs background work; this turn runs as an ordinary one.
+              // This turn runs as an ordinary one; the Eco record keeps the reason.
               yield* Effect.logInfo("orchestration-v2.claude-eco-skipped-live-process", {
                 threadId: turnInput.threadId,
                 reason: ecoSkipped,

@@ -556,6 +556,8 @@ export interface ProviderAdapterV2EcoCallUsage {
 export interface ProviderAdapterV2EcoTurn {
   readonly planner: ModelSelection;
   readonly builder: ModelSelection;
+  /** The saved builder no longer fits the bot's model: run without Eco, recording this as eco_skipped. */
+  readonly skipped?: string;
   readonly record: (outcome: ProviderAdapterV2EcoOutcome) => Effect.Effect<void>;
 }
 

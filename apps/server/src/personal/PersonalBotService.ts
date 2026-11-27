@@ -676,7 +676,7 @@ export const make = Effect.gen(function* () {
         ecoInput?.modelSelection ??
         (currentIsDefault ? defaultEcoBuilderModel(planner) : currentEco!.modelSelection);
       // Checked when the request sets Eco; a main-model change alone never fails on it
-      // (a turn whose builder no longer fits simply runs without Eco).
+      // (a turn whose builder no longer fits runs without Eco and records eco_skipped).
       if (enabled && ecoInput !== undefined) {
         const problem = ecoBuilderProblem(planner, builder);
         if (problem !== undefined) return yield* new PersonalBotsError({ message: problem });

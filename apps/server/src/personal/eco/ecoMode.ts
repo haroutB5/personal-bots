@@ -36,6 +36,12 @@ export const ECO_HANDOFF_TOOL = `mcp__${ECO_MCP_SERVER_NAME}__${ECO_HANDOFF_TOOL
 export const ECO_SWITCH_TIMEOUT_MS = 20_000;
 /** eco_skipped: the thread's ordinary process runs background work, so it is not replaced. */
 export const ECO_SKIPPED_BACKGROUND_WORK = "background_work";
+/** eco_skipped: after a main-model change, the saved builder is on another provider. */
+export const ECO_SKIPPED_BUILDER_OTHER_PROVIDER = "builder_other_provider";
+/** eco_skipped: after a main-model change, the saved builder is the bot's own model. */
+export const ECO_SKIPPED_BUILDER_SAME_MODEL = "builder_same_model";
+/** eco_skipped: the saved builder cannot be switched to live (thinking or effort differ). */
+export const ECO_SKIPPED_BUILDER_NOT_SWITCHABLE = "builder_not_switchable";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -71,6 +77,8 @@ export function ecoBuilderProblem(
 export interface EcoTurnModels {
   readonly planner: ModelSelection;
   readonly builder: ModelSelection;
+  /** Set when the saved builder no longer fits: the turn runs without Eco and records why. */
+  readonly skipped?: string;
 }
 
 /**
@@ -96,9 +104,15 @@ export function ecoTurnModels(input: {
   ) {
     return undefined;
   }
-  if (eco.modelSelection.instanceId !== input.modelSelection.instanceId) return undefined;
-  if (eco.modelSelection.model === input.modelSelection.model) return undefined;
-  return { planner: input.modelSelection, builder: eco.modelSelection };
+  const models = { planner: input.modelSelection, builder: eco.modelSelection };
+  // A main-model change is saved without checking the builder; the turn says why it skipped.
+  if (eco.modelSelection.instanceId !== input.modelSelection.instanceId) {
+    return { ...models, skipped: ECO_SKIPPED_BUILDER_OTHER_PROVIDER };
+  }
+  if (eco.modelSelection.model === input.modelSelection.model) {
+    return { ...models, skipped: ECO_SKIPPED_BUILDER_SAME_MODEL };
+  }
+  return models;
 }
 
 // ---------------------------------------------------------------------------
