@@ -6571,6 +6571,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         readonly builder?: ModelSelection;
         readonly skipped?: string;
         readonly setModel?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["setModel"];
+        readonly closeOnInterrupt?: boolean;
       },
     ) => {
       const outcomes: Array<ProviderAdapter.ProviderAdapterV2EcoOutcome> = [];
@@ -6593,6 +6594,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         },
         freshQueueOnReopen,
         ...(extra?.setModel === undefined ? {} : { setModel: extra.setModel }),
+        ...(extra?.closeOnInterrupt === true
+          ? { close: (messages: Queue.Queue<SDKMessage>) => Queue.shutdown(messages) }
+          : {}),
       }).pipe(Effect.map((harness) => ({ harness, outcomes })));
     };
     const modelsSent = (changes: ReadonlyArray<unknown>) =>
@@ -7050,6 +7054,109 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(outcomes[0]!.ecoSkipped, reason);
           assert.isFalse(outcomes[0]!.handedOff);
           assert.deepEqual(modelsSent(harness.liveSelectionChanges), []);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect.each(["before", "during", "after"] as const)(
+      "records an Eco turn interrupted %s the handoff and opens the next one on the planner",
+      (when) =>
+        Effect.gen(function* () {
+          const switching = yield* Deferred.make<void>();
+          const { harness, outcomes } = yield* ecoHarness(true, true, {
+            closeOnInterrupt: true,
+            setModel: (model) =>
+              when === "during" && model === "claude-sonnet-5-5"
+                ? Deferred.succeed(switching, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.void,
+          });
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const first = harness.getOpenedOptions();
+          const handoff = ecoHandoffHandlerOf(ecoServerOf(first));
+          if (handoff === undefined) throw new Error("no eco_handoff handler");
+          const pending =
+            when === "before"
+              ? undefined
+              : yield* Effect.promise(() => handoff("## Goal\nFix it")).pipe(Effect.forkChild);
+          if (when === "during") yield* Deferred.await(switching);
+          if (when === "after" && pending !== undefined) {
+            assert.isUndefined((yield* Fiber.join(pending)).isError);
+          }
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: "turn:attempt-eco:1",
+            }),
+          });
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+          yield* harness.until(() => outcomes.length === 1);
+          assert.equal(outcomes[0]!.status, "interrupted");
+          assert.equal(outcomes[0]!.handedOff, when === "after");
+          if (when === "during" && pending !== undefined) {
+            yield* TestClock.adjust("21 seconds");
+            assert.isTrue((yield* Fiber.join(pending)).isError);
+          }
+
+          // The interrupt closed the process; the next Eco turn opens a fresh one on the planner.
+          yield* harness.runtime.startTurn(ecoTurn(harness, 2, now));
+          const next = harness.getOpenedOptions() as { readonly model?: string };
+          assert.notStrictEqual(next, first);
+          assert.equal(next.model, "claude-opus-5-5");
+          assert.isDefined(ecoServerOf(next));
+          assert.include(JSON.stringify(harness.offeredMessages.at(-1)), "<eco_mode>");
+          assert.deepInclude(yield* preToolUse(next, "Edit"), {
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: ECO_EDIT_DENIED_REASON,
+            },
+          });
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect(
+      "keeps the builder through a steer that carries a model, then restores the planner",
+      () =>
+        Effect.gen(function* () {
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const { harness, outcomes } = yield* ecoHarness(true);
+          const now = yield* DateTime.now;
+          const input = ecoTurn(harness, 1, now);
+          yield* harness.runtime.startTurn(input);
+          const handoff = ecoHandoffHandlerOf(ecoServerOf(harness.getOpenedOptions()));
+          if (handoff === undefined) throw new Error("no eco_handoff handler");
+          assert.isUndefined((yield* Effect.promise(() => handoff("## Goal\nFix it"))).isError);
+          const steer = (id: string, model: string) =>
+            harness.runtime.steerTurn({
+              threadId: harness.threadId,
+              runId: input.runId,
+              providerThread: harness.providerThread,
+              providerTurnId: idAllocator.derive.providerTurn({
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeTurnId: `turn:${input.attemptId}`,
+              }),
+              modelSelection: { ...opusSelection, model },
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: MessageId.make(id),
+                text: "Also check the docs.",
+                attachments: [],
+              },
+            });
+          yield* steer("personal-task-steer-1", "claude-haiku-5-5");
+          // A handed-off turn keeps its builder: the steer's model is not applied.
+          assert.deepEqual(modelsSent(harness.liveSelectionChanges), ["claude-sonnet-5-5"]);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.until(() => outcomes.length === 1);
+          assert.deepEqual(modelsSent(harness.liveSelectionChanges), [
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+          ]);
+          assert.isTrue(outcomes[0]!.handedOff);
         }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
