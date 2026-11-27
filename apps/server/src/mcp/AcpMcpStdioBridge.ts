@@ -7,7 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { MCP_ECO_HEADER, MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
+import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 /** ACP mandates stdio MCP support; HTTP/SSE support varies. */
@@ -42,7 +42,6 @@ export interface AcpMcpStdioBridgeOptions {
   readonly endpoint: string;
   readonly authorization: string;
   readonly toolExposure?: string;
-  readonly eco?: boolean;
   readonly input: NodeJS.ReadableStream;
   readonly output: { write(chunk: string): unknown };
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
@@ -71,7 +70,6 @@ export interface McpToolSessionOptions {
   readonly endpoint: string;
   readonly authorization: string;
   readonly clientName: string;
-  readonly eco?: boolean;
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
@@ -98,7 +96,6 @@ export const mcpToolSession = (
   const headers = () => ({
     accept: "application/json, text/event-stream",
     authorization: options.authorization,
-    ...(options.eco === true ? { [MCP_ECO_HEADER]: "1" } : {}),
     ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),
     ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
   });
@@ -188,7 +185,6 @@ export const mcpToolSession = (
 function callAcpMcpTool(options: {
   readonly endpoint: string;
   readonly authorization: string;
-  readonly eco?: boolean;
   readonly tool: string;
   readonly arguments: Readonly<Record<string, unknown>>;
 }): Effect.Effect<unknown, AcpMcpBridgeError> {
@@ -245,7 +241,6 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
                 ...(options.toolExposure === undefined || options.toolExposure.length === 0
                   ? {}
                   : { [MCP_TOOL_EXPOSURE_HEADER]: options.toolExposure }),
-                ...(options.eco === true ? { [MCP_ECO_HEADER]: "1" } : {}),
                 ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),
                 ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
               },
@@ -364,7 +359,6 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const eco = process.env.T3_ACP_MCP_ECO?.trim() === "1";
   if (command === "acp-mcp-bridge") {
     const toolExposure = process.env.T3_ACP_MCP_TOOL_EXPOSURE?.trim();
     await Effect.runPromise(
@@ -372,7 +366,6 @@ export async function runAcpMcpCliFastPath(
         endpoint,
         authorization,
         ...(toolExposure ? { toolExposure } : {}),
-        ...(eco ? { eco: true } : {}),
         input: process.stdin,
         output: process.stdout,
       }),
@@ -402,7 +395,6 @@ export async function runAcpMcpCliFastPath(
     callAcpMcpTool({
       endpoint,
       authorization,
-      ...(eco ? { eco: true } : {}),
       tool,
       arguments: parsed as Record<string, unknown>,
     }),

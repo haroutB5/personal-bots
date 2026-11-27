@@ -7,7 +7,6 @@ import type { McpCapability, McpPersonalBotScope } from "./McpInvocationContext.
 
 export const TOOL_SEARCH = "tool_search";
 export const TOOL_CALL = "tool_call";
-export const ECO_HANDOFF_TOOL_NAME = "eco_handoff";
 
 /** What a deferring desktop client lists before it searches. Pi's extension declares the same three. */
 const DIRECT_TOOLS: ReadonlySet<string> = new Set([
@@ -134,7 +133,6 @@ export const isToolListedForPersonalBot = (
   bot: McpPersonalBotScope,
   options?: { readonly hasDevice?: boolean; readonly hasPreview?: boolean },
 ): boolean => {
-  if (toolName === ECO_HANDOFF_TOOL_NAME) return false;
   if (PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS.has(toolName)) return false;
   if (options?.hasDevice !== true && DEVICE_MCP_TOOLS.has(toolName)) return false;
   if (options?.hasPreview === false && toolName.startsWith("preview_")) return false;
@@ -232,7 +230,6 @@ export const make = (
           (tool) =>
             tool.name !== TOOL_SEARCH &&
             tool.name !== TOOL_CALL &&
-            tool.name !== ECO_HANDOFF_TOOL_NAME &&
             (filter === undefined || filter(tool.name)),
         )
         .map((tool) => ({ tool, score: score(tool, terms) }))

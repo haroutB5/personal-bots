@@ -1,7 +1,6 @@
 import { Tool } from "effect/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
-import { ECO_HANDOFF_TOOL_NAME } from "./McpToolExposure.ts";
 
 import { BotsToolkit } from "./toolkits/bots/tools.ts";
 import { ConnectionsToolkit } from "./toolkits/connections/tools.ts";
@@ -31,12 +30,9 @@ export const ADVERTISED_TOOLKITS: ReadonlyArray<{ readonly tools: Record<string,
 /** The fields of each advertised tool that reach the model, as the MCP `tools/list` sends them. */
 export const advertisedToolList = () =>
   ADVERTISED_TOOLKITS.flatMap((toolkit) =>
-    Object.values(toolkit.tools)
-      // eco_handoff is only advertised on Eco sessions (`t3-eco: 1`), like ToolSearchToolkit.
-      .filter((tool) => tool.name !== ECO_HANDOFF_TOOL_NAME)
-      .map((tool) => ({
-        name: tool.name,
-        description: Tool.getDescription(tool),
-        inputSchema: advertisedJsonSchema(tool),
-      })),
+    Object.values(toolkit.tools).map((tool) => ({
+      name: tool.name,
+      description: Tool.getDescription(tool),
+      inputSchema: advertisedJsonSchema(tool),
+    })),
   );

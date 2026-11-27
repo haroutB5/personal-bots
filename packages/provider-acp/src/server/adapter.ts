@@ -78,17 +78,6 @@ import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresen
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
-  ECO_ACP_HANDOFF_PLANNER_ACK,
-  ECO_SKIPPED_BACKGROUND_WORK,
-  ECO_SKIPPED_BUILDER_OTHER_PROVIDER,
-  ECO_SKIPPED_BUILDER_SAME_MODEL,
-  ECO_SWITCH_TIMEOUT_MS,
-  ecoAcpBuilderPrompt,
-  ecoAcpPermissionDenied,
-  ecoPlanMarkdown,
-  withAcpEcoInstructions,
-} from "@t3tools/provider-core/server/ecoGuard";
-import {
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
@@ -426,8 +415,6 @@ export interface AcpAdapterV2Flavor {
   readonly mcpOverHttp?: boolean;
   /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
   readonly deferMcpTools?: boolean;
-  /** Supports Eco mode (two-prompt same-session planner -> builder handoff via `eco_handoff`). */
-  readonly supportsEcoMode?: boolean;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
@@ -1006,7 +993,6 @@ export function acpMcpContext(
   mcpOverHttp: boolean | undefined,
   deferMcpTools: boolean | undefined,
   personalSecretEnvironment?: Readonly<Record<string, string>>,
-  ecoCapable?: boolean,
 ): AcpMcpContext {
   const secrets = personalSecretEnvironment ?? session?.personalSecretEnvironment;
   const hasSecrets = secrets !== undefined && Object.keys(secrets).length > 0;
@@ -1032,7 +1018,6 @@ export function acpMcpContext(
           ...(deferMcpTools === true
             ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" }]
             : []),
-          ...(ecoCapable === true ? [{ name: "T3_ACP_MCP_ECO", value: "1" }] : []),
         ],
       },
       ...(session.extraMcpServers ?? []).map((extra) => ({
@@ -1059,9 +1044,6 @@ export function acpMcpContext(
                 ...(deferMcpTools === true
                   ? [{ name: McpProviderSession.MCP_TOOL_EXPOSURE_HEADER, value: "deferred" }]
                   : []),
-                ...(ecoCapable === true
-                  ? [{ name: McpProviderSession.MCP_ECO_HEADER, value: "1" }]
-                  : []),
               ],
             },
             ...(session.extraMcpServers ?? []).map((extra) => ({
@@ -1086,7 +1068,6 @@ export function acpMcpContext(
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
       ...(self.entrypoint === undefined ? {} : { T3_ACP_MCP_ENTRYPOINT: self.entrypoint }),
-      ...(ecoCapable === true ? { T3_ACP_MCP_ECO: "1" } : {}),
     },
   };
 }
@@ -1640,32 +1621,12 @@ interface AcpNativeBuildConfiguration {
   readonly configOptions: ReadonlyArray<{ readonly id: string; readonly value: string }>;
 }
 
-interface AcpEcoTurnState {
-  readonly turn: ProviderAdapter.ProviderAdapterV2EcoTurn;
-  readonly planner: ModelSelection;
-  readonly builder: ModelSelection;
-  readonly skipped: string | undefined;
-  readonly startedAt: Date;
-  handoffRequested: boolean;
-  handedOff: boolean;
-  handedOffAt: Date | undefined;
-  plan: string | undefined;
-  handoffError: string | undefined;
-  plannerUsage: EffectAcpSchema.Usage | undefined;
-  builderUsage: EffectAcpSchema.Usage | undefined;
-  plannerCalls: number;
-  builderCalls: number;
-  switchedToBuilder: boolean;
-  recorded: boolean;
-}
-
 interface ActiveAcpTurn {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
-  readonly eco?: AcpEcoTurnState | undefined;
   readonly completed: Deferred.Deferred<void, never>;
   readonly itemOrdinals: Map<string, number>;
   readonly outgoingPrompt?: ReadonlyArray<EffectAcpSchema.ContentBlock> | undefined;
@@ -2037,7 +1998,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const readBaseMcpContext = (
     threadId: ThreadId | null,
     personalSecretEnvironment?: Readonly<Record<string, string>>,
-    ecoCapable?: boolean,
   ) =>
     threadId === null
       ? Effect.succeed(
@@ -2047,7 +2007,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.mcpOverHttp,
             flavor.deferMcpTools,
             personalSecretEnvironment,
-            ecoCapable,
           ),
         )
       : mcpSessions
@@ -2060,7 +2019,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 flavor.mcpOverHttp,
                 flavor.deferMcpTools,
                 personalSecretEnvironment,
-                ecoCapable,
               ),
             ),
           );
@@ -2090,16 +2048,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
-        let runtimeEcoCapable = false;
-        yield* Scope.addFinalizer(
-          sessionScope,
-          mcpSessions.setEcoHandoffHandler(input.threadId, undefined),
-        );
         const readMcpContext = (threadId: ThreadId | null) =>
           readBaseMcpContext(
             threadId,
             threadId === input.threadId ? input.personal?.secretEnvironment : undefined,
-            runtimeEcoCapable,
           );
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
@@ -7276,21 +7228,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   // tool already seen under the same id so policy can tell a
                   // read from a write.
                   const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
-                  const effectiveRequest =
+                  const disposition = dispositionFor(
+                    context?.input.runtimePolicy ?? latestRuntimePolicy,
                     params.toolCall.kind == null && knownKind !== undefined
                       ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
-                      : params;
-                  const ecoGuardActive =
-                    context?.eco !== undefined &&
-                    context.eco.skipped === undefined &&
-                    !context.eco.handedOff;
-                  const disposition =
-                    ecoGuardActive && ecoAcpPermissionDenied(effectiveRequest)
-                      ? ("deny" as const)
-                      : dispositionFor(
-                          context?.input.runtimePolicy ?? latestRuntimePolicy,
-                          effectiveRequest,
-                        );
+                      : params,
+                  );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(params);
                     return {
@@ -8457,208 +8400,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
-        const emitEcoNotice = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-          nativeItemId: string,
-          notice: string,
-        ) {
-          const at = yield* DateTime.now;
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver,
-            turnItem: {
-              id: providerTurnItemId(nativeItemId),
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              nodeId: context.input.rootNodeId,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
-              parentItemId: null,
-              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-              type: "system_notice",
-              status: "completed",
-              title: notice,
-              message: notice,
-              startedAt: at,
-              completedAt: at,
-              updatedAt: at,
-            },
-          });
-        });
-
-        const emitEcoHandoffArtifacts = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-          builderLabel: string,
-          plan: string,
-        ) {
-          const at = yield* DateTime.now;
-          const nativeItemId = `eco-handoff:${context.providerTurnId}`;
-          const markdown = ecoPlanMarkdown(builderLabel, plan);
-          const planId = yield* idAllocator.allocate
-            .plan({
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              driver,
-            })
-            .pipe(Effect.orDie);
-          const nodeId = providerNodeId(nativeItemId);
-          const turnItemId = providerTurnItemId(nativeItemId);
-          const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
-          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
-          yield* emitProviderEvent({
-            type: "node.updated",
-            driver,
-            node: {
-              id: nodeId,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              parentNodeId: context.input.rootNodeId,
-              rootNodeId: context.input.rootNodeId,
-              kind: "plan",
-              status: "completed",
-              countsForRun: false,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              nativeItemRef,
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt: context.startedAt,
-              completedAt: at,
-            },
-          });
-          yield* emitProviderEvent({
-            type: "plan.updated",
-            driver,
-            plan: {
-              id: planId,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              nodeId,
-              kind: "proposed_plan",
-              status: "completed",
-              markdown,
-            },
-          });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver,
-            turnItem: {
-              id: turnItemId,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              nodeId,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              nativeItemRef,
-              parentItemId: null,
-              ordinal,
-              status: "completed",
-              title: null,
-              startedAt: context.startedAt,
-              completedAt: at,
-              updatedAt: at,
-              type: "proposed_plan",
-              planId,
-              markdown,
-              streaming: false,
-            },
-          });
-          yield* emitEcoNotice(
-            context,
-            `eco-handoff-notice:${context.providerTurnId}`,
-            `Handed off to ${builderLabel}`,
-          );
-        });
-
-        const restoreEcoPlanner = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-          planner: ModelSelection,
-          logEvent: string,
-        ) {
-          const setup = yield* Ref.get(activeSessionSetup);
-          if (setup === null) {
-            yield* Ref.set(activeSelection, null);
-            return;
-          }
-          yield* configureSession(setup, planner, context.input.runtimePolicy).pipe(
-            Effect.andThen(Ref.set(activeSelection, planner)),
-            Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS)),
-            Effect.catchCause((cause) =>
-              Ref.set(activeSelection, null).pipe(
-                Effect.andThen(
-                  Effect.logWarning(logEvent, {
-                    driver,
-                    threadId: context.input.threadId,
-                    cause: Cause.pretty(cause).slice(0, 1_000),
-                  }),
-                ),
-              ),
-            ),
-          );
-        });
-
-        const finishEcoTurn = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-          settledStatus: string,
-          completedAt: DateTime.Utc,
-        ) {
-          const eco = context.eco;
-          if (eco === undefined || eco.recorded) return;
-          eco.recorded = true;
-          yield* mcpSessions.setEcoHandoffHandler(context.input.threadId, undefined);
-          if (eco.switchedToBuilder) {
-            yield* restoreEcoPlanner(
-              context,
-              eco.planner,
-              "orchestration-v2.acp-eco-restore-failed",
-            );
-          }
-          const sideUsage = (
-            model: string,
-            usage: EffectAcpSchema.Usage | undefined,
-            calls: number,
-          ) => ({
-            model,
-            inputTokens: usage?.inputTokens ?? 0,
-            outputTokens: usage?.outputTokens ?? 0,
-            cacheReadTokens: usage?.cachedReadTokens ?? 0,
-            cacheWriteTokens: usage?.cachedWriteTokens ?? 0,
-            sdkCostUsd: 0,
-            calls,
-          });
-          const calls: Array<{
-            readonly id: string;
-            readonly model: string;
-            readonly side: "planner" | "builder";
-          }> = [];
-          if (eco.plannerCalls > 0) {
-            calls.push({ id: "prompt-1", model: eco.planner.model, side: "planner" });
-          }
-          if (eco.builderCalls > 0) {
-            calls.push({ id: "prompt-2", model: eco.builder.model, side: "builder" });
-          }
-          yield* eco.turn
-            .record({
-              provider: "antigravity",
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              status: settledStatus,
-              handedOff: eco.handedOff,
-              ...(eco.skipped === undefined ? {} : { ecoSkipped: eco.skipped }),
-              ...(eco.handoffError === undefined ? {} : { handoffError: eco.handoffError }),
-              ...(eco.plan === undefined ? {} : { plan: eco.plan }),
-              startedAt: eco.startedAt,
-              ...(eco.handedOffAt === undefined ? {} : { handedOffAt: eco.handedOffAt }),
-              completedAt: DateTime.toDate(completedAt),
-              planner: sideUsage(eco.planner.model, eco.plannerUsage, eco.plannerCalls),
-              builder: sideUsage(eco.builder.model, eco.builderUsage, eco.builderCalls),
-              other: [],
-              calls,
-            })
-            .pipe(Effect.forkIn(sessionScope));
-        });
-
         const finalizeTurn = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
@@ -8835,7 +8576,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
-          yield* finishEcoTurn(context, settledStatus, now);
           yield* Ref.set(activeTurn, null);
           steerInjections.clear();
           if (
@@ -9060,7 +8800,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           sessionId: string,
-          ecoPlanner = false,
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const instructionState = {
@@ -9079,15 +8818,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       childProcessSpawner,
                     ),
                   );
-          const resolvedMessageText = yield* providerMessageTextWithAttachmentPaths({
+          const messageText = yield* providerMessageTextWithAttachmentPaths({
             text: userText,
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
-          const messageText = ecoPlanner
-            ? withAcpEcoInstructions(resolvedMessageText)
-            : resolvedMessageText;
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
           const attachmentBlocks = yield* promptAttachmentBlocks(
             messageText,
@@ -9187,15 +8923,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.suspend(() => {
                 if (flavor.reportsPerTurnPromptUsage === true && !context.finalized) {
                   context.promptUsage = addAcpUsage(context.promptUsage, result.usage);
-                }
-                if (context.eco !== undefined && !context.finalized) {
-                  if (!context.eco.handedOff) {
-                    context.eco.plannerUsage = addAcpUsage(context.eco.plannerUsage, result.usage);
-                    context.eco.plannerCalls += 1;
-                  } else {
-                    context.eco.builderUsage = addAcpUsage(context.eco.builderUsage, result.usage);
-                    context.eco.builderCalls += 1;
-                  }
                 }
                 return superseded()
                   ? Effect.void
@@ -9323,116 +9050,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   yield* idleReportedSubagents(context);
                   if (context.finalized) return;
-                  // Eco mode two-prompt handoff: Prompt #1 (planner) finished cleanly after calling
-                  // `eco_handoff(plan)`. Switch the SAME ACP session to the builder model, unlock edits,
-                  // emit the plan + notice, and run Prompt #2 inside this same ActiveAcpTurn.
-                  const eco = context.eco;
-                  if (
-                    eco !== undefined &&
-                    eco.skipped === undefined &&
-                    eco.handoffRequested &&
-                    !eco.handedOff &&
-                    status === "completed" &&
-                    !context.interrupted
-                  ) {
-                    yield* closeTextStreams(context);
-                    const currentSetup = yield* Ref.get(activeSessionSetup);
-                    const switchExit =
-                      currentSetup === null
-                        ? Exit.fail(
-                            EffectAcpErrors.AcpRequestError.internalError(
-                              "ACP session has no active setup metadata",
-                            ),
-                          )
-                        : yield* Effect.exit(
-                            configureSession(
-                              currentSetup,
-                              eco.builder,
-                              context.input.runtimePolicy,
-                            ).pipe(Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS))),
-                          );
-                    if (context.finalized || context.interrupted) {
-                      if (Exit.isSuccess(switchExit)) {
-                        eco.switchedToBuilder = true;
-                        yield* restoreEcoPlanner(
-                          context,
-                          eco.planner,
-                          "orchestration-v2.acp-eco-late-switch-restore-failed",
-                        );
-                      }
-                      return;
-                    }
-                    if (Exit.isFailure(switchExit)) {
-                      const detail =
-                        Cause.pretty(switchExit.cause).split("\n")[0] ??
-                        "the builder switch failed";
-                      eco.handoffError = detail.slice(0, 500);
-                      yield* restoreEcoPlanner(
-                        context,
-                        eco.planner,
-                        "orchestration-v2.acp-eco-handoff-revert-failed",
-                      );
-                      yield* emitEcoNotice(
-                        context,
-                        `eco-handoff-failed:${context.providerTurnId}`,
-                        `Eco handoff to ${eco.builder.model} failed: ${eco.handoffError}`,
-                      );
-                      yield* finalizeTurn(context, "completed");
-                      return;
-                    }
-                    yield* Ref.set(activeSelection, eco.builder);
-                    eco.switchedToBuilder = true;
-                    eco.handedOff = true;
-                    eco.handedOffAt = DateTime.toDate(yield* DateTime.now);
-                    yield* emitEcoHandoffArtifacts(context, eco.builder.model, eco.plan ?? "");
-                    context.promptSettled = false;
-                    context.promptSettledStatus = null;
-                    context.promptWireSettled = yield* Deferred.make<void, never>();
-                    context.foregroundIdle = yield* Deferred.make<void>();
-                    context.promptSentAt = yield* Clock.currentTimeMillis;
-                    context.lastProgressAt = context.promptSentAt;
-                    const previousWatchdog = context.inactivityWatchdog;
-                    context.inactivityWatchdog = undefined;
-                    if (previousWatchdog !== undefined) {
-                      yield* Fiber.interrupt(previousWatchdog).pipe(
-                        Effect.forkDetach,
-                        Effect.asVoid,
-                      );
-                    }
-                    if (promptInactivityTimeoutMillis !== undefined) {
-                      context.inactivityWatchdog = yield* watchPromptInactivity(
-                        context,
-                        settle.generation,
-                        promptInactivityTimeoutMillis,
-                      ).pipe(Effect.forkIn(sessionScope));
-                    }
-                    const builderCheckPromptOutcome =
-                      flavor.watchPromptOutcome === undefined
-                        ? undefined
-                        : yield* flavor.watchPromptOutcome(context.nativeThreadId);
-                    const builderDispatched = yield* Deferred.make<void, never>();
-                    const builderPromptText = ecoAcpBuilderPrompt(eco.plan ?? "");
-                    yield* followPrompt(
-                      context,
-                      (builderSuperseded) =>
-                        sendPromptWhenIdle(
-                          context,
-                          () =>
-                            runtime.prompt(
-                              { prompt: [{ type: "text", text: builderPromptText }] },
-                              { dispatched: builderDispatched, released: context.foregroundIdle },
-                            ),
-                          builderSuperseded,
-                        ),
-                      {
-                        generation: settle.generation,
-                        checkPromptOutcome: builderCheckPromptOutcome,
-                        promptParts: null,
-                        compactSession: undefined,
-                      },
-                    ).pipe(Effect.forkIn(sessionScope));
-                    return;
-                  }
                   if (
                     defersFinalizeForBackgroundWork &&
                     !context.interrupted &&
@@ -9522,78 +9139,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // load/resume can invoke client methods; install the incoming policy before activation.
             latestRuntimePolicy = turnInput.runtimePolicy;
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
-            // Continuations consume existing wake traffic without re-prompting ACP.
-            const isContinuationTurn =
-              (postSettleContinuationEnabled || followsAgentWorkState) &&
-              acpIsProviderContinuationMessage(turnInput.message);
-            const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
-            const ecoTurn =
-              flavor.supportsEcoMode === true &&
-              !isContinuationTurn &&
-              !isAppOwnedWakeTurn &&
-              !isCompactionMessage(turnInput.message)
-                ? yield* (
-                    input.personal?.ecoForTurn?.({
-                      messageId: turnInput.message.messageId,
-                      modelSelection: turnInput.modelSelection,
-                    }) ?? Effect.undefined
-                  )
-                : undefined;
-            const ecoUnfit =
-              ecoTurn === undefined
-                ? undefined
-                : (ecoTurn.skipped ??
-                  (ecoTurn.builder.instanceId !== ecoTurn.planner.instanceId
-                    ? ECO_SKIPPED_BUILDER_OTHER_PROVIDER
-                    : ecoTurn.builder.model === ecoTurn.planner.model
-                      ? ECO_SKIPPED_BUILDER_SAME_MODEL
-                      : undefined));
-            const ecoMcpSession =
-              ecoTurn !== undefined && ecoUnfit === undefined
-                ? yield* mcpSessions.read(turnInput.threadId)
-                : undefined;
-            const ecoHasBackgroundWork =
-              ecoTurn !== undefined &&
-              ecoUnfit === undefined &&
-              ((yield* Ref.get(runningBackgroundTaskIds)).size > 0 ||
-                (yield* Ref.get(carryoverSubagents)) !== null ||
-                (yield* ecoMcpSession?.hasPendingWake ?? Effect.succeed(false)));
-            const ecoSkipped =
-              ecoTurn === undefined
-                ? undefined
-                : (ecoUnfit ?? (ecoHasBackgroundWork ? ECO_SKIPPED_BACKGROUND_WORK : undefined));
-            const ecoAttach = ecoTurn !== undefined && ecoSkipped === undefined;
-            if (ecoSkipped !== undefined) {
-              yield* Effect.logInfo("orchestration-v2.acp-eco-skipped", {
-                driver,
-                threadId: turnInput.threadId,
-                reason: ecoSkipped,
-              });
-            }
-            let restartForEco = false;
-            if (ecoAttach && !runtimeEcoCapable) {
-              runtimeEcoCapable = true;
-              yield* restartAcpRuntime(turnInput.threadId).pipe(
-                Effect.onError(() =>
-                  Effect.sync(() => {
-                    runtimeEcoCapable = false;
-                  }),
-                ),
-              );
-              yield* Ref.set(runtimeRestartRequired, false);
-              yield* Ref.set(activeSessionId, null);
-              yield* Ref.set(activeSessionSetup, null);
-              yield* Ref.set(activeSelection, null);
-              yield* Ref.set(activeInteractionMode, null);
-              restartForEco = true;
-            }
-            const restartAfterInterrupt = restartForEco
-              ? false
-              : yield* restartRuntimeAfterTeardownIfRequired(turnInput.threadId);
+            const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
+              turnInput.threadId,
+            );
             const needsSessionActivation =
-              (yield* Ref.get(activeSessionId)) !== requestedSessionId ||
-              restartAfterInterrupt ||
-              restartForEco;
+              (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
@@ -9658,6 +9208,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
             yield* Ref.set(suppressPostSettleMonitorPrompt, false);
             yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
+            // Continuations consume existing wake traffic without re-prompting ACP.
+            const isContinuationTurn =
+              (postSettleContinuationEnabled || followsAgentWorkState) &&
+              acpIsProviderContinuationMessage(turnInput.message);
+            const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
             if (!isAppOwnedWakeTurn) {
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
             }
@@ -9681,54 +9236,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
             const promptParts = isContinuationTurn
               ? null
-              : yield* resolvePromptParts(turnInput, requestedSessionId, ecoAttach);
+              : yield* resolvePromptParts(turnInput, requestedSessionId);
             const startedAt = yield* DateTime.now;
-            const ecoState: AcpEcoTurnState | undefined =
-              ecoTurn === undefined
-                ? undefined
-                : {
-                    turn: ecoTurn,
-                    planner: ecoTurn.planner,
-                    builder: ecoTurn.builder,
-                    skipped: ecoSkipped,
-                    startedAt: DateTime.toDate(startedAt),
-                    handoffRequested: false,
-                    handedOff: false,
-                    handedOffAt: undefined,
-                    plan: undefined,
-                    handoffError: undefined,
-                    plannerUsage: undefined,
-                    builderUsage: undefined,
-                    plannerCalls: 0,
-                    builderCalls: 0,
-                    switchedToBuilder: false,
-                    recorded: false,
-                  };
-            if (ecoAttach && ecoState !== undefined) {
-              yield* mcpSessions.setEcoHandoffHandler(turnInput.threadId, (rawPlan) =>
-                Effect.sync(() => {
-                  if (ecoState.handoffRequested || ecoState.handedOff) {
-                    return {
-                      ok: false,
-                      message: "This turn has already handed off; only one handoff per turn.",
-                    };
-                  }
-                  const trimmed = rawPlan.trim();
-                  if (trimmed.length === 0) {
-                    return {
-                      ok: false,
-                      message:
-                        "The plan is empty. Call eco_handoff with the six-part markdown plan.",
-                    };
-                  }
-                  ecoState.plan = trimmed;
-                  ecoState.handoffRequested = true;
-                  return { ok: true, message: ECO_ACP_HANDOFF_PLANNER_ACK };
-                }),
-              );
-            } else {
-              yield* mcpSessions.setEcoHandoffHandler(turnInput.threadId, undefined);
-            }
             const nativeTurnId = `${requestedSessionId}:turn:${turnInput.providerTurnOrdinal}`;
             const providerTurnId = deriveProviderTurnId(nativeTurnId);
             const completed = yield* Deferred.make<void, never>();
@@ -9759,7 +9268,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeThreadId: requestedSessionId,
               nativeTurnId,
               startedAt,
-              ...(ecoState === undefined ? {} : { eco: ecoState }),
               completed,
               itemOrdinals: new Map(),
               outgoingPrompt:

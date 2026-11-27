@@ -2,9 +2,10 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * Eco mode v1, additive: the bot form's Eco switch and builder model on
- * personal_bots (NULL builder = Sonnet 5.5 on the bot's instance), and
- * personal_eco_turns with each Eco turn's planner and builder usage.
+ * Eco mode, since removed (a lead handing the build to a bot on a cheaper model
+ * does the same job). The migration stays so every database has the same
+ * history: `eco_enabled` and `eco_model_json` on personal_bots and the
+ * personal_eco_turns table are no longer read or written.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -50,7 +50,6 @@ import * as ServerConfig from "../../../config.ts";
 import * as PersonalMemoryService from "../../../personal/memory/PersonalMemoryService.ts";
 import * as PersonalRoutineService from "../../../personal/routines/PersonalRoutineService.ts";
 import { routineHookEnvPath } from "../../../personal/routines/routineHookEnv.ts";
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   CreateRoutineInput,
@@ -227,7 +226,6 @@ const make = Effect.gen(function* () {
   const personalProviders = yield* Effect.serviceOption(PersonalProviders);
   // Tests give the broker a resolver, an address rule and a private CA; the server runs with none.
   const brokerConfig = yield* Effect.serviceOption(SecretBrokerConfig);
-  const mcpSessions = yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions);
 
   /** The "Saved a note" / "Forgot a note" line with its Undo, in the bot's chat. */
   const noteLine = (input: Parameters<typeof writeNoteNotice>[1]) =>
@@ -1311,19 +1309,6 @@ const make = Effect.gen(function* () {
         ]);
         const readAt = DateTime.formatIso(yield* DateTime.now);
         return usageStatusReading({ providers, bots: allBots, readAt });
-      }),
-    eco_handoff: ({ plan }) =>
-      Effect.gen(function* () {
-        const { scope } = yield* requireBotThread;
-        const threadId = McpInvocationContext.requireMcpThread(scope).threadId;
-        if (Option.isNone(mcpSessions)) {
-          return yield* refuse("Eco handoff is not available on this server.");
-        }
-        const result = yield* mcpSessions.value.callEcoHandoff(threadId, plan);
-        if (!result.ok) {
-          return yield* refuse(result.message);
-        }
-        return { message: result.message };
       }),
   });
 });

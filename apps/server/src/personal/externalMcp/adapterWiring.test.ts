@@ -151,24 +151,5 @@ describe("extraMcpServers provider adapter wiring", () => {
 
     const withDeferredAndHttp = acpMcpContext(session, self, true, true);
     expect(withDeferredAndHttp.servers).toEqual(withDeferredNoHttp.servers);
-
-    const withEco = acpMcpContext(session, self, true, true, undefined, true);
-    expect(withEco.servers).toEqual([
-      {
-        name: "t3-code",
-        command: "/usr/bin/node",
-        args: ["acp-mcp-bridge"],
-        env: [
-          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-          { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
-          { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer thread-mcp-secret-token" },
-          { name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" },
-          { name: "T3_ACP_MCP_ECO", value: "1" },
-        ],
-      },
-      expectedExtraStdioServer,
-    ]);
-    expect(withEco.processEnvironment?.T3_ACP_MCP_ECO).toBe("1");
-    expect(withDeferredAndHttp.processEnvironment?.T3_ACP_MCP_ECO).toBeUndefined();
   });
 });

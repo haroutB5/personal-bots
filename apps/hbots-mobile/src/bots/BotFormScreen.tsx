@@ -16,11 +16,9 @@ import {
   deleteBotConfirmMessage,
   draftFromBot,
   draftInstructionWarning,
-  ecoDraftOf,
   fallbackDraftOf,
   newBotDraft,
   planBotSave,
-  providerChangePatch,
   providerOptionsFor,
   scheduleDraftOf,
   selectableProviders as selectableProvidersOf,
@@ -40,7 +38,7 @@ import {
   botAgentModeDescriptor,
   botContextWindowDescriptor,
   botEffortDescriptor,
-  botOffersEco,
+  defaultModelFor,
   noBotProviderMessage,
   usesModelSearch,
 } from "@hbots/personal-client/bots/botFormModel";
@@ -59,7 +57,6 @@ import { tokens } from "../shell/tokens";
 import { ChoiceSheet } from "../sheets/ChoiceSheet";
 import { ModelSearchSheet } from "../sheets/ModelSearchSheet";
 import { BotAvatarPicker } from "./BotAvatarPicker";
-import { BotEcoSection } from "./BotEcoSection";
 import { BotFallbackSection } from "./BotFallbackSection";
 import {
   FieldLabel,
@@ -406,7 +403,13 @@ function BotForm({
                 title: "Provider",
                 choices: providerPicks,
                 value: draft.instanceId,
-                onSelect: (instanceId) => update(providerChangePatch(instanceId, providers)),
+                onSelect: (instanceId) =>
+                  update({
+                    instanceId,
+                    model: defaultModelFor(
+                      providers.find((provider) => provider.instanceId === instanceId),
+                    ),
+                  }),
               })
             }
           />
@@ -501,25 +504,6 @@ function BotForm({
               update({ agentMode }),
             )
           }
-        />
-      ) : null}
-
-      {botOffersEco(selectedProvider) ? (
-        <BotEcoSection
-          draft={ecoDraftOf(draft)}
-          onChange={(patch) =>
-            update({
-              ...(patch.enabled === undefined ? {} : { ecoEnabled: patch.enabled }),
-              ...(patch.model === undefined ? {} : { ecoModel: patch.model }),
-              ...(patch.effort === undefined ? {} : { ecoEffort: patch.effort }),
-              ...(patch.contextWindow === undefined
-                ? {}
-                : { ecoContextWindow: patch.contextWindow }),
-            })
-          }
-          providers={providers}
-          main={{ instanceId: draft.instanceId, model: draft.model }}
-          openSheet={openSheet}
         />
       ) : null}
 

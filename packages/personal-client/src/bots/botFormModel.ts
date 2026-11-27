@@ -1,7 +1,5 @@
 import type {
   ModelSelection,
-  PersonalBotEco,
-  PersonalBotEcoInput,
   PersonalBotFallback,
   PersonalBotFallbackInput,
   PersonalBotSchedule,
@@ -11,11 +9,8 @@ import type {
   ServerProviderModel,
 } from "@t3tools/contracts";
 import {
-  botEco,
   botFallback,
   driverCarriesBotInstructions,
-  PERSONAL_BOT_DEFAULT_ANTIGRAVITY_ECO_MODEL,
-  PERSONAL_BOT_DEFAULT_ECO_MODEL,
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   safeDefaultBotModelSlug,
   scheduleMatchesOwnModel,
@@ -317,133 +312,6 @@ export function fallbackInput(
     input.modelSelection = selection;
   }
   return Object.keys(input).length === 0 ? undefined : input;
-}
-
-/** What the Eco section of the bot form holds; the builder runs on the bot's own provider. */
-export interface EcoDraft extends ModelDraft {
-  readonly enabled: boolean;
-}
-
-/** Eco mode is offered for Claude Code and Antigravity bots. */
-export function botOffersEco(provider: ServerProvider | undefined): boolean {
-  return provider?.driver === "claudeAgent" || provider?.driver === "antigravity";
-}
-
-/** The Eco setting a bot has now (off, with the provider's default builder when never set). */
-export function ecoDraftFromBot(
-  bot: { readonly eco?: PersonalBotEco; readonly modelSelection: ModelSelection } | null,
-  provider?: ServerProvider,
-): EcoDraft {
-  const defaultModel =
-    provider?.driver === "antigravity"
-      ? {
-          ...PERSONAL_BOT_DEFAULT_ANTIGRAVITY_ECO_MODEL,
-          instanceId: provider.instanceId,
-        }
-      : PERSONAL_BOT_DEFAULT_ECO_MODEL;
-  const { enabled, modelSelection } =
-    bot === null ? { enabled: false, modelSelection: defaultModel } : botEco(bot);
-  return { enabled, ...modelDraftFromSelection(modelSelection) };
-}
-
-/**
- * Known price tiers within a provider family, or null for an unknown family.
- * The provider's model list carries no prices, so "cheaper" is this known ordering:
- * - Claude: Opus (3) > Sonnet (2) > Haiku (1)
- * - Gemini: Neon / Orchestrator-Neon (4) > Carbon / Argon / Pro (3) > Hydrogen (2) > Flash (1) > Flash-Lite (0)
- */
-function modelCostTier(
-  slug: string,
-): { readonly family: "claude" | "gemini"; readonly tier: number } | null {
-  const name = slug.toLocaleLowerCase();
-  if (name.includes("opus")) return { family: "claude", tier: 3 };
-  if (name.includes("sonnet")) return { family: "claude", tier: 2 };
-  if (name.includes("haiku")) return { family: "claude", tier: 1 };
-  if (name.includes("gemini")) {
-    if (name.includes("neon")) return { family: "gemini", tier: 4 };
-    if (name.includes("hydrogen")) return { family: "gemini", tier: 2 };
-    if (name.includes("flash-lite")) return { family: "gemini", tier: 0 };
-    if (name.includes("flash")) return { family: "gemini", tier: 1 };
-    if (name.includes("carbon") || name.includes("argon") || name.includes("pro")) {
-      return { family: "gemini", tier: 3 };
-    }
-  }
-  return null;
-}
-
-/**
- * Why the Eco builder can't be saved, or null. It must be another, cheaper
- * model on the bot's provider, with an effort when the model offers one.
- */
-export function ecoDraftProblem(
-  main: Pick<ModelDraft, "instanceId" | "model">,
-  draft: EcoDraft,
-  providers?: ReadonlyArray<ServerProvider>,
-): string | null {
-  if (!draft.enabled) return null;
-  if (draft.model === "") return "Pick the model that builds the plan.";
-  if (draft.model === main.model) return "Pick a cheaper model than the bot's own.";
-  const mainTier = modelCostTier(main.model);
-  const builderTier = modelCostTier(draft.model);
-  if (
-    mainTier !== null &&
-    builderTier !== null &&
-    mainTier.family === builderTier.family &&
-    builderTier.tier >= mainTier.tier
-  ) {
-    return "Pick a cheaper model than the bot's own.";
-  }
-  const provider = providers?.find((candidate) => candidate.instanceId === main.instanceId);
-  if (provider !== undefined && draft.effort === "") {
-    const offersEffort = providerModelCapabilities(
-      provider.models,
-      draft.model,
-      provider.driver,
-    ).optionDescriptors?.some((descriptor) => EFFORT_OPTION_IDS.includes(descriptor.id));
-    if (offersEffort === true) return "Pick the builder's effort.";
-  }
-  return null;
-}
-
-/**
- * What to send for Eco: only what differs from the saved setting (on create,
- * from the default), so a builder left at its default keeps following the bot's
- * provider. The builder always runs on the bot's own provider instance.
- */
-export function ecoInput(
-  saved: PersonalBotEco | null,
-  draft: EcoDraft,
-  mainInstanceId: string,
-  providers: ReadonlyArray<ServerProvider>,
-): PersonalBotEcoInput | undefined {
-  const provider = providers.find((candidate) => candidate.instanceId === mainInstanceId);
-  const baselineSelection =
-    saved?.modelSelection ??
-    ecoDraftSelection(ecoDraftFromBot(null, provider), mainInstanceId, providers, null);
-  const selection =
-    draft.model === "" || mainInstanceId === ""
-      ? null
-      : ecoDraftSelection(draft, mainInstanceId, providers, saved?.modelSelection ?? null);
-  const savedEnabled = saved?.enabled ?? false;
-  const input: { enabled?: boolean; modelSelection?: ModelSelection } = {};
-  if (savedEnabled !== draft.enabled) input.enabled = draft.enabled;
-  if (selection !== null && !modelSelectionsEqual(baselineSelection, selection)) {
-    input.modelSelection = selection;
-  }
-  return Object.keys(input).length === 0 ? undefined : input;
-}
-
-function ecoDraftSelection(
-  draft: ModelDraft,
-  mainInstanceId: string,
-  providers: ReadonlyArray<ServerProvider>,
-  base: ModelSelection | null,
-): ModelSelection {
-  return buildModelSelection(
-    { ...draft, instanceId: mainInstanceId, agentMode: "" },
-    providers.find((provider) => provider.instanceId === mainInstanceId),
-    base,
-  );
 }
 
 /**

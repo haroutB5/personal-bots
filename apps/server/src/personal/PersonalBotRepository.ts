@@ -14,7 +14,6 @@ import {
   ChatAttachment,
   ModelSelection,
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
-  defaultEcoBuilderModel,
   PersonalBot,
   PersonalBotId,
   PersonalBotSchedule,
@@ -56,10 +55,6 @@ export const CreatePersonalBotInput = Schema.Struct({
   fallbackEnabled: Schema.optional(Schema.Boolean),
   /** Omitted means the default fallback model (stored as NULL). */
   fallbackModelSelection: Schema.optional(ModelSelection),
-  /** Omitted means off (the column default). */
-  ecoEnabled: Schema.optional(Schema.Boolean),
-  /** Omitted means the default builder (stored as NULL). */
-  ecoModelSelection: Schema.optional(ModelSelection),
   /** Omitted means no schedule (stored as NULL). */
   schedule: Schema.optional(PersonalBotSchedule),
   /** Omitted means off: the bot's chats show no call button. */
@@ -88,8 +83,6 @@ export const UpdatePersonalBotInput = Schema.Struct({
   hidePreviews: Schema.optional(Schema.Boolean),
   fallbackEnabled: Schema.optional(Schema.Boolean),
   fallbackModelSelection: Schema.optional(ModelSelection),
-  ecoEnabled: Schema.optional(Schema.Boolean),
-  ecoModelSelection: Schema.optional(ModelSelection),
   /** The whole schedule to store; absent leaves it alone. */
   schedule: Schema.optional(PersonalBotSchedule),
   /** Absent leaves the "Allow voice calls" switch alone. */
@@ -505,8 +498,6 @@ const PersonalBotDbRow = Schema.Struct({
   hidePreviews: Schema.Number,
   fallbackEnabled: Schema.Number,
   fallbackModel: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
-  ecoEnabled: Schema.Number,
-  ecoModel: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   /** The stored JSON; a value that does not decode reads as no schedule. */
   schedule: Schema.NullOr(Schema.String),
   allowVoiceCalls: Schema.Number,
@@ -535,8 +526,6 @@ const PersonalBotRawDbRow = Schema.Struct({
   hidePreviews: Schema.Unknown,
   fallbackEnabled: Schema.Unknown,
   fallbackModel: Schema.Unknown,
-  ecoEnabled: Schema.Unknown,
-  ecoModel: Schema.Unknown,
   schedule: Schema.Unknown,
   allowVoiceCalls: Schema.Unknown,
   notificationsMutedUntil: Schema.Unknown,
@@ -747,12 +736,6 @@ function toPersonalBot(row: typeof PersonalBotDbRow.Type): {
         modelSelection:
           (row.fallbackModel as ModelSelectionType | null) ?? PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
       },
-      eco: {
-        enabled: row.ecoEnabled === 1,
-        modelSelection:
-          (row.ecoModel as ModelSelectionType | null) ??
-          defaultEcoBuilderModel(row.modelSelection as ModelSelectionType),
-      },
       ...(storedSchedule.schedule === undefined ? {} : { schedule: storedSchedule.schedule }),
       allowVoiceCalls: row.allowVoiceCalls === 1,
       notificationsMutedUntil: row.notificationsMutedUntil,
@@ -920,8 +903,6 @@ export const make = Effect.gen(function* () {
           memory_auto_save,
           fallback_enabled,
           fallback_model_json,
-          eco_enabled,
-          eco_model_json,
           schedule_json,
           allow_voice_calls,
           created_at,
@@ -946,8 +927,6 @@ export const make = Effect.gen(function* () {
           ${input.memoryAutoSave === false ? 0 : 1},
           ${input.fallbackEnabled === false ? 0 : 1},
           ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
-          ${input.ecoEnabled === true ? 1 : 0},
-          ${input.ecoModelSelection === undefined ? null : JSON.stringify(input.ecoModelSelection)},
           ${input.schedule === undefined ? null : JSON.stringify(input.schedule)},
           ${input.allowVoiceCalls === true ? 1 : 0},
           ${input.createdAt},
@@ -981,8 +960,6 @@ export const make = Effect.gen(function* () {
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
-          eco_enabled AS "ecoEnabled",
-          eco_model_json AS "ecoModel",
           schedule_json AS "schedule",
           allow_voice_calls AS "allowVoiceCalls",
           notifications_muted_until AS "notificationsMutedUntil",
@@ -1018,8 +995,6 @@ export const make = Effect.gen(function* () {
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
-          eco_enabled AS "ecoEnabled",
-          eco_model_json AS "ecoModel",
           schedule_json AS "schedule",
           allow_voice_calls AS "allowVoiceCalls",
           notifications_muted_until AS "notificationsMutedUntil",
@@ -1075,14 +1050,6 @@ export const make = Effect.gen(function* () {
               ${input.fallbackModelSelection === undefined ? null : JSON.stringify(input.fallbackModelSelection)},
               fallback_model_json
             ),
-            eco_enabled = COALESCE(
-              ${input.ecoEnabled === undefined ? null : input.ecoEnabled ? 1 : 0},
-              eco_enabled
-            ),
-            eco_model_json = COALESCE(
-              ${input.ecoModelSelection === undefined ? null : JSON.stringify(input.ecoModelSelection)},
-              eco_model_json
-            ),
             schedule_json = COALESCE(
               ${input.schedule === undefined ? null : JSON.stringify(input.schedule)},
               schedule_json
@@ -1117,8 +1084,6 @@ export const make = Effect.gen(function* () {
           hide_previews AS "hidePreviews",
           fallback_enabled AS "fallbackEnabled",
           fallback_model_json AS "fallbackModel",
-          eco_enabled AS "ecoEnabled",
-          eco_model_json AS "ecoModel",
           schedule_json AS "schedule",
           allow_voice_calls AS "allowVoiceCalls",
           notifications_muted_until AS "notificationsMutedUntil",

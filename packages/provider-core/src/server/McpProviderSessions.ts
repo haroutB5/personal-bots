@@ -28,13 +28,6 @@ interface KeptHtmlRender {
 
 const hashHtml = (html: string) => NodeCrypto.createHash("sha256").update(html).digest("hex");
 
-export interface EcoHandoffResult {
-  readonly ok: boolean;
-  readonly message: string;
-}
-
-export type EcoHandoffHandler = (plan: string) => Effect.Effect<EcoHandoffResult>;
-
 export class McpProviderSessions extends Context.Service<
   McpProviderSessions,
   {
@@ -58,11 +51,6 @@ export class McpProviderSessions extends Context.Service<
       input: PageInput,
       reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
-    readonly setEcoHandoffHandler: (
-      threadId: ThreadId,
-      handler: EcoHandoffHandler | undefined,
-    ) => Effect.Effect<void>;
-    readonly callEcoHandoff: (threadId: ThreadId, plan: string) => Effect.Effect<EcoHandoffResult>;
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
 
@@ -114,7 +102,6 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
-  const ecoHandoffHandlers = yield* Ref.make(new Map<ThreadId, EcoHandoffHandler>());
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
@@ -138,13 +125,6 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.andThen(
           Ref.update(htmlRenders, (current) => {
-            const next = new Map(current);
-            next.delete(threadId);
-            return next;
-          }),
-        ),
-        Effect.andThen(
-          Ref.update(ecoHandoffHandlers, (current) => {
             const next = new Map(current);
             next.delete(threadId);
             return next;
@@ -198,29 +178,6 @@ const make = Effect.gen(function* () {
         });
       },
     ),
-    setEcoHandoffHandler: Effect.fn("McpProviderSessions.setEcoHandoffHandler")(
-      function (threadId, handler) {
-        return Ref.update(ecoHandoffHandlers, (current) => {
-          const next = new Map(current);
-          if (handler === undefined) {
-            next.delete(threadId);
-          } else {
-            next.set(threadId, handler);
-          }
-          return next;
-        });
-      },
-    ),
-    callEcoHandoff: Effect.fn("McpProviderSessions.callEcoHandoff")(function* (threadId, plan) {
-      const handler = (yield* Ref.get(ecoHandoffHandlers)).get(threadId);
-      if (handler === undefined) {
-        return {
-          ok: false,
-          message: "Eco handoff is only available on an Eco turn. Carry on without it.",
-        };
-      }
-      return yield* handler(plan);
-    }),
   });
 });
 

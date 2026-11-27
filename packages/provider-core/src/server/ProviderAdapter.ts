@@ -501,67 +501,6 @@ export const ProviderAdapterV2Error = Schema.Union([
 ]);
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
-/** One side of an Eco turn's usage, cache reads and writes kept apart. */
-export interface ProviderAdapterV2EcoUsage {
-  readonly model: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheReadTokens: number;
-  readonly cacheWriteTokens: number;
-  /** What Claude Code itself priced it at. */
-  readonly sdkCostUsd: number;
-}
-
-/** What an Eco turn did, for the personal layer to price and store. */
-export interface ProviderAdapterV2EcoOutcome {
-  readonly provider?: "claude" | "antigravity";
-  readonly threadId: string;
-  readonly runId: string;
-  readonly status: string;
-  readonly handedOff: boolean;
-  /** Why the turn ran as an ordinary one (no handoff tool), e.g. "background_work". */
-  readonly ecoSkipped?: string;
-  readonly handoffError?: string;
-  readonly plan?: string;
-  readonly startedAt: Date;
-  readonly handedOffAt?: Date;
-  readonly completedAt: Date;
-  readonly planner: ProviderAdapterV2EcoUsage & { readonly calls: number };
-  readonly builder: ProviderAdapterV2EcoUsage & { readonly calls: number };
-  readonly other: ReadonlyArray<ProviderAdapterV2EcoUsage>;
-  /** Root API calls in order: message id, the model that answered, and its side. */
-  readonly calls: ReadonlyArray<{
-    readonly id: string;
-    readonly model: string;
-    readonly side: "planner" | "builder";
-  }>;
-  /**
-   * Each API call's own usage (root and subagent calls), with 5-minute and
-   * 1-hour cache writes apart, so the turn is priced call by call.
-   */
-  readonly callUsage?: ReadonlyArray<ProviderAdapterV2EcoCallUsage>;
-}
-
-/** One API call's usage in an Eco turn. */
-export interface ProviderAdapterV2EcoCallUsage {
-  readonly id: string;
-  readonly model: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheReadTokens: number;
-  readonly cacheWrite5mTokens: number;
-  readonly cacheWrite1hTokens: number;
-}
-
-/** An Eco turn's models (Eco mode v1), and where its outcome goes. */
-export interface ProviderAdapterV2EcoTurn {
-  readonly planner: ModelSelection;
-  readonly builder: ModelSelection;
-  /** The saved builder no longer fits the bot's model: run without Eco, recording this as eco_skipped. */
-  readonly skipped?: string;
-  readonly record: (outcome: ProviderAdapterV2EcoOutcome) => Effect.Effect<void>;
-}
-
 /** The personal half of a provider session, read once when the session opens. */
 export interface ProviderAdapterV2PersonalSession {
   /** True for a chat linked to a bot, including a bot's task chat. */
@@ -572,14 +511,6 @@ export interface ProviderAdapterV2PersonalSession {
   readonly personalTaskChat: boolean;
   /** `PB_SECRET_<NAME>` variables an env-mode secret grants this session. */
   readonly secretEnvironment?: Readonly<Record<string, string>>;
-  /**
-   * Read at each turn's start (the bot's setting can change while the session
-   * lives): the turn's Eco models, or undefined when it is not an Eco turn.
-   */
-  readonly ecoForTurn?: (input: {
-    readonly messageId: string;
-    readonly modelSelection: ModelSelection;
-  }) => Effect.Effect<ProviderAdapterV2EcoTurn | undefined>;
 }
 
 export interface ProviderAdapterV2OpenSessionInput {

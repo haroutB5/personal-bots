@@ -667,26 +667,6 @@ const SecretRequestTool = Tool.make("secret_request", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
-const EcoHandoffTool = Tool.make("eco_handoff", {
-  description:
-    "Eco mode: hand your plan to the builder model, which implements and tests it in this same turn. Call it once, only when the task needs a lasting code change. The plan is markdown in six parts: Goal, Scope, Where to change, Approach, Tests, Risks.",
-  parameters: Schema.Struct({
-    plan: Schema.String.annotate({
-      description: "The six-part markdown plan.",
-    }),
-  }),
-  success: Schema.Struct({
-    message: Schema.String,
-  }),
-  failure: PersonalToolFailure,
-  dependencies,
-})
-  .annotate(Tool.Title, "Hand off plan to builder")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
-
 export const PersonalToolkit = Toolkit.make(
   SecretRequestTool,
   SearchWebTool,
@@ -702,5 +682,4 @@ export const PersonalToolkit = Toolkit.make(
   SaveMemoryTool,
   ForgetMemoryTool,
   UsageStatusTool,
-  EcoHandoffTool,
 );

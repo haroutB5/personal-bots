@@ -13,7 +13,6 @@ function makeHarness(
   responder: (request: Request) => Promise<Response> | Response,
   input = new NodeStream.PassThrough(),
   toolExposure?: string,
-  eco?: boolean,
 ) {
   const written: Array<string> = [];
   const requests: Array<{ readonly headers: Headers; readonly body: string }> = [];
@@ -21,7 +20,6 @@ function makeHarness(
     endpoint: "http://127.0.0.1:1/mcp",
     authorization: "Bearer bridge-test",
     ...(toolExposure === undefined ? {} : { toolExposure }),
-    ...(eco === undefined ? {} : { eco }),
     input,
     output: {
       write: (chunk: string) => {
@@ -508,126 +506,5 @@ describe("AcpMcpStdioBridge", () => {
 
     expect(seenHeaders).toHaveLength(1);
     expect(seenHeaders[0]?.get("t3-tool-exposure")).toBe("deferred");
-  });
-
-  it.effect("forwards t3-eco header when eco is true and omits it when unset", () =>
-    Effect.gen(function* () {
-      const withEco = makeHarness(
-        () => Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } }),
-        new NodeStream.PassThrough(),
-        undefined,
-        true,
-      );
-      const fiberWith = yield* Effect.forkChild(withEco.bridge);
-      withEco.input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
-      yield* Fiber.join(fiberWith);
-      expect(withEco.requests[0]?.headers.get("t3-eco")).toBe("1");
-
-      const withoutEco = makeHarness(
-        () => Response.json({ jsonrpc: "2.0", id: 2, result: { tools: [] } }),
-        new NodeStream.PassThrough(),
-      );
-      const fiberWithout = yield* Effect.forkChild(withoutEco.bridge);
-      withoutEco.input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
-      yield* Fiber.join(fiberWithout);
-      expect(withoutEco.requests[0]?.headers.get("t3-eco")).toBeNull();
-    }),
-  );
-
-  it.effect("forwards t3-eco header in mcpToolSession when eco is true", () =>
-    Effect.gen(function* () {
-      const seenHeaders: Array<Headers> = [];
-      yield* mcpToolSession({
-        endpoint: "http://127.0.0.1:1/mcp",
-        authorization: "Bearer bridge-test",
-        clientName: "t3-code-acp-cli",
-        eco: true,
-        fetchImplementation: async (_url, init) => {
-          seenHeaders.push(new Headers(init?.headers));
-          if (init?.method === "DELETE") return new Response(null, { status: 204 });
-          const message = JSON.parse(String(init?.body)) as { id?: string; method: string };
-          if (message.method === "notifications/initialized") {
-            return new Response(null, { status: 202 });
-          }
-          return Response.json(
-            {
-              jsonrpc: "2.0",
-              id: message.id,
-              result:
-                message.method === "initialize" ? { protocolVersion: "2025-06-18" } : { ok: true },
-            },
-            { headers: { "mcp-session-id": "session-eco" } },
-          );
-        },
-      }).pipe(
-        Effect.flatMap((session) => session.call("eco_handoff", { plan: "test" })),
-        Effect.scoped,
-      );
-
-      expect(seenHeaders.length).toBeGreaterThanOrEqual(3);
-      for (const headers of seenHeaders) {
-        expect(headers.get("t3-eco")).toBe("1");
-      }
-    }),
-  );
-
-  it("reads T3_ACP_MCP_ECO in runAcpMcpCliFastPath for both acp-mcp-bridge and acp-mcp-call", async () => {
-    const originalEnvironment = process.env;
-    const originalStdin = process.stdin;
-    const fakeStdin = new NodeStream.PassThrough();
-    Object.defineProperty(process, "stdin", { value: fakeStdin, configurable: true });
-    using _cleanup = {
-      [Symbol.dispose]: () => {
-        process.env = originalEnvironment;
-        Object.defineProperty(process, "stdin", { value: originalStdin, configurable: true });
-      },
-    };
-    process.env = {
-      ...originalEnvironment,
-      T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:1/mcp",
-      T3_ACP_MCP_AUTHORIZATION: "Bearer bridge-test",
-      T3_ACP_MCP_ECO: " 1 ",
-    };
-    const bridgeHeaders: Array<Headers> = [];
-    {
-      using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
-        bridgeHeaders.push(new Headers(init?.headers));
-        return Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } });
-      });
-      using _output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-
-      fakeStdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
-      await runAcpMcpCliFastPath("acp-mcp-bridge", []);
-    }
-    expect(bridgeHeaders).toHaveLength(1);
-    expect(bridgeHeaders[0]?.get("t3-eco")).toBe("1");
-
-    const cliHeaders: Array<Headers> = [];
-    {
-      using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
-        cliHeaders.push(new Headers(init?.headers));
-        if (init?.method === "DELETE") return new Response(null, { status: 204 });
-        const message = JSON.parse(String(init?.body)) as { id?: string; method: string };
-        if (message.method === "notifications/initialized") {
-          return new Response(null, { status: 202 });
-        }
-        return Response.json(
-          {
-            jsonrpc: "2.0",
-            id: message.id,
-            result:
-              message.method === "initialize" ? { protocolVersion: "2025-06-18" } : { content: [] },
-          },
-          { headers: { "mcp-session-id": "session-eco-cli" } },
-        );
-      });
-      using _output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-
-      await runAcpMcpCliFastPath("acp-mcp-call", ["eco_handoff", '{"plan":"test"}']);
-    }
-    expect(cliHeaders.length).toBeGreaterThanOrEqual(3);
-    for (const headers of cliHeaders) {
-      expect(headers.get("t3-eco")).toBe("1");
-    }
   });
 });

@@ -42,14 +42,7 @@ import type {
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { type BotUsageCell, UsageBotAggregator } from "./botUsage.ts";
 import { makeSliceYield } from "./sliceYield.ts";
-import {
-  createOverrideRateTable,
-  parseRateTable,
-  priceUsage as priceRecordUsage,
-  type PricedRecord,
-  type PricedUsage,
-  type RateTable,
-} from "./usagePricing.ts";
+import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -170,8 +163,6 @@ export class UsageService extends Context.Service<
     readonly readSessionUsage: (
       input: SessionUsageInput,
     ) => Effect.Effect<SessionUsageResult, UsageReadError>;
-    /** Prices one record with the same rate table and owner overrides as the Usage tab. */
-    readonly priceUsage: (record: PricedRecord) => Effect.Effect<PricedUsage>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -1280,23 +1271,7 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  const priceUsage = Effect.fn("UsageService.priceUsage")(function* (record: PricedRecord) {
-    yield* ensureRates(false);
-    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => undefined));
-    return priceRecordUsage(
-      rates,
-      record,
-      settings === undefined ? undefined : createOverrideRateTable(settings.usagePriceOverrides),
-    );
-  });
-
-  return {
-    readSummary,
-    refreshRates,
-    readSessionUsage: scanSessionUsage,
-    priceUsage,
-    awaitPersisted,
-  } as const;
+  return { readSummary, refreshRates, readSessionUsage: scanSessionUsage, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

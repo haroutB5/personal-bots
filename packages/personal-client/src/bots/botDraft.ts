@@ -1,6 +1,5 @@
 import {
   type BotAvatarShape,
-  botEco,
   botFallback,
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
@@ -22,14 +21,9 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
   agentModeOfSelection,
   botInstructionSupportWarning,
-  botOffersEco,
   buildModelSelection,
   CONTEXT_WINDOW_OPTION_ID,
   defaultModelFor,
-  type EcoDraft,
-  ecoDraftFromBot,
-  ecoDraftProblem,
-  ecoInput,
   type FallbackDraft,
   fallbackDraftFromBot,
   fallbackInput,
@@ -89,11 +83,6 @@ export interface BotDraft {
   readonly fallbackModel: string;
   readonly fallbackEffort: string;
   readonly fallbackContextWindow: string;
-  /** Eco mode: on/off and the builder's model and effort (on the bot's own provider). */
-  readonly ecoEnabled: boolean;
-  readonly ecoModel: string;
-  readonly ecoEffort: string;
-  readonly ecoContextWindow: string;
   /** The model schedule: on/off, From and To ("HH:MM") and its model, effort and context window. */
   readonly scheduleEnabled: boolean;
   readonly scheduleFrom: string;
@@ -126,28 +115,6 @@ function fallbackFields(
     fallbackModel: fallback.model,
     fallbackEffort: fallback.effort,
     fallbackContextWindow: fallback.contextWindow,
-  };
-}
-
-function ecoFields(
-  eco: EcoDraft,
-): Pick<BotDraft, "ecoEnabled" | "ecoModel" | "ecoEffort" | "ecoContextWindow"> {
-  return {
-    ecoEnabled: eco.enabled,
-    ecoModel: eco.model,
-    ecoEffort: eco.effort,
-    ecoContextWindow: eco.contextWindow,
-  };
-}
-
-export function ecoDraftOf(draft: BotDraft): EcoDraft {
-  return {
-    enabled: draft.ecoEnabled,
-    instanceId: draft.instanceId,
-    model: draft.ecoModel,
-    effort: draft.ecoEffort,
-    contextWindow: draft.ecoContextWindow,
-    agentMode: "",
   };
 }
 
@@ -210,7 +177,6 @@ export function botDraftsEqual(left: BotDraft, right: BotDraft): boolean {
 export function draftFromBot(bot: PersonalBot, nowMs: number): BotDraft {
   return {
     ...fallbackFields(fallbackDraftFromBot(bot)),
-    ...ecoFields(ecoDraftFromBot(bot)),
     ...scheduleFields(scheduleDraftFromBot(bot)),
     name: bot.name,
     title: bot.title,
@@ -265,7 +231,6 @@ export function newBotDraft(selectable: ReadonlyArray<ServerProvider>): BotDraft
     contextWindow: "",
     agentMode: "",
     ...fallbackFields(fallbackDraftFromBot(null)),
-    ...ecoFields(ecoDraftFromBot(null, first)),
     ...scheduleFields(scheduleDraftFromBot(null)),
     team: DEFAULT_PERSONAL_BOT_TEAM,
     lead: false,
@@ -289,44 +254,7 @@ export function withStartingProvider(
   if (!isNew || draft.instanceId !== "") return draft;
   const first = firstSelectableProvider(selectable);
   if (first === undefined) return draft;
-  const defaultEco = ecoDraftFromBot(null, first);
-  return {
-    ...draft,
-    instanceId: first.instanceId,
-    model: defaultModelFor(first),
-    ecoModel: defaultEco.model,
-    ecoEffort: defaultEco.effort,
-    ecoContextWindow: defaultEco.contextWindow,
-  };
-}
-
-/**
- * The draft change for picking another provider: its default model, its default
- * Eco builder when the provider offers Eco, or Eco switched off when it does
- * not, so a hidden still-enabled Eco setting is never saved with a provider
- * that cannot run it.
- */
-export function providerChangePatch(
-  instanceId: string,
-  providers: ReadonlyArray<ServerProvider>,
-): Pick<BotDraft, "instanceId" | "model"> &
-  Partial<Pick<BotDraft, "ecoEnabled" | "ecoModel" | "ecoEffort" | "ecoContextWindow">> {
-  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-  if (!botOffersEco(provider)) {
-    return {
-      instanceId,
-      model: defaultModelFor(provider),
-      ecoEnabled: false,
-    };
-  }
-  const defaultEco = ecoDraftFromBot(null, provider);
-  return {
-    instanceId,
-    model: defaultModelFor(provider),
-    ecoModel: defaultEco.model,
-    ecoEffort: defaultEco.effort,
-    ecoContextWindow: defaultEco.contextWindow,
-  };
+  return { ...draft, instanceId: first.instanceId, model: defaultModelFor(first) };
 }
 
 /**
@@ -408,7 +336,6 @@ export function assessBotDraft(
     draft.instanceId !== "" &&
     draft.model !== "" &&
     isFallbackDraftValid(fallbackDraftOf(draft)) &&
-    ecoDraftProblem(draft, ecoDraftOf(draft), providers) === null &&
     scheduleProblem === null &&
     !busy;
   return { mainModelSelection, scheduleSelection, scheduleProblem, canSave };
@@ -463,19 +390,6 @@ export function planBotSave(options: {
     fallbackDraftOf(draft),
     providers,
   );
-  // Only what differs from the saved (or default) Eco setting. A provider known
-  // not to offer Eco keeps the saved builder and only switches Eco off; an
-  // unknown provider (still loading) sends nothing so Eco is not silently lost.
-  const savedEco = saved === null ? null : botEco(saved);
-  const selectedProvider = providers.find((provider) => provider.instanceId === draft.instanceId);
-  const eco =
-    selectedProvider === undefined
-      ? undefined
-      : botOffersEco(selectedProvider)
-        ? ecoInput(savedEco, ecoDraftOf(draft), draft.instanceId, providers)
-        : savedEco?.enabled === true
-          ? { enabled: false }
-          : undefined;
   // Create sends the whole schedule when it is on; edit only what changed.
   const schedule = scheduleInput(
     saved?.schedule ?? null,
@@ -489,7 +403,6 @@ export function planBotSave(options: {
   const shared = {
     ...fields,
     ...(fallback === undefined ? {} : { fallback }),
-    ...(eco === undefined ? {} : { eco }),
     ...(schedule === undefined ? {} : { schedule }),
   };
   if (saved !== null) {

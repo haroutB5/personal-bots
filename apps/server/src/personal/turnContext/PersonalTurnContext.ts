@@ -23,21 +23,12 @@ import * as Layer from "effect/Layer";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/sql/SqlClient";
-import { PersonalBotId } from "@t3tools/contracts";
-import type {
-  ProviderAdapterV2EcoOutcome,
-  ProviderAdapterV2PersonalSession,
-} from "@t3tools/provider-core/server/ProviderAdapter";
 
 import {
   ProjectionStoreV2,
   type ProjectionStoreV2Shape,
 } from "../../orchestration-v2/ProjectionStore.ts";
 import * as PersonalBotRepository from "../PersonalBotRepository.ts";
-import { ecoTurnModels } from "../eco/ecoMode.ts";
-import { makeEcoTurnRecorder } from "../eco/ecoTurnRecorder.ts";
-import * as UsageService from "../../usage/UsageService.ts";
 import { personalBotSystemInstructions } from "../personalBotInstructions.ts";
 import { isPersonalTaskMessageId } from "../personalThreadTitles.ts";
 import { uniqueAutomaticTitle } from "../personalChatTitles.ts";
@@ -80,8 +71,6 @@ export interface PersonalSession {
   readonly personalBotId: string | undefined;
   readonly personalTaskChat: boolean;
   readonly secretEnvironment: Readonly<Record<string, string>> | undefined;
-  /** Eco mode: read at each turn of a bot's session (see `ecoTurnModels`). */
-  readonly ecoForTurn?: ProviderAdapterV2PersonalSession["ecoForTurn"];
 }
 
 export interface PersonalTurnContextShape {
@@ -123,11 +112,6 @@ export const makePersonalTurnContext = (deps: {
     PersonalProjectRepository.PersonalProjectRepository["Service"],
     "listOpenForLead"
   >;
-  /** Stores an Eco turn's outcome; absent means Eco turns are not recorded. */
-  readonly recordEcoTurn?: (
-    botId: string | undefined,
-    outcome: ProviderAdapterV2EcoOutcome,
-  ) => Effect.Effect<void>;
 }): PersonalTurnContextShape => {
   const sessionInstructions = (threadId: ThreadId) =>
     deps.personalBots.getInstructionsForThread({ threadId }).pipe(
@@ -163,13 +147,11 @@ export const makePersonalTurnContext = (deps: {
         access !== undefined && Object.keys(access.environment).length > 0
           ? access.environment
           : undefined;
-      const personalBotId = botId === null ? undefined : String(botId);
       return {
         personalBot: linked || botId !== null,
-        personalBotId,
+        personalBotId: botId === null ? undefined : String(botId),
         personalTaskChat: linked ? facts.value.taskChat || facts.value.routineChat : false,
         secretEnvironment,
-        ...(personalBotId === undefined ? {} : { ecoForTurn: ecoForTurn(personalBotId) }),
       } satisfies PersonalSession;
     }).pipe(
       Effect.catchCause((cause) =>
@@ -181,42 +163,6 @@ export const makePersonalTurnContext = (deps: {
             }).pipe(Effect.as(noPersonalSession)),
       ),
     );
-
-  /** Eco mode v1: the bot is read at each turn, so a changed setting or a fallback applies at once. */
-  const ecoForTurn =
-    (botId: string): NonNullable<PersonalSession["ecoForTurn"]> =>
-    (input) =>
-      deps.personalBots.getBotById({ botId: PersonalBotId.make(botId) }).pipe(
-        Effect.map((found) => {
-          if (Option.isNone(found)) return undefined;
-          const models = ecoTurnModels({
-            bot: found.value,
-            messageId: input.messageId,
-            modelSelection: input.modelSelection,
-          });
-          if (models === undefined) return undefined;
-          const record = deps.recordEcoTurn;
-          return {
-            ...models,
-            record: (outcome: ProviderAdapterV2EcoOutcome) =>
-              record === undefined
-                ? Effect.logWarning("personal eco turn dropped: no recorder", {
-                    botId,
-                    threadId: outcome.threadId,
-                    runId: outcome.runId,
-                  })
-                : record(botId, outcome),
-          };
-        }),
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.interrupt
-            : Effect.logDebug("eco lookup failed; running the turn without Eco", {
-                botId,
-                cause: Cause.pretty(cause).slice(0, 1_000),
-              }).pipe(Effect.as(undefined)),
-        ),
-      );
 
   const isPersonalBotThread = (threadId: ThreadId) =>
     deps.personalBots.getThreadLink({ threadId }).pipe(
@@ -400,8 +346,6 @@ const make = Effect.gen(function* () {
   const voiceCalls = yield* PersonalVoiceCallRepository.PersonalVoiceCallRepository;
   const projectionStore = yield* ProjectionStoreV2;
   const projects = yield* PersonalProjectRepository.PersonalProjectRepository;
-  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
-  const usage = yield* Effect.serviceOption(UsageService.UsageService);
   return makePersonalTurnContext({
     personalBots,
     personalSessions,
@@ -410,11 +354,6 @@ const make = Effect.gen(function* () {
     voiceCalls,
     projectionStore,
     projects,
-    recordEcoTurn: makeEcoTurnRecorder({
-      sql,
-      priceUsage: Option.isSome(usage) ? usage.value.priceUsage : undefined,
-      newId: () => crypto.randomUUID(),
-    }),
   });
 });
 

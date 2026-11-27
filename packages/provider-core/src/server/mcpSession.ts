@@ -7,13 +7,6 @@ import type * as Effect from "effect/Effect";
  */
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 
-/**
- * Sent by Eco-capable ACP clients (e.g. Antigravity) so the T3 MCP server lists
- * `eco_handoff` directly on personal-bot sessions without exposing it to Claude,
- * non-Eco, or desktop sessions.
- */
-export const MCP_ECO_HEADER = "t3-eco";
-
 /** Additional owner-configured external MCP server proxied by T3 for a personal bot. */
 export interface McpExtraServerConfig {
   readonly name: string;
