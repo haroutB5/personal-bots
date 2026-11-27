@@ -307,6 +307,50 @@ describe("Phase 3: Hybrid semantic memory (FTS5 + embeddings + RRF)", () => {
     }).pipe(Effect.provide(makeTestLayer(makeFakeEmbedderLayer()))),
   );
 
+  it.effect("prevents cross-scope crowding when another bot has many matching private notes", () =>
+    Effect.gen(function* () {
+      yield* seedBots;
+      const memory = yield* PersonalMemoryService;
+
+      // Seed 25 private BOT_B notes that match the coffee axis strongly.
+      const privateIds: Array<string> = [];
+      for (let i = 1; i <= 25; i += 1) {
+        const entry = yield* memory.save({
+          scope: "bot",
+          scopeId: BOT_B,
+          kind: "note",
+          content: `Private espresso latte roastery note ${i} in Fitzrovia`,
+          source: "bot:bot-b;from=chat",
+        });
+        privateIds.push(entry.memoryId);
+      }
+      // Seed 1 shared note visible to BOT_A with zero keyword overlap to the query.
+      const shared = yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "note",
+        content: "Shared oat flat white cafe",
+        source: "user",
+      });
+      yield* waitForEmbeddings([...privateIds, shared.memoryId]);
+
+      const botAHits = yield* memory.search({
+        query: "coffee place near Soho",
+        botId: BOT_A,
+        limit: 5,
+      });
+      expect(botAHits.map((e) => e.memoryId)).toEqual([shared.memoryId]);
+
+      const botACtx = yield* memory.contextForThread({
+        threadId: THREAD_A,
+        query: "coffee place near Soho",
+        record: false,
+      });
+      expect(botACtx.block).toContain("Shared oat flat white cafe");
+      expect(botACtx.block).not.toContain("Private espresso latte roastery");
+    }).pipe(Effect.provide(makeTestLayer(makeFakeEmbedderLayer()))),
+  );
+
   it.effect("detects paraphrased duplicates in similar() via semantic cosine >= 0.72", () =>
     Effect.gen(function* () {
       yield* seedBots;

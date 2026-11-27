@@ -23,6 +23,7 @@ export const layer = McpToolAccess.toLayer(ToolSearchToolkit, {
           : (toolName: string) =>
               McpToolExposure.isToolListedForPersonalBot(toolName, personalBot, {
                 hasDevice: scope.capabilities.has("device"),
+                hasPreview: scope.capabilities.has("preview"),
               });
       return { tools: yield* exposure.search(scope.thread.providerSessionId, query, filter) };
     }),
@@ -38,10 +39,21 @@ export const layer = McpToolAccess.toLayer(ToolSearchToolkit, {
           message: `Cannot call ${name} recursively through ${McpToolExposure.TOOL_CALL}.`,
         });
       }
+      const missingCapability = McpToolExposure.missingRequiredCapabilityForTool(
+        name,
+        scope.capabilities,
+      );
+      if (missingCapability !== null) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: `Tool '${name}' requires the '${missingCapability}' capability.`,
+        });
+      }
       if (
         scope.personalBot !== undefined &&
         !McpToolExposure.isToolListedForPersonalBot(name, scope.personalBot, {
           hasDevice: scope.capabilities.has("device"),
+          hasPreview: scope.capabilities.has("preview"),
         })
       ) {
         return yield* new OrchestratorMcpFailure({
@@ -50,6 +62,15 @@ export const layer = McpToolAccess.toLayer(ToolSearchToolkit, {
         });
       }
       const exposure = yield* McpToolExposure.McpToolExposure;
+      const isReadOnlyMode =
+        scope.client?.access === "read-only" ||
+        scope.client?.narrowedTo?.interactionMode === "plan";
+      if (isReadOnlyMode && !exposure.isReadOnly(name)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: `Tool '${name}' is not allowed in read-only or plan mode.`,
+        });
+      }
       const result = yield* exposure.callTool(name, args ?? {});
       const textParts = result.content
         .filter((item): item is McpSchema.TextContent => item.type === "text")

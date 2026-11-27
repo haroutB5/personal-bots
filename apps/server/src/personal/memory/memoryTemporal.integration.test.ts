@@ -130,6 +130,19 @@ describe("Phase 1: write-time relative-date grounding", () => {
         })
         .pipe(Effect.flip);
       expect(changingResult.message).toContain("Changing facts need observedAt");
+
+      // Kill switch T3CODE_PERSONAL_MEMORY_RETRIEVAL=legacy bypasses automatic grounding
+      const legacySaved = yield* withRetrievalEnv(
+        "legacy",
+        memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "note",
+          content: "Restarted worker yesterday under legacy mode",
+          source: "bot:bot-a;from=chat",
+        }),
+      );
+      expect(legacySaved.observedAt).toBeNull();
     }).pipe(Effect.provide(TestLayer)),
   );
 });

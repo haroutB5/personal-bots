@@ -5,8 +5,9 @@ This helper runs [Executor](https://github.com/usefulsoftwareco/executor) locall
 ## Security Defaults
 
 - Bound strictly to `127.0.0.1:4400` (not exposed on LAN or Tailscale).
-- Runs with `EXECUTOR_APPS_ALLOW_PRIVATE_FETCH=false` so Executor apps cannot fetch private/internal network addresses.
-- Persists state in the `executor-v2-data` Docker volume.
+- Runs with `--init` for proper signal handling and zombie reaping, and `EXECUTOR_APPS_ALLOW_PRIVATE_FETCH=false` so Executor apps cannot fetch private/internal network addresses.
+- Sets `BETTER_AUTH_URL` from `EXECUTOR_AUTH_URL` (default `http://localhost:4400`, or `http://localhost:<EXECUTOR_PORT>`).
+- Persists state in the `executor-v2-data` Docker volume mounted at `/app/data` (matching `EXECUTOR_DATA_DIR=/app/data`).
 - Register the server in hbots Settings -> External MCP Servers with:
   - Slug: `executor`
   - URL: `http://127.0.0.1:4400/mcp`

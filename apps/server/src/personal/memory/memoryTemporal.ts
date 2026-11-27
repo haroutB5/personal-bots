@@ -6,6 +6,9 @@ import type { PersonalMemoryEntry } from "@t3tools/contracts";
 
 type MemoryQueryIntent = "temporal_history" | "default";
 
+export const DEFAULT_PERSONAL_TIMEZONE = "Europe/London";
+export const PERSONAL_TIMEZONE_ENV = "T3CODE_PERSONAL_TIMEZONE";
+
 const MAX_RELATIVE_DAYS = 3_650;
 const MAX_RELATIVE_WEEKS = 520;
 
@@ -19,17 +22,32 @@ const WEEKDAYS: Readonly<Record<string, number>> = {
   saturday: 6,
 };
 
+function makeDateFormatter(timeZone?: string): Intl.DateTimeFormat {
+  const requested =
+    timeZone?.trim() || process.env[PERSONAL_TIMEZONE_ENV]?.trim() || DEFAULT_PERSONAL_TIMEZONE;
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: requested,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    // Invalid IANA timezone string: fall back to the server's local time zone.
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
+}
+
 function calendarPartsInTimeZone(
   nowMs: number,
   timeZone?: string,
 ): { readonly year: number; readonly month: number; readonly day: number } | null {
   if (!Number.isFinite(nowMs)) return null;
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    ...(timeZone === undefined ? {} : { timeZone }),
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  const formatter = makeDateFormatter(timeZone);
   const parts = formatter.formatToParts(new Date(nowMs));
   const year = Number(parts.find((part) => part.type === "year")?.value);
   const month = Number(parts.find((part) => part.type === "month")?.value);

@@ -36,7 +36,7 @@ import { isExpensiveSeedModel } from "../seedModel.ts";
 import { readLiveHbotsVersion } from "../releaseVersion.ts";
 import { SHIPPED_MEMORY_PROPOSALS } from "./shippedProposals.ts";
 import { memoryAutoApplyEnabled } from "./memoryAutoApply.ts";
-import { appsToJson, normaliseApps, parseAppsJson, unknownApps } from "./memoryApps.ts";
+import { appsToJson, parseAppsJson, unknownApps } from "./memoryApps.ts";
 import {
   buildTidyPrompt,
   decisionsFromJudge,

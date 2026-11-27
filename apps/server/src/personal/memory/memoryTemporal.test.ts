@@ -5,7 +5,9 @@ import { PersonalMemoryId } from "@t3tools/contracts";
 
 import {
   classifyMemoryQueryIntent,
+  DEFAULT_PERSONAL_TIMEZONE,
   groundRelativeDate,
+  PERSONAL_TIMEZONE_ENV,
   sortChronologically,
 } from "./memoryTemporal.ts";
 
@@ -63,6 +65,28 @@ describe("groundRelativeDate", () => {
     expect(
       groundRelativeDate("Yesterday we fixed what broke 3 days ago", WED_NOON_UTC, "UTC"),
     ).toBe("2026-11-24");
+  });
+
+  it("defaults to Europe/London, honors T3CODE_PERSONAL_TIMEZONE, and falls back when invalid", () => {
+    expect(DEFAULT_PERSONAL_TIMEZONE).toBe("Europe/London");
+    const prev = process.env[PERSONAL_TIMEZONE_ENV];
+    try {
+      // 2026-07-15 23:30 UTC is already 2026-07-16 00:30 in Europe/London (BST, UTC+1).
+      const bstMidnightUtc = Date.parse("2026-07-15T23:30:00.000Z");
+      delete process.env[PERSONAL_TIMEZONE_ENV];
+      expect(groundRelativeDate("Deployed today", bstMidnightUtc)).toBe("2026-07-16");
+
+      // Explicit env override shifts the calendar date accordingly.
+      process.env[PERSONAL_TIMEZONE_ENV] = "America/New_York";
+      expect(groundRelativeDate("Deployed today", bstMidnightUtc)).toBe("2026-07-15");
+
+      // Invalid timezone string falls back cleanly to server local zone without throwing.
+      process.env[PERSONAL_TIMEZONE_ENV] = "Not/A_Valid_Zone";
+      expect(groundRelativeDate("Deployed today", bstMidnightUtc)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    } finally {
+      if (prev === undefined) delete process.env[PERSONAL_TIMEZONE_ENV];
+      else process.env[PERSONAL_TIMEZONE_ENV] = prev;
+    }
   });
 });
 

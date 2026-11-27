@@ -5,6 +5,7 @@ IMAGE="${EXECUTOR_IMAGE:-ghcr.io/usefulsoftwareco/executor-selfhost:beta}"
 CONTAINER_NAME="${EXECUTOR_CONTAINER_NAME:-hbots-executor}"
 VOLUME_NAME="${EXECUTOR_VOLUME_NAME:-executor-v2-data}"
 HOST_PORT="${EXECUTOR_PORT:-4400}"
+AUTH_URL="${EXECUTOR_AUTH_URL:-http://localhost:${HOST_PORT}}"
 
 usage() {
   cat <<'EOF'
@@ -18,6 +19,7 @@ Environment overrides:
   EXECUTOR_CONTAINER_NAME Container name  (default: hbots-executor)
   EXECUTOR_VOLUME_NAME    Data volume     (default: executor-v2-data)
   EXECUTOR_PORT           Loopback port   (default: 4400)
+  EXECUTOR_AUTH_URL       Better Auth URL (default: http://localhost:<EXECUTOR_PORT>)
 EOF
 }
 
@@ -43,11 +45,13 @@ cmd_start() {
 
   docker volume create "$VOLUME_NAME" >/dev/null
   docker run -d \
+    --init \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     -p "127.0.0.1:${HOST_PORT}:4400" \
     -e EXECUTOR_APPS_ALLOW_PRIVATE_FETCH=false \
-    -v "${VOLUME_NAME}:/data" \
+    -e "BETTER_AUTH_URL=${AUTH_URL}" \
+    -v "${VOLUME_NAME}:/app/data" \
     "$IMAGE" >/dev/null
 
   echo "Started Executor container '$CONTAINER_NAME' on http://127.0.0.1:${HOST_PORT}."

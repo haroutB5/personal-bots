@@ -1457,6 +1457,11 @@ const layerToolExposure = Layer.effect(
             ),
           );
         }),
+      {
+        isReadOnly: (name) =>
+          server.tools.find(({ tool }) => tool.name === name)?.tool.annotations?.readOnlyHint ===
+          true,
+      },
     );
   }),
 );

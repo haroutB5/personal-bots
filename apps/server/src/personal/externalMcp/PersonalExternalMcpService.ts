@@ -155,6 +155,64 @@ const scrubToken = (text: string, token: string | null): string => {
   return out;
 };
 
+/**
+ * Formats a fetch failure into an actionable, secret-scrubbed message instead
+ * of Node/undici's opaque `"fetch failed"`.
+ */
+export const formatExternalMcpFetchError = (
+  cause: unknown,
+  token: string | null,
+  timeoutMs?: number,
+): string => {
+  const err = cause instanceof Error ? cause : undefined;
+  const inner =
+    err !== undefined && "cause" in err && err.cause instanceof Error ? err.cause : undefined;
+  const errCode =
+    err !== undefined && "code" in err && typeof err.code === "string" ? err.code : undefined;
+  const innerCode =
+    inner !== undefined && "code" in inner && typeof inner.code === "string"
+      ? inner.code
+      : undefined;
+  const code = innerCode ?? errCode;
+  const rawMessage = err?.message ?? String(cause);
+  const innerMessage = inner?.message ?? "";
+  const combinedLower = `${rawMessage} ${innerMessage}`.toLowerCase();
+
+  let formatted: string;
+  if (
+    err?.name === "TimeoutError" ||
+    err?.name === "AbortError" ||
+    code === "ETIMEDOUT" ||
+    code === "UND_ERR_CONNECT_TIMEOUT" ||
+    code === "UND_ERR_HEADERS_TIMEOUT" ||
+    code === "UND_ERR_BODY_TIMEOUT"
+  ) {
+    formatted =
+      timeoutMs !== undefined
+        ? `Upstream request timed out after ${timeoutMs} ms.`
+        : "Upstream request timed out.";
+  } else if (combinedLower.includes("redirect")) {
+    formatted = "Upstream server returned a redirect, which is not allowed.";
+  } else if (code === "ECONNREFUSED") {
+    formatted = "Connection refused (ECONNREFUSED). Check that the server is running.";
+  } else if (code === "ENOTFOUND") {
+    formatted = "Host not found (ENOTFOUND). Check the server URL.";
+  } else if (code === "ECONNRESET" || code === "UND_ERR_SOCKET") {
+    formatted = `Connection reset by upstream server (${code}).`;
+  } else if (rawMessage.toLowerCase() === "fetch failed" && (code !== undefined || innerMessage)) {
+    formatted =
+      code !== undefined && innerMessage.length > 0
+        ? `${code}: ${innerMessage}`
+        : innerMessage || code || rawMessage;
+  } else if (code !== undefined && !rawMessage.includes(code)) {
+    formatted = `${code}: ${rawMessage}`;
+  } else {
+    formatted = rawMessage;
+  }
+
+  return scrubToken(formatted, token);
+};
+
 export interface ResolvedExternalMcpTarget {
   readonly serverId: PersonalExternalMcpServerId;
   readonly slug: string;
@@ -560,6 +618,7 @@ export const make = (options: PersonalExternalMcpServiceOptions = {}) =>
               method: "POST",
               headers,
               body,
+              redirect: "error",
               signal: AbortSignal.timeout(MCP_TEST_TIMEOUT_MS),
             }),
           catch: (cause) => cause,
@@ -567,7 +626,7 @@ export const make = (options: PersonalExternalMcpServiceOptions = {}) =>
           Effect.match({
             onFailure: (cause) => ({
               _tag: "Error" as const,
-              message: scrubToken(cause instanceof Error ? cause.message : String(cause), token),
+              message: formatExternalMcpFetchError(cause, token, MCP_TEST_TIMEOUT_MS),
             }),
             onSuccess: (res) => ({ _tag: "Response" as const, res }),
           }),
@@ -591,7 +650,7 @@ export const make = (options: PersonalExternalMcpServiceOptions = {}) =>
           return {
             ok: false,
             statusCode: res.status,
-            error: snippet.length > 0 ? snippet : `HTTP ${res.status}`,
+            error: snippet.length > 0 ? `HTTP ${res.status}: ${snippet}` : `HTTP ${res.status}`,
           } satisfies PersonalExternalMcpTestConnectionResult;
         }
 

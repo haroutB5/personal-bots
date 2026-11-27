@@ -31,10 +31,13 @@ import { secretRedactor } from "../secrets/secretRedaction.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import {
   PersonalExternalMcpService,
+  formatExternalMcpFetchError,
   personalExternalMcpEnabled,
 } from "./PersonalExternalMcpService.ts";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+export const MAX_RESPONSE_BODY_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 60_000;
 const SENSITIVE_SITE_BLOCKED_MESSAGE =
   "Blocked: a sensitive site is open in this chat, so external MCP servers cannot be called.";
 
@@ -67,14 +70,6 @@ const parseServerIdFromPath = (pathname: string): PersonalExternalMcpServerId | 
   return PersonalExternalMcpServerId.make(raw);
 };
 
-const scrubToken = (text: string, token: string | null): string => {
-  let out = secretRedactor.redactText(text);
-  if (token !== null && token.length > 0) {
-    out = out.replaceAll(token, "[redacted]");
-  }
-  return out;
-};
-
 const redactOutboundBody = (bodyText: string, contentType: string | undefined): string => {
   if (bodyText.length === 0) return bodyText;
   const lower = (contentType ?? "").toLowerCase();
@@ -94,9 +89,151 @@ const redactOutboundBody = (bodyText: string, contentType: string | undefined): 
   return secretRedactor.redactText(bodyText);
 };
 
+const isTextLikeContentType = (contentType: string | null): boolean => {
+  if (contentType === null) return true;
+  const lower = contentType.toLowerCase();
+  return (
+    lower.includes("json") ||
+    lower.includes("text/") ||
+    lower.includes("xml") ||
+    lower.includes("javascript") ||
+    lower.includes("x-www-form-urlencoded")
+  );
+};
+
+const redactUpstreamText = (
+  bodyText: string,
+  contentType: string | null,
+  bearerToken: string | null,
+): string => {
+  if (bodyText.length === 0) return bodyText;
+  const lower = (contentType ?? "").toLowerCase();
+  let redacted: string;
+  if (
+    lower.includes("json") ||
+    bodyText.trimStart().startsWith("{") ||
+    bodyText.trimStart().startsWith("[")
+  ) {
+    try {
+      const parsed: unknown = JSON.parse(bodyText);
+      redacted = JSON.stringify(secretRedactor.redact(parsed));
+    } catch {
+      redacted = secretRedactor.redactText(bodyText);
+    }
+  } else {
+    redacted = secretRedactor.redactText(bodyText);
+  }
+  if (bearerToken !== null && bearerToken.length > 0) {
+    redacted = redacted.replaceAll(bearerToken, "[redacted]");
+  }
+  return redacted;
+};
+
+/** Start index of the longest suffix of `text` that is a proper prefix of `token`. */
+const tokenHoldStart = (text: string, token: string): number => {
+  const from = Math.max(0, text.length - (token.length - 1));
+  for (let idx = from; idx < text.length; idx += 1) {
+    const suffix = text.slice(idx);
+    if (token.startsWith(suffix)) return idx;
+  }
+  return text.length;
+};
+
+const makeRedactingSseStream = (
+  source: ReadableStream<Uint8Array>,
+  bearerToken: string | null,
+): ReadableStream<Uint8Array> => {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const secretStream = secretRedactor.stream();
+  const hasToken = bearerToken !== null && bearerToken.length > 0;
+  let tokenCarry = "";
+
+  const scrubTokenChunk = (chunk: string): string => {
+    if (!hasToken) return chunk;
+    const combined = (tokenCarry + chunk).replaceAll(bearerToken, "[redacted]");
+    const holdAt = tokenHoldStart(combined, bearerToken);
+    tokenCarry = combined.slice(holdAt);
+    return combined.slice(0, holdAt);
+  };
+
+  const flushTokenChunk = (tail: string): string => {
+    if (!hasToken) return tail;
+    const combined = (tokenCarry + tail).replaceAll(bearerToken, "[redacted]");
+    tokenCarry = "";
+    return combined;
+  };
+
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const text = decoder.decode(chunk, { stream: true });
+      const out = scrubTokenChunk(secretStream.push(text));
+      if (out.length > 0) controller.enqueue(encoder.encode(out));
+    },
+    flush(controller) {
+      const tail = decoder.decode();
+      const secretTail = secretStream.push(tail) + secretStream.flush();
+      const out = flushTokenChunk(secretTail);
+      if (out.length > 0) controller.enqueue(encoder.encode(out));
+    },
+  });
+
+  return source.pipeThrough(transform);
+};
+
+class ResponseTooLargeError extends Error {
+  constructor() {
+    super("Upstream external MCP response exceeds maximum size.");
+    this.name = "ResponseTooLargeError";
+  }
+}
+
+const readBoundedResponseBytes = async (
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array> => {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ResponseTooLargeError();
+  }
+  if (response.body === null) {
+    return new Uint8Array();
+  }
+  const reader = response.body.getReader();
+  const chunks: Array<Uint8Array> = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined || value.byteLength === 0) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ResponseTooLargeError();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (chunks.length === 0) return new Uint8Array();
+  if (chunks.length === 1) return chunks[0]!;
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+};
+
 export interface PersonalExternalMcpProxyOptions {
   readonly fetchImpl?: typeof globalThis.fetch;
   readonly env?: () => NodeJS.ProcessEnv;
+  readonly upstreamTimeoutMs?: number;
+  readonly maxResponseBytes?: number;
 }
 
 const makeProxyHandler = (
@@ -230,24 +367,48 @@ const makeProxyHandler = (
     }
 
     const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    const upstreamTimeoutMs = options.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
+    const maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BODY_BYTES;
+    const abortController = new AbortController();
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      abortController.abort(new DOMException("Upstream request timed out.", "TimeoutError"));
+    }, upstreamTimeoutMs);
+    const clearUpstreamTimeout = () => {
+      clearTimeout(timeoutHandle);
+    };
+
     const upstreamResult = yield* Effect.tryPromise({
-      try: (signal) =>
-        fetchImpl(target.url, {
+      try: (signal) => {
+        const onAbort = () => abortController.abort(signal.reason);
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+        return fetchImpl(target.url, {
           method,
           headers: upstreamHeaders,
+          redirect: "error",
           ...(outboundBody !== undefined ? { body: outboundBody } : {}),
-          signal,
-        }),
+          signal: abortController.signal,
+        }).finally(() => {
+          signal.removeEventListener("abort", onAbort);
+        });
+      },
       catch: (cause) => cause,
     }).pipe(
       Effect.match({
-        onFailure: (cause) => ({
-          _tag: "Error" as const,
-          message: scrubToken(
-            cause instanceof Error ? cause.message : String(cause),
-            target.bearerToken,
-          ),
-        }),
+        onFailure: (cause) => {
+          clearUpstreamTimeout();
+          return {
+            _tag: "Error" as const,
+            message: timedOut
+              ? `Upstream request timed out after ${upstreamTimeoutMs} ms.`
+              : formatExternalMcpFetchError(cause, target.bearerToken, upstreamTimeoutMs),
+          };
+        },
         onSuccess: (res) => ({ _tag: "Response" as const, res }),
       }),
     );
@@ -276,8 +437,11 @@ const makeProxyHandler = (
       upstreamContentType.toLowerCase().includes("text/event-stream") &&
       upstream.body !== null
     ) {
+      // Headers arrived within the timeout; keep the SSE stream open without a fixed body timeout.
+      clearUpstreamTimeout();
+      const redactedStream = makeRedactingSseStream(upstream.body, target.bearerToken);
       const bodyStream = Stream.fromReadableStream({
-        evaluate: () => upstream.body!,
+        evaluate: () => redactedStream,
         onError: (cause) => cause,
       }).pipe(Stream.catch(() => Stream.empty));
       return HttpServerResponse.stream(bodyStream, {
@@ -287,13 +451,39 @@ const makeProxyHandler = (
     }
 
     if (upstream.status === 204) {
+      clearUpstreamTimeout();
       return HttpServerResponse.empty({ status: 204, headers: responseHeaders });
     }
 
-    const bytes = yield* Effect.tryPromise({
-      try: async () => new Uint8Array(await upstream.arrayBuffer()),
-      catch: () => new Uint8Array(),
-    }).pipe(Effect.orElseSucceed(() => new Uint8Array()));
+    const bodyResult = yield* Effect.tryPromise({
+      try: () => readBoundedResponseBytes(upstream, maxResponseBytes),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.ensuring(Effect.sync(clearUpstreamTimeout)),
+      Effect.match({
+        onFailure: (cause) => ({ _tag: "Error" as const, cause }),
+        onSuccess: (bytes) => ({ _tag: "Bytes" as const, bytes }),
+      }),
+    );
+
+    if (bodyResult._tag === "Error") {
+      if (bodyResult.cause instanceof ResponseTooLargeError) {
+        return jsonRpcError(502, -32002, bodyResult.cause.message);
+      }
+      const message = timedOut
+        ? `Upstream request timed out after ${upstreamTimeoutMs} ms.`
+        : formatExternalMcpFetchError(bodyResult.cause, target.bearerToken, upstreamTimeoutMs);
+      return jsonRpcError(502, -32002, `Upstream external MCP server error: ${message}`);
+    }
+
+    let bytes = bodyResult.bytes;
+    if (bytes.byteLength > 0 && isTextLikeContentType(upstreamContentType)) {
+      const text = new TextDecoder().decode(bytes);
+      const redacted = redactUpstreamText(text, upstreamContentType, target.bearerToken);
+      if (redacted !== text) {
+        bytes = new TextEncoder().encode(redacted);
+      }
+    }
 
     return HttpServerResponse.uint8Array(bytes, {
       status: upstream.status,

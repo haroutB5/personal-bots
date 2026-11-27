@@ -3,6 +3,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -16,7 +17,11 @@ import {
   MemoryEmbedder,
   type MemoryEmbedderShape,
 } from "./MemoryEmbedder.ts";
-import { makeMemoryEmbeddingStore, QUERY_EMBED_TIMEOUT_MS } from "./memoryEmbeddingStore.ts";
+import {
+  makeMemoryEmbeddingStore,
+  MAX_CACHED_VECTORS,
+  QUERY_EMBED_TIMEOUT_MS,
+} from "./memoryEmbeddingStore.ts";
 import {
   EMBEDDING_INTER_OP_THREADS,
   EMBEDDING_INTRA_OP_THREADS,
@@ -184,5 +189,71 @@ describe("S2: ONNX session thread cap", () => {
       device: "cpu",
       session_options: { intraOpNumThreads: 2, interOpNumThreads: 1 },
     });
+  });
+});
+
+describe("Vector cache cap & single WARN", () => {
+  it("defaults MAX_CACHED_VECTORS to 20_000", () => {
+    expect(MAX_CACHED_VECTORS).toBe(20_000);
+  });
+
+  it.live("caps cached vectors to newest entries and logs a single WARN", () => {
+    const warnings: Array<string> = [];
+    const captureLogger = Logger.make(({ message }) => {
+      warnings.push(String(message));
+    });
+    const embedder = makeControllableEmbedder();
+    const testLayer = memoryLayer.pipe(
+      Layer.provideMerge(embedder.layer),
+      Layer.provideMerge(personalReadsTestLayer),
+      Layer.provideMerge(SqlitePersistence.layerMemory),
+      Layer.provideMerge(Logger.layer([captureLogger])),
+    );
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const memory = yield* PersonalMemoryService;
+      const savedIds: Array<string> = [];
+      for (let i = 1; i <= 5; i += 1) {
+        const saved = yield* memory.save({
+          scope: "shared",
+          scopeId: null,
+          kind: "note",
+          content: `Vector cache entry number ${i}`,
+          source: "user",
+        });
+        savedIds.push(saved.memoryId);
+      }
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const rows = yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS "n" FROM personal_memory_embeddings
+        `;
+        if ((rows[0]?.n ?? 0) >= 5) break;
+        yield* sleep(10);
+      }
+
+      const store = yield* makeMemoryEmbeddingStore(sql, { maxCachedVectors: 3 });
+      yield* store.ensureLoaded();
+      expect(store.cacheSize()).toBe(3);
+
+      const hits = yield* store.searchSemantic("Vector cache entry", { limit: 10, minCosine: 0.5 });
+      expect(hits).toHaveLength(3);
+      // The 3 newest entries (3, 4, 5) remain cached; oldest (1, 2) were evicted.
+      expect(new Set(hits.map((h) => h.memoryId))).toEqual(new Set(savedIds.slice(2)));
+
+      // Trigger another write past the cap and confirm the WARN is logged only once.
+      const sixth = yield* memory.save({
+        scope: "shared",
+        scopeId: null,
+        kind: "note",
+        content: "Vector cache entry number 6",
+        source: "user",
+      });
+      yield* store.scheduleEmbed(sixth.memoryId, sixth.content);
+      yield* store.flush();
+      expect(store.cacheSize()).toBe(3);
+
+      const capWarnings = warnings.filter((msg) => msg.includes("embedding cache reached cap"));
+      expect(capWarnings).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer));
   });
 });

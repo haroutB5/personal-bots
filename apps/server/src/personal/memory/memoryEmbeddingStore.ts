@@ -32,6 +32,9 @@ interface CachedEmbedding {
 
 const BACKFILL_BATCH_SIZE = 16;
 
+/** Maximum vectors kept in the in-memory LRU cache (~34 MB at 384 dims). */
+export const MAX_CACHED_VECTORS = 20_000;
+
 /**
  * Budget for the query-time embed on the per-turn retrieval path. The worker
  * can take up to its 60 s cold timeout (first use after boot, after each idle
@@ -44,6 +47,8 @@ export const QUERY_EMBED_TIMEOUT_MS = 2_500;
 export interface MemoryEmbeddingStoreOptions {
   /** Overrides {@link QUERY_EMBED_TIMEOUT_MS} (tests). */
   readonly queryEmbedTimeoutMs?: number | undefined;
+  /** Overrides {@link MAX_CACHED_VECTORS} (tests). */
+  readonly maxCachedVectors?: number | undefined;
 }
 
 export const makeMemoryEmbeddingStore = (
@@ -52,6 +57,7 @@ export const makeMemoryEmbeddingStore = (
 ) =>
   Effect.gen(function* () {
     const queryEmbedTimeoutMs = options?.queryEmbedTimeoutMs ?? QUERY_EMBED_TIMEOUT_MS;
+    const maxCachedVectors = Math.max(1, options?.maxCachedVectors ?? MAX_CACHED_VECTORS);
     const embedderOption = yield* Effect.serviceOption(MemoryEmbedder);
 
     const cache = new Map<string, CachedEmbedding>();
@@ -59,7 +65,30 @@ export const makeMemoryEmbeddingStore = (
     let loaded = false;
     let loadingPromise: Promise<void> | undefined;
     let inFlightCount = 0;
+    let cacheCapWarned = false;
     const idleWaiters: Array<() => void> = [];
+
+    const warnCacheCapOnce = (): Effect.Effect<void> => {
+      if (cacheCapWarned) return Effect.void;
+      cacheCapWarned = true;
+      return Effect.logWarning(
+        "personal memory embedding cache reached cap; evicting oldest entries",
+        { maxCachedVectors, size: cache.size },
+      );
+    };
+
+    const putCache = (memoryId: string, entry: CachedEmbedding): boolean => {
+      cache.delete(memoryId);
+      cache.set(memoryId, entry);
+      let evicted = false;
+      while (cache.size > maxCachedVectors) {
+        const oldest = cache.keys().next().value;
+        if (oldest === undefined) break;
+        cache.delete(oldest);
+        evicted = true;
+      }
+      return evicted;
+    };
 
     const bumpGeneration = (memoryId: string): number => {
       const next = (generations.get(memoryId) ?? 0) + 1;
@@ -120,21 +149,36 @@ export const makeMemoryEmbeddingStore = (
                 AND m.superseded_at IS NULL
                 AND e.model = ${embedder.modelId}
                 AND e.dims = ${embedder.dims}
+              ORDER BY m.updated_at DESC, m.seq DESC
+              LIMIT ${maxCachedVectors + 1}
             `.pipe(
-              Effect.map((rows) => {
-                for (const row of rows) {
-                  // Do not overwrite entries already mutated in memory during load.
-                  if (generations.has(row.memoryId)) continue;
-                  const decoded = decodeVector(row.vector, embedder.dims);
-                  if (decoded !== null) {
-                    cache.set(row.memoryId, {
-                      vector: normalizeVector(decoded),
-                      contentHash: row.contentHash,
-                    });
+              Effect.flatMap((rows) =>
+                Effect.gen(function* () {
+                  let hitCap = rows.length > maxCachedVectors;
+                  const kept = hitCap ? rows.slice(0, maxCachedVectors) : rows;
+                  // Insert oldest-to-newest so newest entries sit at the MRU end of the Map.
+                  for (let idx = kept.length - 1; idx >= 0; idx -= 1) {
+                    const row = kept[idx]!;
+                    // Do not overwrite entries already mutated in memory during load.
+                    if (generations.has(row.memoryId)) continue;
+                    const decoded = decodeVector(row.vector, embedder.dims);
+                    if (decoded !== null) {
+                      if (
+                        putCache(row.memoryId, {
+                          vector: normalizeVector(decoded),
+                          contentHash: row.contentHash,
+                        })
+                      ) {
+                        hitCap = true;
+                      }
+                    }
                   }
-                }
-                loaded = true;
-              }),
+                  loaded = true;
+                  if (hitCap) {
+                    yield* warnCacheCapOnce();
+                  }
+                }),
+              ),
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
                   ? Effect.interrupt
@@ -201,7 +245,9 @@ export const makeMemoryEmbeddingStore = (
             if (existing[0] !== undefined) {
               const decoded = decodeVector(existing[0].vector, embedder.dims);
               if (decoded !== null && generations.get(memoryId) === gen) {
-                cache.set(memoryId, { vector: normalizeVector(decoded), contentHash: hash });
+                if (putCache(memoryId, { vector: normalizeVector(decoded), contentHash: hash })) {
+                  yield* warnCacheCapOnce();
+                }
                 return;
               }
             }
@@ -212,7 +258,9 @@ export const makeMemoryEmbeddingStore = (
             const normalized = normalizeVector(rawVec);
             yield* upsertRow(memoryId, embedder.modelId, embedder.dims, normalized, hash);
             if (generations.get(memoryId) === gen) {
-              cache.set(memoryId, { vector: normalized, contentHash: hash });
+              if (putCache(memoryId, { vector: normalized, contentHash: hash })) {
+                yield* warnCacheCapOnce();
+              }
             }
           }).pipe(
             Effect.catchCause((cause) =>
@@ -251,7 +299,11 @@ export const makeMemoryEmbeddingStore = (
     /** Runs a fast exact cosine scan over the in-memory vector cache. */
     const searchSemantic = (
       queryText: string,
-      options: { readonly limit: number; readonly minCosine: number },
+      options: {
+        readonly limit: number;
+        readonly minCosine: number;
+        readonly allowedIds?: ReadonlySet<string> | undefined;
+      },
     ): Effect.Effect<ReadonlyArray<SemanticHit>> =>
       Option.match(embedderOption, {
         onNone: () => Effect.succeed([]),
@@ -263,6 +315,7 @@ export const makeMemoryEmbeddingStore = (
             if (trimmed.length === 0) return [];
             yield* ensureLoaded();
             if (cache.size === 0) return [];
+            if (options.allowedIds !== undefined && options.allowedIds.size === 0) return [];
             // Run the embed in its own detached fiber and wait at most the budget:
             // a timeout only stops waiting (FTS5-only for this turn); the embed
             // itself is never interrupted, so it finishes and warms the worker,
@@ -283,6 +336,7 @@ export const makeMemoryEmbeddingStore = (
             const queryVec = normalizeVector(rawQuery);
             const hits: Array<SemanticHit> = [];
             for (const [memoryId, item] of cache) {
+              if (options.allowedIds !== undefined && !options.allowedIds.has(memoryId)) continue;
               const cosine = dotProductNormalized(queryVec, item.vector);
               if (cosine >= options.minCosine) {
                 hits.push({ memoryId, cosine });
@@ -372,7 +426,9 @@ export const makeMemoryEmbeddingStore = (
                     item.hash,
                   );
                   if (generations.get(item.memoryId) === gens[i]) {
-                    cache.set(item.memoryId, { vector: normalized, contentHash: item.hash });
+                    if (putCache(item.memoryId, { vector: normalized, contentHash: item.hash })) {
+                      yield* warnCacheCapOnce();
+                    }
                     totalIndexed += 1;
                   }
                 }
@@ -401,6 +457,7 @@ export const makeMemoryEmbeddingStore = (
 
     return {
       isConfigured: Option.isSome(embedderOption),
+      cacheSize: () => cache.size,
       ensureLoaded,
       evict,
       removeEmbedding,

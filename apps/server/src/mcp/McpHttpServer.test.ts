@@ -1890,7 +1890,12 @@ it.effect(
         const scopeFor = (
           token: string,
           personalBot: McpInvocationContext.McpPersonalBotScope,
-          capabilities: ReadonlyArray<McpInvocationContext.McpCapability> = ["bots", "personal"],
+          capabilities: ReadonlyArray<McpInvocationContext.McpCapability> = [
+            "bots",
+            "personal",
+            "preview",
+          ],
+          client?: McpInvocationContext.McpClientCaller,
         ): McpInvocationContext.McpThreadInvocationScope => ({
           environmentId,
           requestNamespace: token,
@@ -1899,7 +1904,7 @@ it.effect(
             providerSessionId: token,
             providerInstanceId: ProviderInstanceId.make("antigravity"),
           },
-          client: undefined,
+          client,
           capabilities: new Set(capabilities),
           issuedAt: 1,
           personalBot,
@@ -1909,6 +1914,37 @@ it.effect(
           ["memberEager", scopeFor("memberEager", { isLead: false, isGroup: false })],
           ["groupDeferred", scopeFor("groupDeferred", { isLead: false, isGroup: true })],
           ["leadDeferred", scopeFor("leadDeferred", { isLead: true, isGroup: false })],
+          [
+            "noPreviewNoDevice",
+            scopeFor("noPreviewNoDevice", { isLead: false, isGroup: false }, ["bots", "personal"]),
+          ],
+          [
+            "readOnlyClient",
+            scopeFor(
+              "readOnlyClient",
+              { isLead: false, isGroup: false },
+              ["bots", "personal", "preview"],
+              {
+                sessionId: "ro-sess",
+                label: "read-only",
+                access: "read-only",
+              },
+            ),
+          ],
+          [
+            "planModeClient",
+            scopeFor(
+              "planModeClient",
+              { isLead: false, isGroup: false },
+              ["bots", "personal", "preview"],
+              {
+                sessionId: "plan-sess",
+                label: "plan",
+                access: "auto",
+                narrowedTo: { runtimeMode: "auto", interactionMode: "plan" },
+              },
+            ),
+          ],
         ]);
         const seenNotes: Array<string> = [];
         const PersonalSampleToolkit = Toolkit.make(
@@ -1918,11 +1954,17 @@ it.effect(
             success: Schema.Struct({ hits: Schema.Array(Schema.String) }),
             failure: OrchestratorMcpFailure,
             failureMode: "return",
-          }),
+          }).annotate(Tool.Readonly, true),
           Tool.make("preview_open", {
             description: "Open a browser preview tab.",
             parameters: Schema.Struct({ url: Schema.String }),
             success: Schema.Struct({ opened: Schema.String }),
+            failure: OrchestratorMcpFailure,
+            failureMode: "return",
+          }),
+          Tool.make("device_open", {
+            description: "Open a simulator device.",
+            success: Schema.Struct({}),
             failure: OrchestratorMcpFailure,
             failureMode: "return",
           }),
@@ -1975,6 +2017,7 @@ it.effect(
                   Effect.succeed({ hits: [query] }),
                 ),
                 preview_open: McpToolAccess.reads(({ url }) => Effect.succeed({ opened: url })),
+                device_open: McpToolAccess.reads(() => Effect.succeed({})),
                 create_routine: McpToolAccess.reads(({ prompt }) =>
                   Effect.sync(() => {
                     seenNotes.push(prompt);
@@ -2165,8 +2208,63 @@ it.effect(
             code: "capability_denied",
           });
         }
+
+        // Missing preview or device capability denies preview_open and device_open via tool_call.
+        const noCaps = yield* session("noPreviewNoDevice", true);
+        for (const [toolName, args] of [
+          ["preview_open", { url: "https://example.com" }],
+          ["device_open", {}],
+        ] as const) {
+          const denied = yield* noCaps.call("tool_call", { name: toolName, arguments: args });
+          expect(denied.isError).toBe(true);
+          expect(decodeJsonText(denied.content?.[0]?.text ?? "")).toMatchObject({
+            code: "capability_denied",
+          });
+        }
+
+        // Read-only and plan-mode clients cannot invoke non-read-only tools via tool_call,
+        // but can still invoke read-only tools.
+        for (const token of ["readOnlyClient", "planModeClient"] as const) {
+          const restricted = yield* session(token, true);
+          const blockedWrite = yield* restricted.call("tool_call", {
+            name: "create_routine",
+            arguments: { prompt: "daily" },
+          });
+          expect(blockedWrite.isError).toBe(true);
+          expect(decodeJsonText(blockedWrite.content?.[0]?.text ?? "")).toMatchObject({
+            code: "capability_denied",
+          });
+          const allowedRead = yield* restricted.call("tool_call", {
+            name: "search_memory",
+            arguments: { query: "notes" },
+          });
+          expect(allowedRead.isError).toBe(false);
+        }
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("McpToolExposure raises MAX_SESSIONS to 1024 and refreshes LRU recency on isListed", () =>
+  Effect.gen(function* () {
+    expect(McpToolExposure.MAX_SESSIONS).toBe(1024);
+    const exposure = McpToolExposure.make(
+      () => [{ name: "preview_open", description: "Open browser preview", inputSchema: {} }],
+      () => Effect.void,
+      () => Effect.die("unused"),
+      { maxSessions: 2 },
+    );
+
+    yield* exposure.search("sess-1", "preview");
+    yield* exposure.search("sess-2", "preview");
+    // Touch sess-1 via isListed so sess-2 becomes the oldest.
+    expect(exposure.isListed("sess-1", "preview_open")).toBe(true);
+    // Loading sess-3 evicts sess-2, not the active sess-1.
+    yield* exposure.search("sess-3", "preview");
+
+    expect(exposure.isListed("sess-1", "preview_open")).toBe(true);
+    expect(exposure.isListed("sess-2", "preview_open")).toBe(false);
+    expect(exposure.isListed("sess-3", "preview_open")).toBe(true);
+  }),
 );
 
 it("personal-bot deferred tools/list significantly reduces tool count and JSON bytes vs eager", () => {

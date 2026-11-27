@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type { McpSchema } from "effect/ai";
 
-import type { McpPersonalBotScope } from "./McpInvocationContext.ts";
+import type { McpCapability, McpPersonalBotScope } from "./McpInvocationContext.ts";
 
 export const TOOL_SEARCH = "tool_search";
 export const TOOL_CALL = "tool_call";
@@ -107,13 +107,35 @@ const DEVICE_MCP_TOOLS: ReadonlySet<string> = new Set([
   "device_screenshot",
 ]);
 
+/**
+ * Returns the capability missing from `capabilities` when `toolName` requires a
+ * thread capability (`preview` or `device`), or `null` when allowed.
+ */
+export const missingRequiredCapabilityForTool = (
+  toolName: string,
+  capabilities: ReadonlySet<McpCapability>,
+): McpCapability | null => {
+  if (DEVICE_MCP_TOOLS.has(toolName) || toolName.startsWith("device_")) {
+    return capabilities.has("device") ? null : "device";
+  }
+  if (
+    toolName.startsWith("preview_") ||
+    toolName === "t3_preview_list" ||
+    toolName === "t3_preview_close"
+  ) {
+    return capabilities.has("preview") ? null : "preview";
+  }
+  return null;
+};
+
 export const isToolListedForPersonalBot = (
   toolName: string,
   bot: McpPersonalBotScope,
-  options?: { readonly hasDevice?: boolean },
+  options?: { readonly hasDevice?: boolean; readonly hasPreview?: boolean },
 ): boolean => {
   if (PERSONAL_BOT_HIDDEN_DESKTOP_TOOLS.has(toolName)) return false;
   if (options?.hasDevice !== true && DEVICE_MCP_TOOLS.has(toolName)) return false;
+  if (options?.hasPreview === false && toolName.startsWith("preview_")) return false;
   if (!bot.isLead && TEAM_LEAD_ONLY_MCP_TOOLS.has(toolName)) return false;
   if (!bot.isGroup && GROUP_CHAT_ONLY_MCP_TOOLS.has(toolName)) return false;
   return true;
@@ -126,7 +148,7 @@ export const isPersonalBotDirectTool = (toolName: string, bot: McpPersonalBotSco
 
 const MAX_RESULTS = 10;
 // Sessions that ended are never reported here, so keep only the newest.
-const MAX_SESSIONS = 256;
+export const MAX_SESSIONS = 1024;
 
 export interface ListedTool {
   readonly name: string;
@@ -148,6 +170,8 @@ export class McpToolExposure extends Context.Service<
       tool: string,
       personalBot?: McpPersonalBotScope,
     ) => boolean;
+    /** Whether the registered tool declares `readOnlyHint: true`. */
+    readonly isReadOnly: (name: string) => boolean;
     /** Dispatches a deferred tool call through the server under the active MCP client context. */
     readonly callTool: (
       name: string,
@@ -168,6 +192,11 @@ const score = (tool: ListedTool, terms: ReadonlyArray<string>) => {
   return total;
 };
 
+export interface McpToolExposureOptions {
+  readonly maxSessions?: number | undefined;
+  readonly isReadOnly?: ((name: string) => boolean) | undefined;
+}
+
 export const make = (
   tools: () => ReadonlyArray<ListedTool>,
   announceListChanged: () => Effect.Effect<void>,
@@ -175,7 +204,10 @@ export const make = (
     name: string,
     args: Record<string, unknown>,
   ) => Effect.Effect<McpSchema.CallToolResult, OrchestratorMcpFailure>,
+  options?: McpToolExposureOptions,
 ) => {
+  const maxSessions = options?.maxSessions ?? MAX_SESSIONS;
+  const isReadOnly = options?.isReadOnly ?? (() => false);
   const loaded = new Map<string, Set<string>>();
   const load = (providerSessionId: string, names: ReadonlyArray<string>) => {
     const listed = loaded.get(providerSessionId) ?? new Set<string>();
@@ -183,7 +215,7 @@ export const make = (
     loaded.set(providerSessionId, listed);
     for (const name of names) listed.add(name);
     for (const oldest of loaded.keys()) {
-      if (loaded.size <= MAX_SESSIONS) break;
+      if (loaded.size <= maxSessions) break;
       loaded.delete(oldest);
     }
   };
@@ -214,11 +246,20 @@ export const make = (
       }
       return found;
     }),
-    isListed: (providerSessionId, tool, personalBot) =>
-      (personalBot === undefined
-        ? DIRECT_TOOLS.has(tool)
-        : isPersonalBotDirectTool(tool, personalBot)) ||
-      loaded.get(providerSessionId)?.has(tool) === true,
+    isListed: (providerSessionId, tool, personalBot) => {
+      const listed = loaded.get(providerSessionId);
+      if (listed !== undefined) {
+        // Refresh LRU recency so active sessions are not evicted by burst traffic.
+        loaded.delete(providerSessionId);
+        loaded.set(providerSessionId, listed);
+      }
+      return (
+        (personalBot === undefined
+          ? DIRECT_TOOLS.has(tool)
+          : isPersonalBotDirectTool(tool, personalBot)) || listed?.has(tool) === true
+      );
+    },
+    isReadOnly,
     callTool,
   });
 };

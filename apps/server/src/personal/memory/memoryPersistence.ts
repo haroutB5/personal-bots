@@ -40,6 +40,7 @@ import {
   UNDONE_REASON,
   type PersonalMemorySaveInput,
 } from "./memoryShared.ts";
+import { contextualRetrievalEnabled } from "./memoryRetrieval.ts";
 import { entrySnapshotsJson, localDay } from "./memoryTidy.ts";
 import { groundRelativeDate } from "./memoryTemporal.ts";
 import { encodeTraceJson, TRACE_KEEP_DAYS, type MemoryTurnTrace } from "./memoryTurnTrace.ts";
@@ -247,7 +248,7 @@ export const makeMemoryPersistence = (core: MemoryCore, embeddings?: MemoryEmbed
       let observedAt = input.observedAt
         ? DateTime.formatIso(DateTime.makeUnsafe(Date.parse(input.observedAt)))
         : null;
-      if (observedAt === null && input.kind === "note") {
+      if (observedAt === null && input.kind === "note" && contextualRetrievalEnabled()) {
         const grounded = groundRelativeDate(content, nowMs);
         if (
           grounded !== null &&

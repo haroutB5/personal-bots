@@ -340,4 +340,78 @@ describe("PersonalExternalMcpService CRUD, scoping, encryption & testConnection"
       }).pipe(Effect.provide(layer)),
     );
   });
+
+  it("refuses redirects and surfaces actionable scrubbed errors on testConnection", async () => {
+    let seenRedirect: RequestInit["redirect"];
+    let scenario: "econnrefused" | "enotfound" | "timeout" | "redirect" | "http500" =
+      "econnrefused";
+
+    const fakeFetch: typeof globalThis.fetch = async (_input, init) => {
+      seenRedirect = init?.redirect;
+      if (scenario === "econnrefused") {
+        const inner = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:4400"), {
+          code: "ECONNREFUSED",
+        });
+        throw new TypeError("fetch failed", { cause: inner });
+      }
+      if (scenario === "enotfound") {
+        const inner = Object.assign(new Error("getaddrinfo ENOTFOUND nope.invalid"), {
+          code: "ENOTFOUND",
+        });
+        throw new TypeError("fetch failed", { cause: inner });
+      }
+      if (scenario === "timeout") {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }
+      if (scenario === "redirect") {
+        const inner = new Error("unexpected redirect");
+        throw new TypeError("fetch failed", { cause: inner });
+      }
+      return new Response("Internal error with tok-secret-xyz987", { status: 500 });
+    };
+
+    const { layer } = makeTestLayer({ fetchImpl: fakeFetch });
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const svc = yield* PersonalExternalMcpService;
+        const created = yield* svc.create({
+          slug: "executor",
+          displayName: "Executor",
+          url: "http://127.0.0.1:4400/mcp",
+          scope: "shared",
+          bearerToken: "tok-secret-xyz987",
+        });
+
+        scenario = "econnrefused";
+        const refused = yield* svc.testConnection({ serverId: created.serverId });
+        expect(seenRedirect).toBe("error");
+        expect(refused.ok).toBe(false);
+        expect(refused.error).toContain("ECONNREFUSED");
+        expect(refused.error).not.toBe("fetch failed");
+
+        scenario = "enotfound";
+        const notFound = yield* svc.testConnection({ serverId: created.serverId });
+        expect(notFound.ok).toBe(false);
+        expect(notFound.error).toContain("ENOTFOUND");
+
+        scenario = "timeout";
+        const timedOut = yield* svc.testConnection({ serverId: created.serverId });
+        expect(timedOut.ok).toBe(false);
+        expect(timedOut.error).toContain("timed out");
+
+        scenario = "redirect";
+        const redirected = yield* svc.testConnection({ serverId: created.serverId });
+        expect(redirected.ok).toBe(false);
+        expect(redirected.error?.toLowerCase()).toContain("redirect");
+
+        scenario = "http500";
+        const httpErr = yield* svc.testConnection({ serverId: created.serverId });
+        expect(httpErr.ok).toBe(false);
+        expect(httpErr.statusCode).toBe(500);
+        expect(httpErr.error).toContain("HTTP 500");
+        expect(httpErr.error).toContain("[redacted]");
+        expect(httpErr.error).not.toContain("tok-secret-xyz987");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
 });

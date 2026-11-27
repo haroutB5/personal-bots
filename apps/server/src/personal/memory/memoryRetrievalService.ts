@@ -152,6 +152,21 @@ export const makeMemoryRetrieval = (
     );
   };
 
+  /**
+   * Pre-fetches live memory IDs visible to `filter` so semantic top-N scanning
+   * never lets other scopes crowd out visible entries before scope filtering.
+   */
+  const visibleMemoryIds = (filter: PersonalMemoryScopeFilter) =>
+    sql<{ readonly memoryId: string }>`
+      SELECT m.memory_id AS "memoryId" FROM personal_memory m
+      WHERE m.deleted_at IS NULL
+        AND m.superseded_at IS NULL
+        AND ${scopeCondition(filter)}
+        AND ${filter.excludeTaskSummaries === true ? sql`m.kind <> 'task_summary'` : sql`1 = 1`}
+        AND ${filter.excludePreferences === true ? sql`m.kind <> 'preference'` : sql`1 = 1`}
+        AND ${filter.onlyKind === undefined ? sql`1 = 1` : sql`m.kind = ${filter.onlyKind}`}
+    `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.memoryId))));
+
   const search: PersonalMemoryService["Service"]["search"] = (input) =>
     Effect.gen(function* () {
       const limit = input.limit ?? PERSONAL_MEMORY_RETRIEVAL_LIMIT;
@@ -168,10 +183,17 @@ export const makeMemoryRetrieval = (
         [
           match === null ? Effect.succeed([]) : searchScored(match, input, limit),
           useSemantic
-            ? embeddings.searchSemantic(input.query, {
-                limit: Math.max(limit * 2, 20),
-                minCosine: SEMANTIC_MIN_COSINE,
-              })
+            ? visibleMemoryIds(input).pipe(
+                Effect.flatMap((allowedIds) =>
+                  allowedIds.size === 0
+                    ? Effect.succeed([] as ReadonlyArray<SemanticHit>)
+                    : embeddings.searchSemantic(input.query, {
+                        limit: Math.max(limit * 4, 120),
+                        minCosine: SEMANTIC_MIN_COSINE,
+                        allowedIds,
+                      }),
+                ),
+              )
             : Effect.succeed([] as ReadonlyArray<SemanticHit>),
         ],
         { concurrency: "unbounded" },
@@ -230,10 +252,20 @@ export const makeMemoryRetrieval = (
             limit: 30,
           }),
           useSemantic
-            ? embeddings.searchSemantic(content, {
-                limit: 20,
-                minCosine: SEMANTIC_SIMILAR_THRESHOLD,
-              })
+            ? visibleMemoryIds({
+                botId: input.botId,
+                excludeTaskSummaries: true,
+              }).pipe(
+                Effect.flatMap((allowedIds) =>
+                  allowedIds.size === 0
+                    ? Effect.succeed([] as ReadonlyArray<SemanticHit>)
+                    : embeddings.searchSemantic(content, {
+                        limit: Math.max((input.limit ?? 5) * 4, 120),
+                        minCosine: SEMANTIC_SIMILAR_THRESHOLD,
+                        allowedIds,
+                      }),
+                ),
+              )
             : Effect.succeed([] as ReadonlyArray<SemanticHit>),
         ],
         { concurrency: "unbounded" },
@@ -428,10 +460,21 @@ export const makeMemoryRetrieval = (
           poolFor("note"),
           input.excludeTaskSummaries ? Effect.succeed([]) : poolFor("task_summary"),
           useSemantic
-            ? embeddings.searchSemantic(semanticQuery, {
-                limit: 40,
-                minCosine: SEMANTIC_MIN_COSINE,
-              })
+            ? visibleMemoryIds({
+                ...input.scope,
+                excludePreferences: true,
+                ...(input.excludeTaskSummaries ? { excludeTaskSummaries: true } : {}),
+              }).pipe(
+                Effect.flatMap((allowedIds) =>
+                  allowedIds.size === 0
+                    ? Effect.succeed([] as ReadonlyArray<SemanticHit>)
+                    : embeddings.searchSemantic(semanticQuery, {
+                        limit: 120,
+                        minCosine: SEMANTIC_MIN_COSINE,
+                        allowedIds,
+                      }),
+                ),
+              )
             : Effect.succeed([] as ReadonlyArray<SemanticHit>),
         ],
         { concurrency: "unbounded" },

@@ -35,7 +35,12 @@ import {
   PersonalExternalMcpService,
   make as makeExternalMcpService,
 } from "./PersonalExternalMcpService.ts";
-import { makePersonalExternalMcpProxyRouteLayer } from "./proxyRoute.ts";
+import {
+  DEFAULT_UPSTREAM_TIMEOUT_MS,
+  MAX_RESPONSE_BODY_BYTES,
+  makePersonalExternalMcpProxyRouteLayer,
+  type PersonalExternalMcpProxyOptions,
+} from "./proxyRoute.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -131,7 +136,10 @@ const makeInMemorySecretStoreLayer = () => {
   });
 };
 
-const setupFixture = async (envProvider: () => NodeJS.ProcessEnv = () => ({})) => {
+const setupFixture = async (
+  envProvider: () => NodeJS.ProcessEnv = () => ({}),
+  proxyOptions: Omit<PersonalExternalMcpProxyOptions, "env"> = {},
+) => {
   const upstream = await startFakeUpstreamMcp();
   const tokens = new Map<string, ThreadId>();
   const registryLayer = Layer.succeed(McpSessionRegistry.McpSessionRegistry, {
@@ -199,7 +207,7 @@ const setupFixture = async (envProvider: () => NodeJS.ProcessEnv = () => ({})) =
   ).pipe(Layer.provideMerge(serviceLayer));
 
   const { handler, dispose } = HttpRouter.toWebHandler(
-    makePersonalExternalMcpProxyRouteLayer({ env: envProvider }).pipe(
+    makePersonalExternalMcpProxyRouteLayer({ env: envProvider, ...proxyOptions }).pipe(
       Layer.provideMerge(captureLayer),
     ),
     { disableLogger: true },
@@ -447,5 +455,168 @@ describe("external MCP reverse proxy route", () => {
     );
     expect(res.status).toBe(503);
     expect(upstream.requests).toHaveLength(0);
+  });
+
+  it("refuses upstream redirects (redirect: error) and returns HTTP 502", async () => {
+    let seenRedirect: RequestInit["redirect"];
+    const redirectingServer = NodeHttp.createServer((_req, res) => {
+      res.writeHead(302, { location: "http://127.0.0.1:9/evil" });
+      res.end();
+    });
+    await new Promise<void>((resolve) => redirectingServer.listen(0, "127.0.0.1", resolve));
+    const redirectAddr = redirectingServer.address() as NodeNet.AddressInfo;
+    cleanups.push(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          redirectingServer.close((err) => (err ? reject(err) : resolve())),
+        ),
+    );
+
+    const { handler, runEffect, server, proxyUrl } = await setupFixture(() => ({}), {
+      fetchImpl: (input, init) => {
+        seenRedirect = init?.redirect;
+        return globalThis.fetch(input, init);
+      },
+    });
+    await runEffect(
+      Effect.gen(function* () {
+        const svc = yield* PersonalExternalMcpService;
+        yield* svc.update({
+          serverId: server.serverId,
+          url: `http://127.0.0.1:${redirectAddr.port}/mcp`,
+        });
+      }),
+    );
+
+    const res = await handler(
+      new Request(proxyUrl, {
+        method: "POST",
+        headers: { authorization: "Bearer t3-bot-token", "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(seenRedirect).toBe("error");
+    expect(res.status).toBe(502);
+    const payload = (await res.json()) as { readonly error?: { readonly message?: string } };
+    expect(payload.error?.message?.toLowerCase()).toContain("redirect");
+  });
+
+  it("times out stalled upstream requests and returns HTTP 502", async () => {
+    expect(DEFAULT_UPSTREAM_TIMEOUT_MS).toBe(60_000);
+    const { handler, proxyUrl } = await setupFixture(() => ({}), {
+      upstreamTimeoutMs: 50,
+      fetchImpl: (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          });
+        }),
+    });
+
+    const res = await handler(
+      new Request(proxyUrl, {
+        method: "POST",
+        headers: { authorization: "Bearer t3-bot-token", "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(502);
+    const payload = (await res.json()) as { readonly error?: { readonly message?: string } };
+    expect(payload.error?.message).toContain("timed out");
+  });
+
+  it("bounds non-SSE upstream response bodies to 4 MiB and returns HTTP 502 when exceeded", async () => {
+    expect(MAX_RESPONSE_BODY_BYTES).toBe(4 * 1024 * 1024);
+    const { handler, proxyUrl } = await setupFixture(() => ({}), {
+      maxResponseBytes: 128,
+      fetchImpl: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(80).fill(65));
+              controller.enqueue(new Uint8Array(80).fill(66));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+
+    const res = await handler(
+      new Request(proxyUrl, {
+        method: "POST",
+        headers: { authorization: "Bearer t3-bot-token", "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(res.status).toBe(502);
+    const payload = (await res.json()) as { readonly error?: { readonly message?: string } };
+    expect(payload.error?.message).toContain("exceeds maximum size");
+  });
+
+  it("scrubs saved personal secrets and upstream bearer token from JSON and SSE upstream responses", async () => {
+    secretRedactor.set("OPENAI_KEY", "sk-live-secret-9876543210");
+    let sseMode = false;
+    const { handler, proxyUrl } = await setupFixture(() => ({}), {
+      fetchImpl: async () => {
+        if (sseMode) {
+          const encoder = new TextEncoder();
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                // Split both the saved secret and upstream bearer token across chunk boundaries.
+                controller.enqueue(encoder.encode('event: message\ndata: {"k":"sk-live-sec'));
+                controller.enqueue(encoder.encode('ret-9876543210","tok":"upstream-executor-'));
+                controller.enqueue(encoder.encode('secret-98765"}\n\n'));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              leakedSecret: "sk-live-secret-9876543210",
+              leakedBearer: "upstream-executor-secret-98765",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    // Non-SSE JSON response
+    sseMode = false;
+    const jsonRes = await handler(
+      new Request(proxyUrl, {
+        method: "POST",
+        headers: { authorization: "Bearer t3-bot-token", "content-type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(jsonRes.status).toBe(200);
+    const jsonBody = await jsonRes.text();
+    expect(jsonBody).toContain("[secret OPENAI_KEY]");
+    expect(jsonBody).toContain("[redacted]");
+    expect(jsonBody).not.toContain("sk-live-secret-9876543210");
+    expect(jsonBody).not.toContain("upstream-executor-secret-98765");
+
+    // SSE response across chunk boundaries
+    sseMode = true;
+    const sseRes = await handler(
+      new Request(proxyUrl, {
+        method: "GET",
+        headers: { authorization: "Bearer t3-bot-token", accept: "text/event-stream" },
+      }),
+    );
+    expect(sseRes.status).toBe(200);
+    const sseBody = await sseRes.text();
+    expect(sseBody).toContain("[secret OPENAI_KEY]");
+    expect(sseBody).toContain("[redacted]");
+    expect(sseBody).not.toContain("sk-live-secret-9876543210");
+    expect(sseBody).not.toContain("upstream-executor-secret-98765");
   });
 });
