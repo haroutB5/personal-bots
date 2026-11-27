@@ -7,7 +7,8 @@
  * only the fallback for a side with no per-call usage. Claude Code's own
  * figure is kept beside it for comparison.
  *
- * Recording never fails a turn: a write or pricing error is logged.
+ * Recording never fails a turn: a write or pricing error, or a row dropped (no
+ * database, or interrupted before it was stored), is logged.
  *
  * @module personal/eco/ecoTurnRecorder
  */
@@ -136,7 +137,12 @@ export const makeEcoTurnRecorder =
   }) =>
   (botId: string | undefined, outcome: ProviderAdapterV2EcoOutcome): Effect.Effect<void> =>
     Effect.gen(function* () {
-      if (Option.isNone(deps.sql)) return;
+      if (Option.isNone(deps.sql)) {
+        return yield* Effect.logWarning("personal eco turn dropped: no database", {
+          threadId: outcome.threadId,
+          runId: outcome.runId,
+        });
+      }
       const sql = deps.sql.value;
       const at = outcome.completedAt.getTime();
       const pricedCalls = yield* Effect.forEach(outcome.callUsage ?? [], (call) =>
@@ -192,12 +198,22 @@ export const makeEcoTurnRecorder =
       `;
     }).pipe(
       Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.void
-          : Effect.logWarning("personal eco turn could not be recorded", {
-              threadId: outcome.threadId,
-              runId: outcome.runId,
-              cause: Cause.pretty(cause).slice(0, 1_000),
-            }),
+        Effect.logWarning(
+          Cause.hasInterruptsOnly(cause)
+            ? "personal eco turn dropped: interrupted before it was stored"
+            : "personal eco turn could not be recorded",
+          {
+            threadId: outcome.threadId,
+            runId: outcome.runId,
+            cause: Cause.pretty(cause).slice(0, 1_000),
+          },
+        ),
+      ),
+      // A fiber interrupted from outside (the session closing) skips catchCause.
+      Effect.onInterrupt(() =>
+        Effect.logWarning("personal eco turn dropped: interrupted before it was stored", {
+          threadId: outcome.threadId,
+          runId: outcome.runId,
+        }),
       ),
     );

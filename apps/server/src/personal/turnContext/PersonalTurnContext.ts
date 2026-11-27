@@ -199,7 +199,13 @@ export const makePersonalTurnContext = (deps: {
           return {
             ...models,
             record: (outcome: ProviderAdapterV2EcoOutcome) =>
-              record === undefined ? Effect.void : record(botId, outcome),
+              record === undefined
+                ? Effect.logWarning("personal eco turn dropped: no recorder", {
+                    botId,
+                    threadId: outcome.threadId,
+                    runId: outcome.runId,
+                  })
+                : record(botId, outcome),
           };
         }),
         Effect.catchCause((cause) =>

@@ -1,5 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -229,3 +231,46 @@ it.effect("prices each call from its own usage, with 1-hour cache writes at the 
     ]);
   }).pipe(Effect.provide(personalTestDatabase)),
 );
+
+const minimalOutcome = {
+  threadId: "thread-drop",
+  runId: "run-drop",
+  status: "completed",
+  handedOff: false,
+  startedAt: new Date(0),
+  completedAt: new Date(1_000),
+  planner: side("claude-opus-5-5", 1),
+  builder: side("claude-sonnet-5-5", 0),
+  other: [],
+  calls: [],
+};
+
+it.effect("logs an Eco turn it drops: no database, or interrupted before it is stored", () => {
+  const warnings: Array<unknown> = [];
+  const logger = Logger.make(({ message, logLevel }) => {
+    if (logLevel === "Warn") warnings.push(message);
+  });
+  return Effect.gen(function* () {
+    yield* makeEcoTurnRecorder({
+      sql: Option.none(),
+      priceUsage: undefined,
+      newId: () => "eco-none",
+    })("bot-1", minimalOutcome);
+    const sql = yield* SqlClient.SqlClient;
+    const fiber = yield* makeEcoTurnRecorder({
+      sql: Option.some(sql),
+      // Pricing never answers, so the row is still pending when the session closes.
+      priceUsage: (() => Effect.never) as never,
+      newId: () => "eco-stuck",
+    })("bot-1", { ...minimalOutcome, callUsage: [] }).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(fiber);
+    expect(JSON.stringify(warnings)).toContain("personal eco turn dropped: no database");
+    expect(JSON.stringify(warnings)).toContain(
+      "personal eco turn dropped: interrupted before it was stored",
+    );
+  }).pipe(
+    Effect.provide(personalTestDatabase),
+    Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+  );
+});
