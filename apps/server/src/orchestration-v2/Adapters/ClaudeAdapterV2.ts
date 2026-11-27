@@ -12273,6 +12273,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const applySelectionLive = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           selection: CompiledClaudeModelSelection,
+          // Eco reverts: a planner without an effort puts the model's default back
+          // (effortLevel null), so the builder's effort does not stick.
+          resetEffort = false,
         ) {
           // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
           yield* (
@@ -12282,7 +12285,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : Effect.void
           ).pipe(
             Effect.andThen(
-              live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(selection)),
+              live.query.applyFlagSettings({
+                ...(resetEffort && selection.effort === undefined ? { effortLevel: null } : {}),
+                ...claudeLiveSelectionFlagSettings(selection),
+              }),
             ),
             Effect.tapError(() =>
               Effect.sync(() => {
@@ -12303,7 +12309,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) =>
           Effect.suspend(() => {
             live.selection = { ...live.selection, queryIdentity: "" };
-            return applySelectionLive(live, planner);
+            return applySelectionLive(live, planner, true);
           });
 
         // Eco mode: the handoff lands the builder on the running process before

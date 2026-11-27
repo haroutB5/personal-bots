@@ -6942,6 +6942,48 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
+    // A catalog model without an explicit effort compiles to its default effort, which the
+    // restore sends; only a model the catalog does not know compiles to no effort at all.
+    it.effect("resets effort at turn end when the planner has no effort of its own", () =>
+      Effect.gen(function* () {
+        const plannerNoEffort = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-planner-custom",
+        } satisfies ModelSelection;
+        const { harness, outcomes } = yield* ecoHarness(true, false, {
+          planner: plannerNoEffort,
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-eco-no-effort"),
+            text: "Fix the failing test",
+            attachments: [],
+            providerTurnOrdinal: 1,
+            modelSelection: plannerNoEffort,
+          }),
+        );
+        const handoff = ecoHandoffHandlerOf(ecoServerOf(harness.getOpenedOptions()));
+        if (handoff === undefined) throw new Error("no eco_handoff handler");
+        assert.isUndefined((yield* Effect.promise(() => handoff("## Goal\nFix it"))).isError);
+        assert.deepInclude(harness.liveSelectionChanges, {
+          effortLevel: "high",
+          fastMode: null,
+          ultracode: null,
+        });
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.until(() => outcomes.length === 1);
+        assert.deepEqual(harness.liveSelectionChanges.slice(-2), [
+          { model: "claude-planner-custom" },
+          { effortLevel: null, fastMode: null, ultracode: null },
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
     it.effect("leaves an ordinary turn alone: no eco_handoff, no guard, no instruction", () =>
       Effect.gen(function* () {
         const { harness, outcomes } = yield* ecoHarness(false);
