@@ -2405,6 +2405,10 @@ describe("AntigravityAdapterV2 Eco mode", () => {
       const runtimeHttpHeaders: Array<
         ReadonlyArray<{ readonly name: string; readonly value: string }>
       > = [];
+      const runtimeStdioEnv: Array<
+        ReadonlyArray<{ readonly name: string; readonly value: string }>
+      > = [];
+      const runtimeProcessEnv: Array<NodeJS.ProcessEnv | undefined> = [];
       const configChanges: Array<{ readonly id: string; readonly value: unknown }> = [];
       const promptsSeen: Array<{ readonly text: string; readonly model: string }> = [];
       let currentModel = "gemini-4-neon";
@@ -2420,6 +2424,12 @@ describe("AntigravityAdapterV2 Eco mode", () => {
               "type" in server && server.type === "http" && server.name === "t3-code",
           );
           runtimeHttpHeaders.push(t3Http?.headers ?? []);
+          const t3Stdio = input.mcpServers.find(
+            (server): server is Extract<EffectAcpSchema.McpServer, { readonly command: string }> =>
+              "command" in server && server.name === "t3-code",
+          );
+          runtimeStdioEnv.push(t3Stdio?.env ?? []);
+          runtimeProcessEnv.push(input.processEnvironment);
 
           let permissionHandler: PermissionHandler | undefined;
           let sessionUpdateHandler: SessionUpdateHandler | undefined;
@@ -2615,6 +2625,8 @@ describe("AntigravityAdapterV2 Eco mode", () => {
         planner,
         builder,
         runtimeHttpHeaders,
+        runtimeStdioEnv,
+        runtimeProcessEnv,
         configChanges,
         promptsSeen,
         getCurrentModel: () => currentModel,
@@ -2789,13 +2801,21 @@ describe("AntigravityAdapterV2 Eco mode", () => {
         const outcome = yield* Deferred.await(harness.outcomeRecorded);
 
         assert.equal(terminal.type === "turn.terminal" ? terminal.status : null, "completed");
-        // Initial runtime had no t3-eco header; restarted Eco runtime has t3-eco: 1.
+        // Initial runtime had no t3-eco header or stdio env; restarted Eco runtime has both.
         assert.isFalse(
           harness.runtimeHttpHeaders[0]?.some((h) => h.name === "t3-eco" && h.value === "1"),
         );
         assert.isTrue(
           harness.runtimeHttpHeaders[1]?.some((h) => h.name === "t3-eco" && h.value === "1"),
         );
+        assert.isFalse(
+          harness.runtimeStdioEnv[0]?.some((e) => e.name === "T3_ACP_MCP_ECO" && e.value === "1"),
+        );
+        assert.isTrue(
+          harness.runtimeStdioEnv[1]?.some((e) => e.name === "T3_ACP_MCP_ECO" && e.value === "1"),
+        );
+        assert.isUndefined(harness.runtimeProcessEnv[0]?.T3_ACP_MCP_ECO);
+        assert.equal(harness.runtimeProcessEnv[1]?.T3_ACP_MCP_ECO, "1");
         assert.deepEqual(handoffReply, { ok: true, message: ECO_ACP_HANDOFF_PLANNER_ACK });
         assert.isFalse(duplicateHandoffReply?.ok);
         // Edit, rm -rf, and post-handoff-in-prompt-1 edit were denied; git status and builder edit were allowed.
@@ -3261,11 +3281,15 @@ describe("AntigravityAdapterV2 Eco mode", () => {
           }),
         );
         const outcome = yield* Deferred.await(harness.outcomeRecorded);
-        // Runtime was NOT restarted (still 1 runtime, no t3-eco header).
+        // Runtime was NOT restarted (still 1 runtime, no t3-eco header or stdio env).
         assert.equal(harness.runtimeHttpHeaders.length, 1);
         assert.isFalse(
           harness.runtimeHttpHeaders[0]?.some((h) => h.name === "t3-eco" && h.value === "1"),
         );
+        assert.isFalse(
+          harness.runtimeStdioEnv[0]?.some((e) => e.name === "T3_ACP_MCP_ECO" && e.value === "1"),
+        );
+        assert.isUndefined(harness.runtimeProcessEnv[0]?.T3_ACP_MCP_ECO);
         assert.notInclude(harness.promptsSeen[0]?.text ?? "", "<eco_mode>");
         assert.equal(outcome.ecoSkipped, "background_work");
         assert.isFalse(outcome.handedOff);

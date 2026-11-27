@@ -1032,6 +1032,7 @@ export function acpMcpContext(
           ...(deferMcpTools === true
             ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" }]
             : []),
+          ...(ecoCapable === true ? [{ name: "T3_ACP_MCP_ECO", value: "1" }] : []),
         ],
       },
       ...(session.extraMcpServers ?? []).map((extra) => ({
@@ -1085,6 +1086,7 @@ export function acpMcpContext(
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
       ...(self.entrypoint === undefined ? {} : { T3_ACP_MCP_ENTRYPOINT: self.entrypoint }),
+      ...(ecoCapable === true ? { T3_ACP_MCP_ECO: "1" } : {}),
     },
   };
 }
