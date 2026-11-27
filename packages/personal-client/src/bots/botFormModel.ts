@@ -1,5 +1,7 @@
 import type {
   ModelSelection,
+  PersonalBotEco,
+  PersonalBotEcoInput,
   PersonalBotFallback,
   PersonalBotFallbackInput,
   PersonalBotSchedule,
@@ -9,8 +11,10 @@ import type {
   ServerProviderModel,
 } from "@t3tools/contracts";
 import {
+  botEco,
   botFallback,
   driverCarriesBotInstructions,
+  PERSONAL_BOT_DEFAULT_ECO_MODEL,
   PERSONAL_BOT_DEFAULT_FALLBACK_MODEL,
   safeDefaultBotModelSlug,
   scheduleMatchesOwnModel,
@@ -312,6 +316,76 @@ export function fallbackInput(
     input.modelSelection = selection;
   }
   return Object.keys(input).length === 0 ? undefined : input;
+}
+
+/** What the Eco section of the bot form holds; the builder runs on the bot's own provider. */
+export interface EcoDraft extends ModelDraft {
+  readonly enabled: boolean;
+}
+
+/** Eco mode is Claude Code only: the builder takes over inside the running Claude process. */
+export function botOffersEco(provider: ServerProvider | undefined): boolean {
+  return provider?.driver === "claudeAgent";
+}
+
+/** The Eco setting a bot has now (off, with Sonnet 5.5 as the builder, when never set). */
+export function ecoDraftFromBot(
+  bot: { readonly eco?: PersonalBotEco; readonly modelSelection: ModelSelection } | null,
+): EcoDraft {
+  const { enabled, modelSelection } =
+    bot === null ? { enabled: false, modelSelection: PERSONAL_BOT_DEFAULT_ECO_MODEL } : botEco(bot);
+  return { enabled, ...modelDraftFromSelection(modelSelection) };
+}
+
+/** Why the Eco builder can't be saved, or null. It must be another model on the bot's provider. */
+export function ecoDraftProblem(
+  main: Pick<ModelDraft, "instanceId" | "model">,
+  draft: EcoDraft,
+): string | null {
+  if (!draft.enabled) return null;
+  if (draft.model === "") return "Pick the model that builds the plan.";
+  if (draft.model === main.model) return "Pick a cheaper model than the bot's own.";
+  return null;
+}
+
+/**
+ * What to send for Eco: only what differs from the saved setting (on create,
+ * from the default), so a builder left at its default keeps following the bot's
+ * provider. The builder always runs on the bot's own provider instance.
+ */
+export function ecoInput(
+  saved: PersonalBotEco | null,
+  draft: EcoDraft,
+  mainInstanceId: string,
+  providers: ReadonlyArray<ServerProvider>,
+): PersonalBotEcoInput | undefined {
+  const baselineSelection =
+    saved?.modelSelection ??
+    ecoDraftSelection(ecoDraftFromBot(null), mainInstanceId, providers, null);
+  const selection =
+    draft.model === "" || mainInstanceId === ""
+      ? null
+      : ecoDraftSelection(draft, mainInstanceId, providers, saved?.modelSelection ?? null);
+  const savedEnabled = saved?.enabled ?? false;
+  const input: { enabled?: boolean; modelSelection?: ModelSelection } = {};
+  if (savedEnabled !== draft.enabled) input.enabled = draft.enabled;
+  if (selection !== null && !modelSelectionsEqual(baselineSelection, selection)) {
+    input.modelSelection = selection;
+  }
+  return Object.keys(input).length === 0 ? undefined : input;
+}
+
+function ecoDraftSelection(
+  draft: ModelDraft,
+  mainInstanceId: string,
+  providers: ReadonlyArray<ServerProvider>,
+  base: ModelSelection | null,
+): ModelSelection {
+  return buildModelSelection(
+    { ...draft, instanceId: mainInstanceId, agentMode: "" },
+    providers.find((provider) => provider.instanceId === mainInstanceId),
+    base,
+  );
 }
 
 /**

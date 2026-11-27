@@ -97,6 +97,7 @@ export const layerLive = Layer.effect(
                   ...(personal.secretEnvironment === undefined
                     ? {}
                     : { secretEnvironment: personal.secretEnvironment }),
+                  ...(personal.ecoForTurn === undefined ? {} : { ecoForTurn: personal.ecoForTurn }),
                 },
               }
             : {}),

@@ -16,7 +16,10 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 
 import {
+  botEco,
   botTeam,
+  defaultEcoBuilderModel,
+  type PersonalBotEcoInput,
   DEFAULT_PERSONAL_BOT_TEAM,
   driverCarriesBotInstructions,
   isBotOnTeam,
@@ -70,6 +73,7 @@ import { PersonalProviders } from "./engine/PersonalProviders.ts";
 import * as PersonalEngine from "./engine/PersonalEngine.ts";
 import { PersonalEngineV2Live } from "./engine/PersonalEngineV2Live.ts";
 import * as PersonalBotRepository from "./PersonalBotRepository.ts";
+import { ecoBuilderProblem } from "./eco/ecoMode.ts";
 import {
   isPlaceholderChatTitle,
   requireFreeOwnerTitle,
@@ -647,6 +651,44 @@ export const make = Effect.gen(function* () {
       return match;
     });
 
+  /**
+   * Eco mode's save-time check: an Eco bot's builder must switch live from
+   * the bot's model (same instance, same thinking setting). A builder left at
+   * its default follows the bot's model, so it is re-derived from the new one.
+   */
+  const resolveEco = (
+    current: PersonalBot | undefined,
+    ecoInput: PersonalBotEcoInput | undefined,
+    planner: ModelSelection,
+  ): Effect.Effect<
+    { readonly enabled?: boolean; readonly modelSelection?: ModelSelection },
+    PersonalBotsError
+  > =>
+    Effect.gen(function* () {
+      const currentEco = current === undefined ? undefined : botEco(current);
+      const enabled = ecoInput?.enabled ?? currentEco?.enabled ?? false;
+      const currentIsDefault =
+        current === undefined ||
+        currentEco === undefined ||
+        JSON.stringify(currentEco.modelSelection) ===
+          JSON.stringify(defaultEcoBuilderModel(current.modelSelection));
+      const builder =
+        ecoInput?.modelSelection ??
+        (currentIsDefault ? defaultEcoBuilderModel(planner) : currentEco!.modelSelection);
+      // Checked when the request sets Eco; a main-model change alone never fails on it
+      // (a turn whose builder no longer fits simply runs without Eco).
+      if (enabled && ecoInput !== undefined) {
+        const problem = ecoBuilderProblem(planner, builder);
+        if (problem !== undefined) return yield* new PersonalBotsError({ message: problem });
+      }
+      return {
+        ...(ecoInput?.enabled === undefined ? {} : { enabled: ecoInput.enabled }),
+        ...(ecoInput?.modelSelection === undefined
+          ? {}
+          : { modelSelection: ecoInput.modelSelection }),
+      };
+    });
+
   const create: PersonalBotService["Service"]["create"] = (input) =>
     Effect.gen(function* () {
       // The botId is the client-generated idempotency key: creating twice
@@ -666,8 +708,14 @@ export const make = Effect.gen(function* () {
       // team that was named has to be one that exists.
       const team = yield* requireKnownTeam(input.team ?? DEFAULT_PERSONAL_BOT_TEAM);
       const lead = input.lead ?? false;
-      const { fallback: fallbackInput, schedule: scheduleInput, ...createFields } = input;
+      const {
+        fallback: fallbackInput,
+        schedule: scheduleInput,
+        eco: ecoInput,
+        ...createFields
+      } = input;
       const schedule = yield* resolveSchedule(undefined, scheduleInput, input.modelSelection);
+      const eco = yield* resolveEco(undefined, ecoInput, input.modelSelection);
       // The row and the displaced lead land together: a disconnect between
       // them used to leave two leads on one team.
       return yield* uninterruptibleWrite(
@@ -682,6 +730,10 @@ export const make = Effect.gen(function* () {
               ...(fallbackInput?.modelSelection === undefined
                 ? {}
                 : { fallbackModelSelection: fallbackInput.modelSelection }),
+              ...(eco.enabled === undefined ? {} : { ecoEnabled: eco.enabled }),
+              ...(eco.modelSelection === undefined
+                ? {}
+                : { ecoModelSelection: eco.modelSelection }),
               title: input.title?.trim() ?? "",
               team,
               lead,
@@ -720,9 +772,23 @@ export const make = Effect.gen(function* () {
         notificationsMute,
         fallback: fallbackInput,
         schedule: scheduleInput,
+        eco: ecoInput,
         ...fields
       } = input;
       let schedule: PersonalBotSchedule | undefined;
+      let eco: { readonly enabled?: boolean; readonly modelSelection?: ModelSelection } = {};
+      if (ecoInput !== undefined || input.modelSelection !== undefined) {
+        const current = yield* repository
+          .getBotById({ botId: input.botId })
+          .pipe(Effect.mapError(repositoryError("lookup")));
+        if (Option.isSome(current)) {
+          eco = yield* resolveEco(
+            current.value,
+            ecoInput,
+            input.modelSelection ?? current.value.modelSelection,
+          );
+        }
+      }
       if (scheduleInput !== undefined) {
         const current = yield* repository
           .getBotById({ botId: input.botId })
@@ -751,6 +817,10 @@ export const make = Effect.gen(function* () {
               ...(fallbackInput?.modelSelection === undefined
                 ? {}
                 : { fallbackModelSelection: fallbackInput.modelSelection }),
+              ...(eco.enabled === undefined ? {} : { ecoEnabled: eco.enabled }),
+              ...(eco.modelSelection === undefined
+                ? {}
+                : { ecoModelSelection: eco.modelSelection }),
               ...(notificationsMute === undefined
                 ? {}
                 : { notificationsMutedUntil: notificationsMutedUntilFor(notificationsMute, now) }),

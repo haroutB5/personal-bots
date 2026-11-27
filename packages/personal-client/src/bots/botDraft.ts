@@ -1,5 +1,6 @@
 import {
   type BotAvatarShape,
+  botEco,
   botFallback,
   botTeam,
   DEFAULT_PERSONAL_BOT_TEAM,
@@ -24,6 +25,10 @@ import {
   buildModelSelection,
   CONTEXT_WINDOW_OPTION_ID,
   defaultModelFor,
+  type EcoDraft,
+  ecoDraftFromBot,
+  ecoDraftProblem,
+  ecoInput,
   type FallbackDraft,
   fallbackDraftFromBot,
   fallbackInput,
@@ -83,6 +88,11 @@ export interface BotDraft {
   readonly fallbackModel: string;
   readonly fallbackEffort: string;
   readonly fallbackContextWindow: string;
+  /** Eco mode: on/off and the builder's model and effort (on the bot's own provider). */
+  readonly ecoEnabled: boolean;
+  readonly ecoModel: string;
+  readonly ecoEffort: string;
+  readonly ecoContextWindow: string;
   /** The model schedule: on/off, From and To ("HH:MM") and its model, effort and context window. */
   readonly scheduleEnabled: boolean;
   readonly scheduleFrom: string;
@@ -115,6 +125,28 @@ function fallbackFields(
     fallbackModel: fallback.model,
     fallbackEffort: fallback.effort,
     fallbackContextWindow: fallback.contextWindow,
+  };
+}
+
+function ecoFields(
+  eco: EcoDraft,
+): Pick<BotDraft, "ecoEnabled" | "ecoModel" | "ecoEffort" | "ecoContextWindow"> {
+  return {
+    ecoEnabled: eco.enabled,
+    ecoModel: eco.model,
+    ecoEffort: eco.effort,
+    ecoContextWindow: eco.contextWindow,
+  };
+}
+
+export function ecoDraftOf(draft: BotDraft): EcoDraft {
+  return {
+    enabled: draft.ecoEnabled,
+    instanceId: draft.instanceId,
+    model: draft.ecoModel,
+    effort: draft.ecoEffort,
+    contextWindow: draft.ecoContextWindow,
+    agentMode: "",
   };
 }
 
@@ -177,6 +209,7 @@ export function botDraftsEqual(left: BotDraft, right: BotDraft): boolean {
 export function draftFromBot(bot: PersonalBot, nowMs: number): BotDraft {
   return {
     ...fallbackFields(fallbackDraftFromBot(bot)),
+    ...ecoFields(ecoDraftFromBot(bot)),
     ...scheduleFields(scheduleDraftFromBot(bot)),
     name: bot.name,
     title: bot.title,
@@ -231,6 +264,7 @@ export function newBotDraft(selectable: ReadonlyArray<ServerProvider>): BotDraft
     contextWindow: "",
     agentMode: "",
     ...fallbackFields(fallbackDraftFromBot(null)),
+    ...ecoFields(ecoDraftFromBot(null)),
     ...scheduleFields(scheduleDraftFromBot(null)),
     team: DEFAULT_PERSONAL_BOT_TEAM,
     lead: false,
@@ -336,6 +370,7 @@ export function assessBotDraft(
     draft.instanceId !== "" &&
     draft.model !== "" &&
     isFallbackDraftValid(fallbackDraftOf(draft)) &&
+    ecoDraftProblem(draft, ecoDraftOf(draft)) === null &&
     scheduleProblem === null &&
     !busy;
   return { mainModelSelection, scheduleSelection, scheduleProblem, canSave };
@@ -390,6 +425,13 @@ export function planBotSave(options: {
     fallbackDraftOf(draft),
     providers,
   );
+  // Only what differs from the saved (or default) Eco setting.
+  const eco = ecoInput(
+    saved === null ? null : botEco(saved),
+    ecoDraftOf(draft),
+    draft.instanceId,
+    providers,
+  );
   // Create sends the whole schedule when it is on; edit only what changed.
   const schedule = scheduleInput(
     saved?.schedule ?? null,
@@ -403,6 +445,7 @@ export function planBotSave(options: {
   const shared = {
     ...fields,
     ...(fallback === undefined ? {} : { fallback }),
+    ...(eco === undefined ? {} : { eco }),
     ...(schedule === undefined ? {} : { schedule }),
   };
   if (saved !== null) {

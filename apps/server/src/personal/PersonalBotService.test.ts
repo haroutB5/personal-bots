@@ -1063,6 +1063,93 @@ it.effect(
   },
 );
 
+it.effect("Eco mode is off by default, validates its builder, and follows a new main model", () => {
+  const context = makeContext();
+  const claudeBot = (botId: string) => ({
+    ...botInput(botId),
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "high" }],
+    },
+  });
+  return Effect.gen(function* () {
+    const service = yield* PersonalBotService.PersonalBotService;
+    const created = yield* service.create(claudeBot("bot-eco"));
+    expect(created.eco).toEqual({
+      enabled: false,
+      modelSelection: {
+        instanceId: "claudeAgent",
+        model: "claude-sonnet-5-5",
+        options: [{ id: "effort", value: "high" }],
+      },
+    });
+
+    const on = yield* service.update({ botId: created.botId, eco: { enabled: true } });
+    expect(on.eco?.enabled).toBe(true);
+    expect(on.eco?.modelSelection.model).toBe("claude-sonnet-5-5");
+
+    // The builder must differ from the bot's own model.
+    const same = yield* service
+      .update({
+        botId: created.botId,
+        eco: { enabled: true, modelSelection: created.modelSelection },
+      })
+      .pipe(Effect.flip);
+    expect(same.message).toMatch(/different model/);
+
+    // And run on the bot's own provider instance.
+    const elsewhere = yield* service
+      .update({
+        botId: created.botId,
+        eco: {
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-6-astra",
+          },
+        },
+      })
+      .pipe(Effect.flip);
+    expect(elsewhere.message).toMatch(/own provider/);
+
+    // And switch live: Opus with an effort cannot switch to Haiku 4.5, which has none.
+    const notLive = yield* service
+      .update({
+        botId: created.botId,
+        eco: {
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-haiku-4-5",
+            options: [{ id: "thinking", value: true }],
+          },
+        },
+      })
+      .pipe(Effect.flip);
+    expect(notLive.message).toMatch(/thinking setting/);
+
+    // Off, any builder may be stored; nothing is validated until it is turned on.
+    const off = yield* service.create({
+      ...claudeBot("bot-eco-off"),
+      eco: { enabled: false },
+    });
+    expect(off.eco?.enabled).toBe(false);
+
+    // A default builder follows the bot to a new main model's instance.
+    const moved = yield* service.update({
+      botId: created.botId,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-fable-5-2",
+        options: [{ id: "effort", value: "high" }],
+      },
+    });
+    expect(moved.eco).toMatchObject({
+      enabled: true,
+      modelSelection: { model: "claude-sonnet-5-5" },
+    });
+  }).pipe(Effect.provide(makeTestLayer(context)));
+});
+
 it.effect("saving a new main model ends a fallback the bot was running on", () => {
   const context = makeContext();
   return Effect.gen(function* () {

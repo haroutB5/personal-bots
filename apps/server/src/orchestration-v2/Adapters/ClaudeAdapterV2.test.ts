@@ -8,6 +8,7 @@ import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { beforeEach, vi } from "vite-plus/test";
 
 import type {
+  HookCallback,
   ElicitationRequest,
   ElicitationResult,
   Query as ClaudeQuery,
@@ -56,6 +57,12 @@ import {
 } from "@t3tools/contracts";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import { assert, describe, it } from "@effect/vitest";
+import {
+  ECO_EDIT_DENIED_REASON,
+  ECO_HANDOFF_SUCCESS_TEXT,
+  ECO_HANDOFF_TOOL,
+  ecoHandoffHandlerOf,
+} from "../../personal/eco/ecoMode.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -3401,6 +3408,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly allocateSessionId?: Effect.Effect<string>;
     readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
     readonly promptSuggestions?: boolean;
+    readonly personal?: ProviderAdapter.ProviderAdapterV2PersonalSession;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3576,6 +3584,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         modelSelection: CLAUDE_TEST_MODEL_SELECTION,
         runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
         promptSuggestions: Effect.succeed(options?.promptSuggestions === true),
+        ...(options?.personal === undefined ? {} : { personal: options.personal }),
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -6532,6 +6541,220 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         yield* Scope.close(session, Exit.void);
         assert.deepEqual(yield* Fiber.join(answer), { action: "cancel" });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  });
+
+  describe("Eco mode", () => {
+    const testLayer = Layer.mergeAll(
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+      NodeServices.layer,
+      NodeCrypto.layer,
+    );
+    const opusSelection = {
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "high" }],
+    } satisfies ModelSelection;
+    const sonnetSelection = {
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      model: "claude-sonnet-5-5",
+      options: [{ id: "effort", value: "high" }],
+    } satisfies ModelSelection;
+    const ecoHarness = (eco: boolean) => {
+      const outcomes: Array<ProviderAdapter.ProviderAdapterV2EcoOutcome> = [];
+      return makeWakeHarnessWithOptions({
+        personal: {
+          personalBot: false,
+          personalTaskChat: true,
+          ecoForTurn: () =>
+            Effect.succeed(
+              eco
+                ? {
+                    planner: opusSelection,
+                    builder: sonnetSelection,
+                    record: (outcome) => Effect.sync(() => void outcomes.push(outcome)),
+                  }
+                : undefined,
+            ),
+        },
+      }).pipe(Effect.map((harness) => ({ harness, outcomes })));
+    };
+    const ecoTurn = (
+      harness: Effect.Success<ReturnType<typeof ecoHarness>>["harness"],
+      ordinal: number,
+      now: DateTime.Utc,
+    ) =>
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now,
+        attemptId: RunAttemptId.make(`attempt-eco:${ordinal}`),
+        text: "Fix the failing test",
+        attachments: [],
+        providerTurnOrdinal: ordinal,
+        modelSelection: opusSelection,
+      });
+    const preToolUse = (options: unknown, toolName: string) => {
+      const hooks = (options as { hooks?: { PreToolUse?: Array<{ hooks: Array<HookCallback> }> } })
+        .hooks?.PreToolUse;
+      const hook = hooks?.at(-1)?.hooks[0];
+      if (hook === undefined) throw new Error("no PreToolUse hook");
+      return Effect.promise(() =>
+        hook(
+          { hook_event_name: "PreToolUse", tool_name: toolName, tool_input: {} } as never,
+          "tu",
+          { signal: new AbortController().signal },
+        ),
+      );
+    };
+
+    it.effect(
+      "hands off to the builder inside the turn, restores the bot's model at turn end and records the split",
+      () =>
+        Effect.gen(function* () {
+          const { harness, outcomes } = yield* ecoHarness(true);
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+          const opened = harness.getOpenedOptions() as {
+            readonly mcpServers?: Record<string, unknown>;
+            readonly allowedTools?: ReadonlyArray<string>;
+          };
+          assert.isDefined(opened.mcpServers?.["eco"]);
+          assert.include(opened.allowedTools ?? [], ECO_HANDOFF_TOOL);
+          assert.include(JSON.stringify(harness.offeredMessages[0]), "<eco_mode>");
+          assert.deepInclude(yield* preToolUse(opened, "Edit"), {
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: ECO_EDIT_DENIED_REASON,
+            },
+          });
+
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-00000000e001",
+              text: "Investigated.",
+              model: "claude-opus-5-5",
+            }),
+          );
+          const handoff = ecoHandoffHandlerOf(opened.mcpServers?.["eco"]);
+          if (handoff === undefined) throw new Error("no eco_handoff handler");
+          const result = yield* Effect.promise(() => handoff("## Goal\nFix it"));
+          assert.deepEqual(result, {
+            content: [{ type: "text", text: ECO_HANDOFF_SUCCESS_TEXT }],
+          });
+          assert.deepInclude(harness.liveSelectionChanges, { model: "claude-sonnet-5-5" });
+          assert.deepEqual(yield* preToolUse(opened, "Edit"), {});
+          // One handoff per turn.
+          assert.isTrue((yield* Effect.promise(() => handoff("## Goal\nAgain"))).isError);
+
+          yield* harness.offerAndWait(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-00000000e002",
+              text: "Implemented.",
+              model: "claude-sonnet-5-5",
+            }),
+          );
+          const usage = (input: number, output: number, read: number, write: number) =>
+            ({
+              inputTokens: input,
+              outputTokens: output,
+              cacheReadInputTokens: read,
+              cacheCreationInputTokens: write,
+              webSearchRequests: 0,
+              costUSD: 0.01,
+              contextWindow: 200_000,
+              maxOutputTokens: 64_000,
+            }) as const;
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-00000000e003",
+              result: "Done.",
+              modelUsage: {
+                "claude-opus-5-5": usage(10, 20, 300, 40),
+                "claude-sonnet-5-5": usage(5, 50, 600, 32_000),
+              } as never,
+            }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.until(() => outcomes.length === 1);
+
+          const models = harness.liveSelectionChanges.flatMap((change) =>
+            typeof change === "object" && change !== null && "model" in change
+              ? [(change as { model: string }).model]
+              : [],
+          );
+          assert.deepEqual(models, ["claude-sonnet-5-5", "claude-opus-5-5"]);
+          const outcome = outcomes[0]!;
+          assert.isTrue(outcome.handedOff);
+          assert.equal(outcome.plan, "## Goal\nFix it");
+          assert.deepEqual(
+            outcome.calls.map((call) => [call.model, call.side]),
+            [
+              ["claude-opus-5-5", "planner"],
+              ["claude-sonnet-5-5", "builder"],
+            ],
+          );
+          assert.include(outcome.planner, {
+            model: "claude-opus-5-5",
+            inputTokens: 10,
+            outputTokens: 20,
+            cacheReadTokens: 300,
+            cacheWriteTokens: 40,
+            calls: 1,
+          });
+          assert.include(outcome.builder, {
+            model: "claude-sonnet-5-5",
+            cacheWriteTokens: 32_000,
+            calls: 1,
+          });
+          const plan = harness.events.find(
+            (event) => event.type === "plan.updated" && event.plan.kind === "proposed_plan",
+          );
+          assert.isTrue(
+            plan?.type === "plan.updated" &&
+              plan.plan.status === "completed" &&
+              plan.plan.kind === "proposed_plan" &&
+              plan.plan.markdown.startsWith("**Handed off to claude-sonnet-5-5**"),
+          );
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "system_notice" &&
+                event.turnItem.title === "Handed off to claude-sonnet-5-5",
+            ),
+          );
+
+          // The next turn is the planner's again, edits blocked until its own handoff.
+          yield* harness.runtime.startTurn(ecoTurn(harness, 2, now));
+          assert.deepInclude(yield* preToolUse(opened, "Edit"), {
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: ECO_EDIT_DENIED_REASON,
+            },
+          });
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("leaves an ordinary turn alone: no eco_handoff, no guard, no instruction", () =>
+      Effect.gen(function* () {
+        const { harness, outcomes } = yield* ecoHarness(false);
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(ecoTurn(harness, 1, now));
+        const opened = harness.getOpenedOptions() as {
+          readonly mcpServers?: Record<string, unknown>;
+          readonly allowedTools?: ReadonlyArray<string>;
+        };
+        assert.isUndefined(opened.mcpServers?.["eco"]);
+        assert.notInclude(opened.allowedTools ?? [], ECO_HANDOFF_TOOL);
+        assert.notInclude(JSON.stringify(harness.offeredMessages[0]), "<eco_mode>");
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(outcomes.length, 0);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
   });

@@ -59,3 +59,18 @@ export function compileClaudeModelSelection(
     queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings }),
   };
 }
+
+/**
+ * Whether a running Claude process can switch from `live` to `next` with
+ * setModel and flag settings. Thinking requires a new process. Clearing effort
+ * also requires one to reload user settings instead of model defaults.
+ */
+export function canApplyClaudeSelectionLive(
+  live: CompiledClaudeModelSelection,
+  next: CompiledClaudeModelSelection,
+): boolean {
+  return (
+    live.settings.alwaysThinkingEnabled === next.settings.alwaysThinkingEnabled &&
+    (next.effort !== undefined || live.effort === undefined)
+  );
+}

@@ -733,6 +733,9 @@ export const layer: Layer.Layer<
                   ...(personalSession.secretEnvironment === undefined
                     ? {}
                     : { secretEnvironment: personalSession.secretEnvironment }),
+                  ...(personalSession.ecoForTurn === undefined
+                    ? {}
+                    : { ecoForTurn: personalSession.ecoForTurn }),
                 },
               }
             : {}),

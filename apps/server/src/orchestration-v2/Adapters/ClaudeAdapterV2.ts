@@ -184,6 +184,7 @@ import {
   readClaudeSettingsEnv,
 } from "../../provider/Drivers/ClaudeSkills.ts";
 import {
+  canApplyClaudeSelectionLive,
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
@@ -236,6 +237,24 @@ import {
   personalClaudeQueryOptions,
   type PersonalClaudeQueryOptions,
 } from "../../personal/providerHooks/claudeQueryOptions.ts";
+import {
+  ECO_HANDOFF_TOOL,
+  ECO_MCP_SERVER_NAME,
+  ECO_SWITCH_TIMEOUT_MS,
+  type EcoModelLedger,
+  type EcoTurnState,
+  EMPTY_ECO_USAGE,
+  ecoLedgerDelta,
+  ecoModelLedger,
+  ecoPlanMarkdown,
+  ecoUsageSplit,
+  makeEcoMcpServer,
+  makeEcoPreToolUseHook,
+  makeEcoTurnState,
+  noteEcoCall,
+  runEcoHandoff,
+  withEcoInstructions,
+} from "../../personal/eco/ecoMode.ts";
 import type { BotProtectedPathsInput } from "@t3tools/provider-core/server/botProtectedPaths";
 import {
   PERSONAL_BOT_ID_PATTERN,
@@ -1915,17 +1934,6 @@ export const layerQueryRunner: Layer.Layer<
 );
 
 type ClaudeFlagSettings = Parameters<ClaudeQuery["applyFlagSettings"]>[0];
-
-/** Thinking requires a new process. Clearing effort also requires one to reload user settings instead of model defaults. */
-function canApplyClaudeSelectionLive(
-  live: CompiledClaudeModelSelection,
-  next: CompiledClaudeModelSelection,
-): boolean {
-  return (
-    live.settings.alwaysThinkingEnabled === next.settings.alwaysThinkingEnabled &&
-    (next.effort !== undefined || live.effort === undefined)
-  );
-}
 
 function claudeLiveSelectionFlagSettings(
   selection: CompiledClaudeModelSelection,
@@ -5024,6 +5032,10 @@ interface ClaudeLiveQueryContext {
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
   // The SDK's per-process model ledger at the last result; a new process starts at zero.
   modelLedger: ClaudeModelLedger | undefined;
+  /** Eco mode: opened by an Eco turn, so it carries eco_handoff and the edit guard. */
+  readonly ecoCapable: boolean;
+  /** Eco mode: the full per-model ledger (cache reads and writes apart) at the last result. */
+  ecoLedger: EcoModelLedger;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
@@ -6118,6 +6130,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const clearedNativeSessions = new Map<string, string>();
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
+        // Eco mode v1: the Eco turn running now (a session runs one turn at a time).
+        let ecoActive: {
+          readonly providerTurnId: string;
+          readonly state: EcoTurnState;
+          readonly turn: ProviderAdapter.ProviderAdapterV2EcoTurn;
+          readonly live: ClaudeLiveQueryContext;
+          readonly planner: CompiledClaudeModelSelection;
+          readonly builder: CompiledClaudeModelSelection;
+          readonly ledgerAtStart: EcoModelLedger;
+          readonly context: ActiveClaudeTurnContext;
+        } | null = null;
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
           if (event.type === "provider_thread.updated") {
@@ -7971,6 +7994,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly kind: "todo_list" | "proposed_plan";
           readonly steps?: ReadonlyArray<OrchestrationV2PlanStep>;
           readonly markdown?: string;
+          /** A plan already acted on (Eco's handoff) is completed, so nothing offers to run it. */
+          readonly planStatus?: "active" | "completed";
         }) {
           const updatedAt = yield* DateTime.now;
           const projectionNativeItemId = `${input.kind}:${input.nativeItemId}`;
@@ -8021,7 +8046,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   runId: input.context.input.runId,
                   nodeId,
                   kind: "proposed_plan",
-                  status: "active",
+                  status: input.planStatus ?? "active",
                   markdown: input.markdown ?? "",
                 };
           const node: OrchestrationV2ExecutionNode = {
@@ -9068,6 +9093,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             }
           }
+
+          yield* finishEcoTurn(input);
 
           const threadDisposition = input.threadDisposition ?? "reusable";
           const terminalEvent: ProviderAdapter.ProviderAdapterV2Event =
@@ -10448,6 +10475,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // CLI notices and API errors arrive as assistant messages from "<synthetic>".
               if (message.message.model && message.message.model !== "<synthetic>") {
                 context.rootModels.add(message.message.model);
+                if (ecoActive !== null && ecoActive.context === context) {
+                  noteEcoCall(ecoActive.state, message.message.id, message.message.model);
+                }
                 context.executedModel = resolveClaudeReportedModelSlug(
                   modelCatalog,
                   message.message.model,
@@ -12236,9 +12266,175 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           live.selection = selection;
         });
 
+        // Eco mode: the handoff lands the builder on the running process before
+        // eco_handoff returns. A failed or late switch puts the planner back; if
+        // even that fails, the cleared identity makes the next turn reapply its own.
+        const switchEcoToBuilder = (active: NonNullable<typeof ecoActive>) =>
+          applySelectionLive(active.live, active.builder).pipe(
+            Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS)),
+            Effect.catchCause((cause) =>
+              applySelectionLive(active.live, active.planner).pipe(
+                Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS)),
+                Effect.catchCause(() =>
+                  Effect.sync(() => {
+                    active.live.selection = { ...active.live.selection, queryIdentity: "" };
+                  }),
+                ),
+                Effect.andThen(
+                  Effect.fail(
+                    new Error(
+                      Cause.hasInterruptsOnly(cause)
+                        ? "the model switch was interrupted"
+                        : (Cause.pretty(cause).split("\n")[0] ?? "the model switch failed"),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+
+        // The plan in the chat (a completed proposed_plan, so nothing offers to run it) and the marker.
+        const emitEcoHandoff = Effect.fnUntraced(function* (active: NonNullable<typeof ecoActive>) {
+          const builderLabel = active.builder.apiModelId;
+          const nativeItemId = `eco-handoff:${active.providerTurnId}`;
+          yield* emitClaudePlanProjection({
+            context: active.context,
+            nativeItemId,
+            kind: "proposed_plan",
+            markdown: ecoPlanMarkdown(builderLabel, active.state.plan ?? ""),
+            planStatus: "completed",
+          });
+          const at = yield* DateTime.now;
+          const noticeItemId = `eco-handoff-notice:${active.providerTurnId}`;
+          const notice = `Handed off to ${builderLabel}`;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: noticeItemId,
+              }),
+              threadId: active.context.input.threadId,
+              runId: active.context.input.runId,
+              nodeId: active.context.input.rootNodeId,
+              providerThreadId: active.context.input.providerThread.id,
+              providerTurnId: active.context.providerTurnId,
+              nativeItemRef: { driver: CLAUDE_PROVIDER, nativeId: noticeItemId, strength: "weak" },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(active.context, noticeItemId),
+              type: "system_notice",
+              status: "completed",
+              title: notice,
+              message: notice,
+              startedAt: at,
+              completedAt: at,
+              updatedAt: at,
+            },
+          });
+        });
+
+        const handleEcoHandoff = async (plan: string) => {
+          const active = ecoActive;
+          const result = await runEcoHandoff({
+            turn: active?.state ?? null,
+            plan,
+            // A backstop: switchEcoToBuilder times out and reverts on its own.
+            timeoutMs: ECO_SWITCH_TIMEOUT_MS * 2 + 5_000,
+            switchToBuilder: () =>
+              active === null
+                ? Promise.reject(new Error("no Eco turn"))
+                : runPromise(switchEcoToBuilder(active)),
+          });
+          if (result.isError !== true && active !== null) {
+            await runPromise(
+              emitEcoHandoff(active).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("orchestration-v2.claude-eco-handoff-notice-failed", {
+                    cause: Cause.pretty(cause).slice(0, 1_000),
+                  }),
+                ),
+              ),
+            ).catch(() => undefined);
+          }
+          return result;
+        };
+
+        // Turn end: put the bot's own model back and hand the usage split to the personal layer.
+        const finishEcoTurn = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly status: string;
+          readonly completedAt: DateTime.Utc;
+        }) {
+          const active = ecoActive;
+          if (active === null || active.providerTurnId !== input.context.providerTurnId) return;
+          ecoActive = null;
+          const live = yield* Ref.get(queryContext);
+          if (
+            (active.state.handedOff || active.state.handingOff) &&
+            live !== null &&
+            live.query === active.live.query &&
+            !live.stopping
+          ) {
+            yield* applySelectionLive(live, active.planner).pipe(
+              Effect.timeout(Duration.millis(ECO_SWITCH_TIMEOUT_MS)),
+              Effect.catchCause((cause) =>
+                Effect.sync(() => {
+                  // The next turn sees an unknown identity and reapplies its own model.
+                  live.selection = { ...live.selection, queryIdentity: "" };
+                }).pipe(
+                  Effect.andThen(
+                    Effect.logWarning("orchestration-v2.claude-eco-restore-failed", {
+                      cause: Cause.pretty(cause).slice(0, 1_000),
+                    }),
+                  ),
+                ),
+              ),
+            );
+          }
+          const split = ecoUsageSplit(
+            ecoLedgerDelta(active.ledgerAtStart, active.live.ecoLedger),
+            active.state.plannerApiModel,
+            active.state.builderApiModel,
+          );
+          const calls = [...active.state.calls.values()];
+          const side = (
+            model: string,
+            usage: typeof EMPTY_ECO_USAGE,
+            which: "planner" | "builder",
+          ) => ({
+            model,
+            ...usage,
+            calls: calls.filter((call) => call.side === which).length,
+          });
+          yield* active.turn
+            .record({
+              threadId: active.state.threadId,
+              runId: active.state.runId,
+              status: input.status,
+              handedOff: active.state.handedOff,
+              ...(active.state.handoffError === undefined
+                ? {}
+                : { handoffError: active.state.handoffError }),
+              ...(active.state.plan === undefined ? {} : { plan: active.state.plan }),
+              startedAt: active.state.startedAt,
+              ...(active.state.handedOffAt === undefined
+                ? {}
+                : { handedOffAt: active.state.handedOffAt }),
+              completedAt: new Date(DateTime.toEpochMillis(input.completedAt)),
+              planner: side(active.state.plannerApiModel, split.planner, "planner"),
+              builder: side(active.state.builderApiModel, split.builder, "builder"),
+              other: split.other.map((entry) => ({ model: entry.model, ...entry.usage })),
+              calls,
+            })
+            // Pricing can fetch the rate table; the turn does not wait for it.
+            .pipe(Effect.forkIn(sessionScope));
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          eco = false,
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
@@ -12444,6 +12640,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(personalQueryOptions === undefined ? {} : { personal: personalQueryOptions }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
+          if (eco) {
+            // Eco mode: eco_handoff (loaded up front) and the edit guard, on this process only.
+            const baseOptions = queryOptions as {
+              -readonly [K in keyof typeof queryOptions]: (typeof queryOptions)[K];
+            };
+            baseOptions.mcpServers = {
+              ...baseOptions.mcpServers,
+              [ECO_MCP_SERVER_NAME]: makeEcoMcpServer(handleEcoHandoff),
+            };
+            baseOptions.allowedTools = [...(baseOptions.allowedTools ?? []), ECO_HANDOFF_TOOL];
+            baseOptions.hooks = {
+              ...baseOptions.hooks,
+              PreToolUse: [
+                ...(baseOptions.hooks?.PreToolUse ?? []),
+                { hooks: [makeEcoPreToolUseHook(() => ecoActive?.state ?? null)] },
+              ],
+            };
+          }
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
@@ -12509,6 +12723,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             ),
             modelLedger: new Map(),
+            ecoCapable: eco,
+            ecoLedger: new Map(),
             taskOutputRoot: claudeTaskOutputRoot(
               adapterOptions.environment,
               path,
@@ -12558,6 +12774,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.permissionMode = message.permissionMode;
                   }
                   if (message.type === "result") {
+                    context.ecoLedger = ecoModelLedger(message.modelUsage);
                     const ledger = claudeModelLedger(message.modelUsage);
                     const growth = claudeLedgerDelta(context.modelLedger, ledger);
                     if (growth !== undefined) resultLedgerUsage.set(message, growth);
@@ -12684,8 +12901,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               pdfBudgets.get(nativeThreadId)!,
               persistAttachmentBudget(nativeThreadId),
             );
+            // Eco mode v1: a delegated task or routine turn of an Eco bot (never a continuation).
+            const ecoTurn = isClaudeProviderContinuationTurn(turnInput)
+              ? undefined
+              : yield* (
+                  input.personal?.ecoForTurn?.({
+                    messageId: turnInput.message.messageId,
+                    modelSelection: turnInput.modelSelection,
+                  }) ?? Effect.succeed(undefined)
+                );
+            const ecoPlanner =
+              ecoTurn === undefined
+                ? undefined
+                : compileClaudeModelSelection(ecoTurn.planner, modelCatalog);
+            const ecoBuilder =
+              ecoTurn === undefined
+                ? undefined
+                : compileClaudeModelSelection(ecoTurn.builder, modelCatalog);
+            const ecoModels =
+              ecoTurn !== undefined &&
+              ecoPlanner !== undefined &&
+              ecoBuilder !== undefined &&
+              ecoPlanner.apiModelId !== ecoBuilder.apiModelId &&
+              canApplyClaudeSelectionLive(ecoPlanner, ecoBuilder)
+                ? { turn: ecoTurn, planner: ecoPlanner, builder: ecoBuilder }
+                : undefined;
             const promptText = applyClaudePromptEffortPrefix(
-              turnInput.message.text,
+              ecoModels === undefined
+                ? turnInput.message.text
+                : withEcoInstructions(turnInput.message.text),
               compileClaudeModelSelection(turnInput.modelSelection, modelCatalog).promptEffort,
             );
             const userMessage =
@@ -12712,7 +12956,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const querySession = yield* openQuery(
+              turnInput,
+              nativeThreadId,
+              ecoModels !== undefined,
+            );
             // A bot session runs with its own window, so the meter reads that one.
             const autoCompactWindow =
               querySession.personalAutoCompactWindow === undefined
@@ -12780,6 +13028,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               steerUuids: new Set(),
               executedModel: undefined,
             };
+            if (ecoModels !== undefined && !querySession.ecoCapable) {
+              // A process opened by an ordinary turn has no eco_handoff; this turn runs as one too.
+              yield* Effect.logInfo("orchestration-v2.claude-eco-skipped-live-process", {
+                threadId: turnInput.threadId,
+              });
+            }
+            ecoActive =
+              ecoModels === undefined || !querySession.ecoCapable
+                ? null
+                : {
+                    providerTurnId,
+                    state: makeEcoTurnState({
+                      runId: turnInput.runId,
+                      threadId: turnInput.threadId,
+                      models: { planner: ecoModels.turn.planner, builder: ecoModels.turn.builder },
+                      plannerApiModel: ecoModels.planner.apiModelId,
+                      builderApiModel: ecoModels.builder.apiModelId,
+                      startedAt: new Date(DateTime.toEpochMillis(startedAt)),
+                    }),
+                    turn: ecoModels.turn,
+                    live: querySession,
+                    planner: ecoModels.planner,
+                    builder: ecoModels.builder,
+                    ledgerAtStart: querySession.ecoLedger,
+                    context,
+                  };
             const attachTurn = Effect.gen(function* () {
               // Set before claiming: a query that exits after the claim finalizes this turn; one that exits before it fails the start.
               yield* Ref.set(activeTurn, context);
@@ -13194,6 +13468,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : compileClaudeModelSelection(turnInput.modelSelection, modelCatalog);
             const liveSteerSelection =
               steerSelection !== undefined &&
+              // A handed-off Eco turn keeps its builder until the turn ends.
+              ecoActive?.state.handedOff !== true &&
+              ecoActive?.state.handingOff !== true &&
               existing.selection.queryIdentity !== steerSelection.queryIdentity &&
               canApplyClaudeSelectionLive(existing.selection, steerSelection) &&
               (existing.selection.apiModelId === steerSelection.apiModelId ||
@@ -13613,6 +13890,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               live === null ||
               live.stopping ||
+              // An Eco turn owns the model until it ends; its turn end restores the bot's own.
+              ecoActive !== null ||
               live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
               live.selection.queryIdentity === selection.queryIdentity ||
               live.selection.apiModelId !== selection.apiModelId ||

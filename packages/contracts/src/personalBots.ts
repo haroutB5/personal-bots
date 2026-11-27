@@ -187,6 +187,49 @@ export const PersonalBotScheduleInput = Schema.Struct({
 });
 export type PersonalBotScheduleInput = typeof PersonalBotScheduleInput.Type;
 
+/**
+ * Eco mode (v1): the bot's own model investigates a delegated task or routine
+ * run without editing, and hands a plan to this cheaper builder model, which
+ * implements it in the same turn. Claude only. Default: Sonnet 5.5, effort high.
+ */
+export const PERSONAL_BOT_DEFAULT_ECO_MODEL: ModelSelection = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-sonnet-5-5",
+  options: [{ id: "effort", value: "high" }],
+};
+
+/**
+ * The builder a bot gets when the owner picked none: Sonnet 5.5 on the bot's
+ * own provider instance, carrying the bot's thinking switch so the handoff can
+ * switch the running process without a restart.
+ */
+export const defaultEcoBuilderModel = (planner: ModelSelection): ModelSelection => {
+  const thinking = planner.options?.find((option) => option.id === "thinking");
+  return {
+    instanceId: planner.instanceId,
+    model: PERSONAL_BOT_DEFAULT_ECO_MODEL.model,
+    options: [
+      ...(PERSONAL_BOT_DEFAULT_ECO_MODEL.options ?? []),
+      ...(thinking === undefined ? [] : [thinking]),
+    ],
+  };
+};
+
+export const PersonalBotEco = Schema.Struct({
+  /** Off for every bot unless the owner turns it on in the bot form. */
+  enabled: Schema.Boolean,
+  /** The builder model the turn switches to at the handoff. */
+  modelSelection: ModelSelection,
+});
+export type PersonalBotEco = typeof PersonalBotEco.Type;
+
+/** What a create or update may set; absent fields stay as they are. */
+export const PersonalBotEcoInput = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  modelSelection: Schema.optional(ModelSelection),
+});
+export type PersonalBotEcoInput = typeof PersonalBotEcoInput.Type;
+
 /** What a create or update may set; absent fields stay as they are. */
 export const PersonalBotFallbackInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
@@ -243,6 +286,8 @@ export const PersonalBot = Schema.Struct({
   fallback: Schema.optionalKey(PersonalBotFallback),
   /** Set only while the bot runs on its fallback. Read it through {@link botFallbackActive}. */
   fallbackActive: Schema.optionalKey(PersonalBotFallbackActive),
+  /** Eco mode (always sent by the server; optional on the wire). Read it through {@link botEco}. */
+  eco: Schema.optionalKey(PersonalBotEco),
   /**
    * The model schedule (absent when the bot has none; optional on the wire like
    * the fields above). Read it through {@link botSchedule}.
@@ -286,6 +331,13 @@ export const botFallback = (bot: {
   readonly fallback?: PersonalBotFallback;
 }): PersonalBotFallback =>
   bot.fallback ?? { enabled: true, modelSelection: PERSONAL_BOT_DEFAULT_FALLBACK_MODEL };
+
+/** The bot's Eco setting, off with the default builder when an older server sent none. */
+export const botEco = (bot: {
+  readonly eco?: PersonalBotEco;
+  readonly modelSelection: ModelSelection;
+}): PersonalBotEco =>
+  bot.eco ?? { enabled: false, modelSelection: defaultEcoBuilderModel(bot.modelSelection) };
 
 /** The fallback the bot is running on right now, or null on its own model. */
 export const botFallbackActive = (bot: {
@@ -507,6 +559,8 @@ export const PersonalBotCreateInput = Schema.Struct({
   memoryAutoSave: Schema.optional(Schema.Boolean),
   /** Omitted means on, with the default fallback model. */
   fallback: Schema.optional(PersonalBotFallbackInput),
+  /** Omitted means off, with the default builder. */
+  eco: Schema.optional(PersonalBotEcoInput),
   /** Omitted means no schedule. */
   schedule: Schema.optional(PersonalBotScheduleInput),
   /** Omitted means off: this bot's chats show no call button. */
@@ -534,6 +588,8 @@ export const PersonalBotUpdateInput = Schema.Struct({
   hidePreviews: Schema.optional(Schema.Boolean),
   /** Absent leaves it alone; a field inside it left out stays as it is. */
   fallback: Schema.optional(PersonalBotFallbackInput),
+  /** Absent leaves it alone; a field inside it left out stays as it is. */
+  eco: Schema.optional(PersonalBotEcoInput),
   /** Absent leaves it alone; a field inside it left out stays as it is. */
   schedule: Schema.optional(PersonalBotScheduleInput),
   notificationsMute: Schema.optional(PersonalBotNotificationMute),

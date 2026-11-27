@@ -36,6 +36,7 @@ export function BotModelPickFields({
   unavailableNote,
   modelNote,
   openSheet,
+  fixedProvider = false,
 }: {
   readonly labelPrefix: string;
   readonly draft: PickDraft;
@@ -45,6 +46,8 @@ export function BotModelPickFields({
   readonly unavailableNote: (providerLabel: string) => string;
   readonly modelNote?: ReactNode;
   readonly openSheet: OpenSheet;
+  /** The model must stay on the given provider (Eco's builder), so no provider picker. */
+  readonly fixedProvider?: boolean;
 }) {
   const provider = providers.find((candidate) => candidate.instanceId === draft.instanceId);
   const providerStatus =
@@ -57,30 +60,32 @@ export function BotModelPickFields({
 
   return (
     <>
-      <PickerField
-        label={`${labelPrefix} provider`}
-        valueLabel={
-          draft.instanceId === "" ? "Pick a provider" : labelOf(providerPicks, draft.instanceId)
-        }
-        onPress={() =>
-          openSheet({
-            kind: "choice",
-            title: `${labelPrefix} provider`,
-            choices: providerPicks,
-            value: draft.instanceId,
-            onSelect: (instanceId) =>
-              onChange({
-                instanceId,
-                model: defaultModelFor(providers.find((c) => c.instanceId === instanceId)),
-                effort: "",
-                contextWindow: "",
-              }),
-          })
-        }
-        {...(providerStatus !== null && !providerStatus.available
-          ? { hint: unavailableNote(providerStatus.label) }
-          : {})}
-      />
+      {fixedProvider ? null : (
+        <PickerField
+          label={`${labelPrefix} provider`}
+          valueLabel={
+            draft.instanceId === "" ? "Pick a provider" : labelOf(providerPicks, draft.instanceId)
+          }
+          onPress={() =>
+            openSheet({
+              kind: "choice",
+              title: `${labelPrefix} provider`,
+              choices: providerPicks,
+              value: draft.instanceId,
+              onSelect: (instanceId) =>
+                onChange({
+                  instanceId,
+                  model: defaultModelFor(providers.find((c) => c.instanceId === instanceId)),
+                  effort: "",
+                  contextWindow: "",
+                }),
+            })
+          }
+          {...(providerStatus !== null && !providerStatus.available
+            ? { hint: unavailableNote(providerStatus.label) }
+            : {})}
+        />
+      )}
 
       {models.length > 0 ? (
         <>

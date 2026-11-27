@@ -16,6 +16,7 @@ import {
   deleteBotConfirmMessage,
   draftFromBot,
   draftInstructionWarning,
+  ecoDraftOf,
   fallbackDraftOf,
   newBotDraft,
   planBotSave,
@@ -38,6 +39,7 @@ import {
   botAgentModeDescriptor,
   botContextWindowDescriptor,
   botEffortDescriptor,
+  botOffersEco,
   defaultModelFor,
   noBotProviderMessage,
   usesModelSearch,
@@ -57,6 +59,7 @@ import { tokens } from "../shell/tokens";
 import { ChoiceSheet } from "../sheets/ChoiceSheet";
 import { ModelSearchSheet } from "../sheets/ModelSearchSheet";
 import { BotAvatarPicker } from "./BotAvatarPicker";
+import { BotEcoSection } from "./BotEcoSection";
 import { BotFallbackSection } from "./BotFallbackSection";
 import {
   FieldLabel,
@@ -504,6 +507,25 @@ function BotForm({
               update({ agentMode }),
             )
           }
+        />
+      ) : null}
+
+      {botOffersEco(selectedProvider) ? (
+        <BotEcoSection
+          draft={ecoDraftOf(draft)}
+          onChange={(patch) =>
+            update({
+              ...(patch.enabled === undefined ? {} : { ecoEnabled: patch.enabled }),
+              ...(patch.model === undefined ? {} : { ecoModel: patch.model }),
+              ...(patch.effort === undefined ? {} : { ecoEffort: patch.effort }),
+              ...(patch.contextWindow === undefined
+                ? {}
+                : { ecoContextWindow: patch.contextWindow }),
+            })
+          }
+          providers={providers}
+          main={{ instanceId: draft.instanceId, model: draft.model }}
+          openSheet={openSheet}
         />
       ) : null}
 
