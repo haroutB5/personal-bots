@@ -3,6 +3,7 @@
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -31,8 +32,26 @@ interface CachedEmbedding {
 
 const BACKFILL_BATCH_SIZE = 16;
 
-export const makeMemoryEmbeddingStore = (sql: SqlClient.SqlClient) =>
+/**
+ * Budget for the query-time embed on the per-turn retrieval path. The worker
+ * can take up to its 60 s cold timeout (first use after boot, after each idle
+ * termination, or offline model download); a turn must never wait for that.
+ * On timeout the search falls back to FTS5 only and the embed keeps running so
+ * it warms the model for the next turn. Backfill and indexing are unbounded here.
+ */
+export const QUERY_EMBED_TIMEOUT_MS = 2_500;
+
+export interface MemoryEmbeddingStoreOptions {
+  /** Overrides {@link QUERY_EMBED_TIMEOUT_MS} (tests). */
+  readonly queryEmbedTimeoutMs?: number | undefined;
+}
+
+export const makeMemoryEmbeddingStore = (
+  sql: SqlClient.SqlClient,
+  options?: MemoryEmbeddingStoreOptions,
+) =>
   Effect.gen(function* () {
+    const queryEmbedTimeoutMs = options?.queryEmbedTimeoutMs ?? QUERY_EMBED_TIMEOUT_MS;
     const embedderOption = yield* Effect.serviceOption(MemoryEmbedder);
 
     const cache = new Map<string, CachedEmbedding>();
@@ -244,7 +263,21 @@ export const makeMemoryEmbeddingStore = (sql: SqlClient.SqlClient) =>
             if (trimmed.length === 0) return [];
             yield* ensureLoaded();
             if (cache.size === 0) return [];
-            const vectors = yield* embedder.embed([trimmed]);
+            // Run the embed in its own detached fiber and wait at most the budget:
+            // a timeout only stops waiting (FTS5-only for this turn); the embed
+            // itself is never interrupted, so it finishes and warms the worker,
+            // and the embedder is not marked degraded.
+            const embedFiber = yield* Effect.forkDetach(embedder.embed([trimmed]));
+            const joined = yield* Fiber.join(embedFiber).pipe(
+              Effect.timeoutOption(queryEmbedTimeoutMs),
+            );
+            if (Option.isNone(joined)) {
+              yield* Effect.logDebug("personal memory query embed over budget; using FTS5 only", {
+                budgetMs: queryEmbedTimeoutMs,
+              });
+              return [];
+            }
+            const vectors = joined.value;
             const rawQuery = vectors?.[0];
             if (rawQuery === undefined || rawQuery.length !== embedder.dims) return [];
             const queryVec = normalizeVector(rawQuery);

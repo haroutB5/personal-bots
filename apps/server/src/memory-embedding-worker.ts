@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - isolated ONNX embedding worker entry.
 import * as NodeWorkerThreads from "node:worker_threads";
 
+import { embeddingPipelineOptions } from "./personal/memory/memoryEmbeddingSessionOptions.ts";
+
 interface WorkerConfig {
   readonly modelId: string;
   readonly dims: number;
@@ -40,9 +42,9 @@ async function getExtractor(): Promise<FeatureExtractor> {
     }
     transformers.env.allowLocalModels = true;
     transformers.env.useBrowserCache = false;
+    // Caps ONNX intra-op threads at 2 so a backfill can't saturate the CPU.
     const pipe = await transformers.pipeline("feature-extraction", modelId, {
-      dtype: "q8",
-      device: "cpu",
+      ...embeddingPipelineOptions(),
     });
     return pipe as unknown as FeatureExtractor;
   })().catch((error) => {
