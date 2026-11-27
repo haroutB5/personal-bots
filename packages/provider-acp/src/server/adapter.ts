@@ -1015,8 +1015,21 @@ export function acpMcpContext(
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+          ...(deferMcpTools === true
+            ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" }]
+            : []),
         ],
       },
+      ...(session.extraMcpServers ?? []).map((extra) => ({
+        name: extra.name,
+        command: self.command,
+        args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
+        env: [
+          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+          { name: "T3_ACP_MCP_ENDPOINT", value: extra.url },
+          { name: "T3_ACP_MCP_AUTHORIZATION", value: extra.authorizationHeader },
+        ],
+      })),
     ],
     acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
     httpServers:

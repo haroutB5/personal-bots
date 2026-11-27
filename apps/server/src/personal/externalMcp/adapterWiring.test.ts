@@ -81,9 +81,23 @@ describe("extraMcpServers provider adapter wiring", () => {
     ]);
   });
 
-  it("provider-acp acpMcpContext appends extraMcpServers to httpServers when mcpOverHttp is true", () => {
+  it("provider-acp acpMcpContext populates stdio servers and httpServers with extraMcpServers and deferMcpTools", () => {
     const session = makeSessionWithExtra();
     const self = { command: "/usr/bin/node", args: [], entrypoint: undefined };
+
+    const expectedExtraStdioServer = {
+      name: "ext-executor",
+      command: "/usr/bin/node",
+      args: ["acp-mcp-bridge"],
+      env: [
+        { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        {
+          name: "T3_ACP_MCP_ENDPOINT",
+          value: "http://127.0.0.1:43123/api/personal/external-mcp/srv-1/mcp",
+        },
+        { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer thread-mcp-secret-token" },
+      ],
+    };
 
     const withHttp = acpMcpContext(session, self, true, false);
     expect(withHttp.httpServers).toEqual([
@@ -100,8 +114,42 @@ describe("extraMcpServers provider adapter wiring", () => {
         headers: [{ name: "Authorization", value: "Bearer thread-mcp-secret-token" }],
       },
     ]);
+    expect(withHttp.servers).toEqual([
+      {
+        name: "t3-code",
+        command: "/usr/bin/node",
+        args: ["acp-mcp-bridge"],
+        env: [
+          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+          { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
+          { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer thread-mcp-secret-token" },
+        ],
+      },
+      expectedExtraStdioServer,
+    ]);
 
     const withoutHttp = acpMcpContext(session, self, false, false);
     expect(withoutHttp.httpServers).toEqual([]);
+    expect(withoutHttp.servers).toEqual(withHttp.servers);
+
+    const withDeferredNoHttp = acpMcpContext(session, self, false, true);
+    expect(withDeferredNoHttp.httpServers).toEqual([]);
+    expect(withDeferredNoHttp.servers).toEqual([
+      {
+        name: "t3-code",
+        command: "/usr/bin/node",
+        args: ["acp-mcp-bridge"],
+        env: [
+          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+          { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
+          { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer thread-mcp-secret-token" },
+          { name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" },
+        ],
+      },
+      expectedExtraStdioServer,
+    ]);
+
+    const withDeferredAndHttp = acpMcpContext(session, self, true, true);
+    expect(withDeferredAndHttp.servers).toEqual(withDeferredNoHttp.servers);
   });
 });

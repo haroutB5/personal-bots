@@ -12,12 +12,14 @@ import { mcpToolSession, runAcpMcpCliFastPath, runAcpMcpStdioBridge } from "./Ac
 function makeHarness(
   responder: (request: Request) => Promise<Response> | Response,
   input = new NodeStream.PassThrough(),
+  toolExposure?: string,
 ) {
   const written: Array<string> = [];
   const requests: Array<{ readonly headers: Headers; readonly body: string }> = [];
   const bridge = runAcpMcpStdioBridge({
     endpoint: "http://127.0.0.1:1/mcp",
     authorization: "Bearer bridge-test",
+    ...(toolExposure === undefined ? {} : { toolExposure }),
     input,
     output: {
       write: (chunk: string) => {
@@ -445,4 +447,64 @@ describe("AcpMcpStdioBridge", () => {
       expect(signal?.aborted).toBe(true);
     }),
   );
+
+  it.effect(
+    "forwards t3-tool-exposure header when toolExposure is set and omits it when unset",
+    () =>
+      Effect.gen(function* () {
+        const withExposure = makeHarness(
+          () => Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } }),
+          new NodeStream.PassThrough(),
+          "deferred",
+        );
+        const fiberWith = yield* Effect.forkChild(withExposure.bridge);
+        withExposure.input.end(
+          `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`,
+        );
+        yield* Fiber.join(fiberWith);
+        expect(withExposure.requests[0]?.headers.get("t3-tool-exposure")).toBe("deferred");
+
+        const withoutExposure = makeHarness(
+          () => Response.json({ jsonrpc: "2.0", id: 2, result: { tools: [] } }),
+          new NodeStream.PassThrough(),
+        );
+        const fiberWithout = yield* Effect.forkChild(withoutExposure.bridge);
+        withoutExposure.input.end(
+          `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`,
+        );
+        yield* Fiber.join(fiberWithout);
+        expect(withoutExposure.requests[0]?.headers.get("t3-tool-exposure")).toBeNull();
+      }),
+  );
+
+  it("reads T3_ACP_MCP_TOOL_EXPOSURE in runAcpMcpCliFastPath for acp-mcp-bridge", async () => {
+    const originalEnvironment = process.env;
+    const originalStdin = process.stdin;
+    const fakeStdin = new NodeStream.PassThrough();
+    Object.defineProperty(process, "stdin", { value: fakeStdin, configurable: true });
+    using _cleanup = {
+      [Symbol.dispose]: () => {
+        process.env = originalEnvironment;
+        Object.defineProperty(process, "stdin", { value: originalStdin, configurable: true });
+      },
+    };
+    process.env = {
+      ...originalEnvironment,
+      T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:1/mcp",
+      T3_ACP_MCP_AUTHORIZATION: "Bearer bridge-test",
+      T3_ACP_MCP_TOOL_EXPOSURE: " deferred ",
+    };
+    const seenHeaders: Array<Headers> = [];
+    using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      seenHeaders.push(new Headers(init?.headers));
+      return Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } });
+    });
+    using _output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    fakeStdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
+    await runAcpMcpCliFastPath("acp-mcp-bridge", []);
+
+    expect(seenHeaders).toHaveLength(1);
+    expect(seenHeaders[0]?.get("t3-tool-exposure")).toBe("deferred");
+  });
 });
