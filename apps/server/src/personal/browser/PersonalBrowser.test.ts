@@ -601,13 +601,20 @@ const releasedPersistedRow = (): PersonalBrowserLeaseRepository.BrowserLeaseRow 
   lastUrl: null,
 });
 
-/** The boot restore runs on a background fiber; wait for its effects, bounded. */
+const AWAIT_CONDITION_MS = 10_000;
+
+/**
+ * The boot restore runs on a background fiber; wait for its effects, bounded by
+ * wall time. A turn count gave up after about a second, which a loaded gate run
+ * outlasted (1.67.68).
+ */
 const awaitCondition = <R>(check: Effect.Effect<boolean, never, R>) =>
   Effect.gen(function* () {
-    for (let turn = 0; turn < 1_000; turn++) {
+    const deadline = Date.now() + AWAIT_CONDITION_MS;
+    do {
       if (yield* check) return;
       yield* Effect.yieldNow;
-    }
+    } while (Date.now() < deadline);
     return yield* Effect.die(new Error("condition never became true"));
   });
 
