@@ -7,6 +7,7 @@ import {
 } from "@hbots/personal-client/conversation/conversationModel";
 import { PERSONAL_TIME_ZONE } from "@hbots/personal-client/conversation/greeting";
 import { replyQuoteForMessage } from "@hbots/personal-client/feed/messageReply";
+import { messageTimeParts } from "@hbots/personal-client/feed/messageTime";
 import { ownerVisibleText } from "@hbots/personal-client/feed/composerText";
 import {
   choicesStates,
@@ -690,11 +691,17 @@ function BlockBody({ block, onOpenFile, onOpenLink, tone }: BlockProps) {
   }
 }
 
+/** The swipe-revealed sent time: the day above the clock time when it was not sent today. */
 function SentAt({ at, align }: { readonly at: Date; readonly align: "start" | "end" }) {
+  // Mounted when the swipe reveals it, so "today" is the day of the swipe.
+  const [now] = useState(() => new Date());
+  const { day, time } = messageTimeParts(at, now);
+  const style = [styles.sentAt, align === "end" ? styles.sentAtEnd : null];
   return (
-    <Text style={[styles.sentAt, align === "end" ? styles.sentAtEnd : null]}>
-      {at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-    </Text>
+    <>
+      {day === null ? null : <Text style={style}>{day}</Text>}
+      <Text style={style}>{time}</Text>
+    </>
   );
 }
 
