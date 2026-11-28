@@ -17,7 +17,9 @@ const jsonSchema = (schema: Schema.Top): unknown => {
 };
 
 describe("personalV1Wire", () => {
-  it("encodes every vendored schema exactly as the v1 original did", () => {
+  // The golden file is the recorded wire shape: the v1 original plus the fields added on
+  // purpose since (`usageLimit` on the session). Regenerate it in the change that adds one.
+  it("encodes every vendored schema exactly as the recorded wire shape", () => {
     const pairs = [
       ["ModelSelection", ModelSelection],
       ["OrchestrationMessageRole", OrchestrationMessageRole],

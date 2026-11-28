@@ -904,6 +904,29 @@
                     }
                   ]
                 },
+                "usageLimit": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "resetAt": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "updatedAt": {
                   "type": "string"
                 }
