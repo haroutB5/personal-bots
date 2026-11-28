@@ -24,6 +24,10 @@ export function nextBaseHeight(input: {
   readonly layoutHeight: number;
   readonly keyboardOpen: boolean;
 }): number | null {
-  if (input.keyboardOpen) return input.previous;
+  if (input.keyboardOpen) {
+    // First laid out with the keyboard already up: this layout stands in until a closed one
+    // arrives. Exact on an edge-to-edge window, which never resizes.
+    return input.previous ?? (input.layoutHeight > 0 ? input.layoutHeight : null);
+  }
   return input.layoutHeight > 0 ? input.layoutHeight : input.previous;
 }

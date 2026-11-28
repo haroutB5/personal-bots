@@ -39,6 +39,20 @@ describe("nextBaseHeight", () => {
     expect(base).toBe(785);
   });
 
+  it("pads a container first laid out with the keyboard already up", () => {
+    // A new chat opened from a focused text box: no closed-keyboard layout ever happened.
+    let base = nextBaseHeight({ previous: null, layoutHeight: 785, keyboardOpen: true });
+    expect(base).toBe(785);
+    expect(
+      keyboardRemainder({ baseHeight: base ?? 0, frameHeight: 785, keyboardHeight: 299 }),
+    ).toBe(299);
+    // The next closed-keyboard layout replaces the stand-in.
+    base = nextBaseHeight({ previous: base, layoutHeight: 800, keyboardOpen: false });
+    expect(base).toBe(800);
+    // An unmeasured container still gives nothing to stand in.
+    expect(nextBaseHeight({ previous: null, layoutHeight: 0, keyboardOpen: true })).toBeNull();
+  });
+
   it("takes a new closed-keyboard layout, such as a rotation", () => {
     expect(nextBaseHeight({ previous: 785, layoutHeight: 360, keyboardOpen: false })).toBe(360);
   });

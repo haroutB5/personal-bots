@@ -3,6 +3,12 @@ import { Keyboard, type LayoutChangeEvent } from "react-native";
 
 import { keyboardRemainder, nextBaseHeight } from "./keyboardInset";
 
+/** The height of a keyboard that is up right now, 0 when there is none. */
+function openKeyboardHeight(): number {
+  if (!Keyboard.isVisible()) return 0;
+  return Keyboard.metrics()?.height ?? 0;
+}
+
 /**
  * Padding that lifts a full-height container above the IME. It measures the
  * container before and during the keyboard, so a window that resizes for the
@@ -16,12 +22,16 @@ export function useKeyboardInset(active = true): {
   readonly frameHeight: number;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 } {
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(() => (active ? openKeyboardHeight() : 0));
   const [frameHeight, setFrameHeight] = useState(0);
   const baseHeight = useRef<number | null>(null);
 
   useEffect(() => {
     if (!active) return;
+    // A keyboard that is already up sends no keyboardDidShow, and one that closed
+    // while this was inactive sent its hide to nobody: read where it stands now.
+    // eslint-disable-next-line react/set-state-in-effect -- syncs with the IME on activation
+    setKeyboardHeight(openKeyboardHeight());
     const show = Keyboard.addListener("keyboardDidShow", (event) => {
       setKeyboardHeight(event.endCoordinates.height);
     });
